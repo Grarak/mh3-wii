@@ -31,6 +31,7 @@ enum : uint32_t {
     kTarget = 80,
     kChange = 96
 };
+
 enum : int32_t {
     kIdle = 0,
     kFadingUp = 1,
@@ -41,24 +42,32 @@ enum : int32_t {
 void TickFadesPort(CpuContext*) {
     if (Memory::Read8(kResetting))
         return;
+
     const int32_t ticks = int32_t(GameStep::Ticks());
+
     for (uint32_t fade = kFades; fade < kFades + 4 * kFadeCount; fade += 4) {
         const int32_t state = int32_t(Memory::Read32(fade + kState));
+
         if (state != kFadingUp && state != kFadingDown)
             continue;
+
         const bool up = state == kFadingUp;
         const int32_t target = int32_t(Memory::Read32(fade + kTarget));
         int32_t level = Memory::Read8(fade + kLevel) + GameStep::Share(int32_t(Memory::Read32(fade + kChange)));
         int32_t stepsLeft = int32_t(Memory::Read32(fade + kStepsLeft));
+
         if (up ? level >= target : level <= target) {
             level = target;
             stepsLeft = 0;
         }
+
         stepsLeft -= ticks;
+
         if (stepsLeft < 0) {
             stepsLeft = 0;
             Memory::Write32(fade + kState, uint32_t(up ? kHolding : kIdle));
         }
+
         Memory::Write32(fade + kStepsLeft, uint32_t(stepsLeft));
         Memory::Write8(fade + kLevel, uint8_t(level));
     }

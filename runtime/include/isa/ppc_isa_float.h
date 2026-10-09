@@ -1,4 +1,5 @@
 ﻿// SPDX-License-Identifier: GPL-2.0-or-later
+
 //
 // Copyright 2018 Dolphin Emulator Project
 //
@@ -190,6 +191,7 @@ inline PpcPairVec PpcNegateNonNanLanesInline(PpcPairVec value) {
 #elif defined(__aarch64__)
     const uint32x2_t signMask = vdup_n_u32(0x80000000u);
     const float32x2_t negated = vreinterpret_f32_u32(veor_u32(vreinterpret_u32_f32(value), signMask));
+
     // NEON has no direct "ordered compare"; a value compares equal to itself iff it's not NaN.
     const uint32x2_t ordered = vceq_f32(value, value);
     return vbsl_f32(ordered, negated, value);
@@ -199,6 +201,7 @@ inline PpcPairVec PpcNegateNonNanLanesInline(PpcPairVec value) {
         const uint32_t bits = PpcPairLaneBitsInline(lane);
         return (bits & 0x7FFFFFFFu) > 0x7F800000u ? lane : PpcPairLaneFromBitsInline(bits ^ 0x80000000u);
     };
+
     return {negate(value.lane0), negate(value.lane1)};
 #endif
 }
@@ -276,7 +279,9 @@ inline float PpcForceSingleValueInline(double value) {
 inline float PpcFlushSingleForNiInline(float value) {
     if (!MkwHostNiActiveInline())
         return value;
+
     const uint32_t bits = PpcBitCastToU32Inline(value);
+
     if ((bits & 0x7FFFFFFFu) < 0x00800000u) [[unlikely]]
         return PpcBitCastToFloatInline(bits & 0x80000000u);
     return value;
@@ -296,6 +301,7 @@ inline double PpcForce25BitInline(double value) {
     // written out inside __builtin_constant_p; through a helper call it never folds.)
     if (__builtin_constant_p(value != value || static_cast<double>(static_cast<float>(value)) == value) && (value != value || static_cast<double>(static_cast<float>(value)) == value))
         return value;
+
     constexpr uint64_t kDoubleExpMask = 0x7FF0000000000000ULL;
     constexpr uint64_t kDoubleFracMask = 0x000FFFFFFFFFFFFFULL;
     constexpr int kDoubleFracWidth = 52;
@@ -310,10 +316,12 @@ inline double PpcForce25BitInline(double value) {
         uint64_t round = 0x8000000ULL;
         uint32_t leadingZeros = 0;
         uint64_t normalizedFraction = fraction;
+
         while ((normalizedFraction & (1ULL << 63)) == 0) {
             normalizedFraction <<= 1;
             ++leadingZeros;
         }
+
         const uint32_t shift = leadingZeros - (63 - kDoubleFracWidth);
         keepMask >>= shift;
         round >>= shift;
@@ -349,13 +357,17 @@ inline double PpcApproximateReciprocalInline(double value) {
 
     if (mantissa == 0 && exponent == 0)
         return PpcBitCastToDoubleInline(sign | kExponent);
+
     if (exponent == kExponent) {
         if (mantissa == 0)
             return PpcBitCastToDoubleInline(sign);
+
         return PpcBitCastToDoubleInline(input | kQuietBit);
     }
+
     if (exponent < (uint64_t{895} << 52))
         return std::copysign(static_cast<double>(std::numeric_limits<float>::max()), value);
+
     if (exponent >= (uint64_t{1149} << 52))
         return std::copysign(0.0, value);
 
@@ -398,6 +410,7 @@ inline double PpcApproximateReciprocalSquareRootInline(double value) {
         if (mantissa == 0) {
             return sign ? PpcBitCastToDoubleInline(kCanonicalQuietNaN) : 0.0;
         }
+
         return PpcBitCastToDoubleInline(input | kQuietBit);
     }
 
@@ -435,12 +448,15 @@ inline int32_t PpcClampIntegerWordInline(double value) {
     if (std::isnan(value)) {
         return static_cast<int32_t>(0x80000000u);
     }
+
     if (value >= 2147483647.0) {
         return 2147483647;
     }
+
     if (value <= -2147483648.0) {
         return static_cast<int32_t>(0x80000000u);
     }
+
     return static_cast<int32_t>(value);
 }
 
@@ -459,15 +475,19 @@ inline float PpcFmaFloatViaDoubleInline(float a, float b, float c) {
     const double addend = static_cast<double>(c);
     double sum = product + addend;
     const double magnitude = sum < 0.0 ? -sum : sum;
+
     if (!(magnitude >= 0x1p-126) && sum != 0.0) [[unlikely]] // float subnormal, or NaN
         return std::fma(a, b, c);
     uint64_t bits = PpcBitCastToU64Inline(sum);
+
     if ((bits & 0x1FFFFFFFull) == 0x10000000ull) [[unlikely]] {
         const double addendPart = sum - product;
         const double error = (product - (sum - addendPart)) + (addend - addendPart);
+
         if (error != 0.0)
             sum = PpcBitCastToDoubleInline((error > 0.0) == (sum > 0.0) ? bits + 1 : bits - 1);
     }
+
     return static_cast<float>(sum);
 }
 
@@ -507,6 +527,7 @@ inline float PpcFmaFloatInline(float a, float b, float c) {
 template <bool Subtract>
 inline float PpcAccuratePsMaddLaneInline(float a, float c, float b) {
     const float signedB = Subtract ? -b : b;
+
     // Paired values are stored as exact float32 lanes in this runtime.  An
     // explicit float FMA therefore matches Gekko's single rounding point;
     // multiplying and adding separately can differ by an ULP on ordinary
@@ -533,16 +554,19 @@ inline double PpcAccurateSingleMaddIntermediateInline(double a, double c, double
     const uint64_t resultBits = PpcBitCastToU64Inline(result);
     constexpr uint64_t kDiscardedMask = 0x000000001FFFFFFFULL;
     constexpr uint64_t kEvenTie = 0x0000000010000000ULL;
+
     if ((resultBits & kDiscardedMask) == kEvenTie) {
         const double aPrime = signedB - result;
         const double bPrime = result + aPrime;
         const double deltaA = PpcFmaDoubleInline(a, roundedC, aPrime);
         const double deltaB = signedB - bPrime;
         const double error = deltaA + deltaB;
+
         if (error != 0.0) {
             result = PpcBitCastToDoubleInline((error > 0.0) == (result > 0.0) ? resultBits + 1 : resultBits - 1);
         }
     }
+
     return result;
 }
 
@@ -642,10 +666,13 @@ inline float PpcResolveNanLaneInline(float result, float op1, float op2, float o
         return result;
     if (PpcPairLaneIsNanInline(op1))
         return PpcPairLaneFromBitsInline(PpcPairLaneBitsInline(op1) | 0x00400000u);
+
     if (PpcPairLaneIsNanInline(op2))
         return PpcPairLaneFromBitsInline(PpcPairLaneBitsInline(op2) | 0x00400000u);
+
     if (PpcPairLaneIsNanInline(op3))
         return PpcPairLaneFromBitsInline(PpcPairLaneBitsInline(op3) | 0x00400000u);
+
     return PpcPairLaneFromBitsInline(0xFFC00000u);
 }
 
@@ -675,6 +702,7 @@ inline PpcPairVec PpcMulPairInline(PpcPairVec lhs, PpcPairVec rhs) {
     return _mm_mul_ps(lhs, rhs);
 #elif defined(__aarch64__)
     const PpcPairVec result = vmul_f32(lhs, rhs);
+
     if (PpcPairNanLaneBitsInline(result) != 0) [[unlikely]]
         return PpcResolveNanLanesInline(result, lhs, rhs);
     return result;
@@ -707,6 +735,7 @@ inline PpcPairVec PpcFmaddPairInline(PpcPairVec multiplicand, PpcPairVec multipl
     return _mm_fmadd_ps(multiplicand, multiplier, addend);
 #elif defined(__aarch64__)
     const PpcPairVec result = vfma_f32(addend, multiplicand, multiplier);
+
     if (PpcPairNanLaneBitsInline(result) != 0) [[unlikely]]
         return PpcResolveNanLanes3Inline(result, multiplicand, multiplier, addend);
     return result;
@@ -721,6 +750,7 @@ inline PpcPairVec PpcFmsubPairInline(PpcPairVec multiplicand, PpcPairVec multipl
     return _mm_fmsub_ps(multiplicand, multiplier, subtractor);
 #elif defined(__aarch64__)
     const PpcPairVec result = vfma_f32(vneg_f32(subtractor), multiplicand, multiplier);
+
     if (PpcPairNanLaneBitsInline(result) != 0) [[unlikely]]
         return PpcResolveNanLanes3Inline(result, multiplicand, multiplier, subtractor);
     return result;
@@ -844,6 +874,7 @@ inline PpcPairVec PpcAddPairInline(PpcPairVec lhs, PpcPairVec rhs) {
     return _mm_add_ps(lhs, rhs);
 #elif defined(__aarch64__)
     const PpcPairVec result = vadd_f32(lhs, rhs);
+
     if (PpcPairNanLaneBitsInline(result) != 0) [[unlikely]]
         return PpcResolveNanLanesInline(result, lhs, rhs);
     return result;
@@ -858,6 +889,7 @@ inline PpcPairVec PpcSubPairInline(PpcPairVec lhs, PpcPairVec rhs) {
     return _mm_sub_ps(lhs, rhs);
 #elif defined(__aarch64__)
     const PpcPairVec result = vsub_f32(lhs, rhs);
+
     if (PpcPairNanLaneBitsInline(result) != 0) [[unlikely]]
         return PpcResolveNanLanesInline(result, lhs, rhs);
     return result;
@@ -872,6 +904,7 @@ inline PpcPairVec PpcDivPairInline(PpcPairVec lhs, PpcPairVec rhs) {
     return _mm_div_ps(lhs, rhs);
 #elif defined(__aarch64__)
     const PpcPairVec result = vdiv_f32(lhs, rhs);
+
     if (PpcPairNanLaneBitsInline(result) != 0) [[unlikely]]
         return PpcResolveNanLanesInline(result, lhs, rhs);
     return result;
@@ -929,6 +962,7 @@ inline double PPC_PsSum1Inline(double aValue, double bValue, double cValue) {
 
 inline uint32_t PpcConvertToSingleFTZInline(uint64_t value) {
     const uint32_t exp = static_cast<uint32_t>((value >> 52) & 0x7FFu);
+
     if (exp > 896u || (value & 0x7FFFFFFFFFFFFFFFULL) == 0) {
         return static_cast<uint32_t>(((value >> 32) & 0xC0000000ULL) | ((value >> 29) & 0x3FFFFFFFULL));
     }
@@ -949,6 +983,7 @@ inline uint64_t PpcConvertToDoubleBitsInline(uint32_t value) {
 
     if (exp == 0 && frac != 0) {
         exp = 1023 - 126;
+
         do {
             frac <<= 1;
             --exp;
@@ -991,6 +1026,7 @@ extern "C" double PPC_PsMadds0(double lhs, double mul, double add);
 extern "C" double PPC_PsMadds1(double lhs, double mul, double add);
 extern "C" double PPC_PsNmadd(double lhs, double mul, double add);
 extern "C" double PPC_PsSel(double lhs, double control, double rhs);
+
 // ps_res is hot in the THP dequant path (148 static call sites in the IDCT
 // region); the out-of-line definition cost a call + full spill barrier per
 // use, so it is defined inline here. The estimate logic is byte-identical to
@@ -1002,8 +1038,10 @@ extern "C" inline double PPC_PsRes(double value) {
 }
 
 extern "C" double PPC_PsRsqrte(double value);
+
 // Pack a scalar double into a paired-single FPR value (ps0=ps1=float(value)).
 extern "C" double PPC_PsFromScalar(double value);
+
 // Extract the ps0 lane as a scalar double (used to feed single-precision ops).
 extern "C" double PPC_PsToScalar(double value);
 extern "C" double PPC_PsMerge00(double a, double b);
@@ -1049,11 +1087,13 @@ extern "C" double PPC_Fmadd(double multiplicand, double multiplier, double adden
 extern "C" double PPC_Fmsub(double multiplicand, double multiplier, double subtractor);
 extern "C" double PPC_Fnmadd(double multiplicand, double multiplier, double addend);
 extern "C" double PPC_Fnmsub(double multiplicand, double multiplier, double subtractor);
+
 // Single-precision scalar helpers (fadds/fsubs/fmuls/fdivs and fused variants).
 extern "C" double PPC_Fadds(double a, double b);
 extern "C" double PPC_Fsubs(double a, double b);
 extern "C" double PPC_Fmuls(double a, double b);
 extern "C" double PPC_Fdivs(double a, double b);
+
 // The fused single-precision family is a thin wrapper over the Ppc*Inline
 // bodies above; keeping the wrapper out of line meant the wrapper itself was
 // the register barrier. See the block at PPC_Fres for why there is no LTO to

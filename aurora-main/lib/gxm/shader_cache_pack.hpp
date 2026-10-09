@@ -20,24 +20,31 @@ struct Record {
   uint64_t hash, source;
   uint32_t size, reserved;
 };
+
 static_assert(sizeof(Record) == 32);
+
 // (program hash, stage) -> (source hash, GXP bytes)
 using Entries = std::map<std::pair<uint64_t, uint32_t>, std::pair<uint64_t, std::string>>;
 
 inline Entries parse(std::string_view bytes, uint32_t maxStage, uint32_t maxProgramBytes) {
   Entries entries;
   size_t at = 0;
+
   while (bytes.size() - at >= sizeof(Record)) {
     Record record;
     std::memcpy(&record, bytes.data() + at, sizeof record);
     const size_t padded = (size_t(record.size) + 3) & ~size_t(3);
+
     if (record.magic != Magic || record.stage > maxStage || record.size > maxProgramBytes || padded > bytes.size() - at - sizeof record)
       break;
+
     entries[{record.hash, record.stage}] = {record.source, std::string(bytes.substr(at + sizeof record, record.size))};
     at += sizeof record + padded;
   }
+
   return entries;
 }
+
 // The bytes appended for one program.
 inline std::string encode(uint64_t hash, uint32_t stage, uint64_t source, const void* program, size_t size) {
   const Record record{Magic, stage, hash, source, uint32_t(size), 0};

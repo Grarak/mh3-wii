@@ -33,6 +33,7 @@ FileIO& FileIO::operator=(FileIO&& other) noexcept {
     m_path = std::move(other.m_path);
     m_ready = std::exchange(other.m_ready, false);
   }
+
   return *this;
 }
 
@@ -42,6 +43,7 @@ bool FileIO::fileRead(void* buf, size_t length, off_t offset) {
   }
 
   SDL_IOStream* stream = fileOpen(m_path, "rb");
+
   if (stream == nullptr) {
     return false;
   }
@@ -53,12 +55,15 @@ bool FileIO::fileRead(void* buf, size_t length, off_t offset) {
 
   size_t total = 0;
   auto* dst = static_cast<uint8_t*>(buf);
+
   while (total < length) {
     const size_t read = SDL_ReadIO(stream, dst + total, length - total);
+
     if (read == 0) {
       SDL_CloseIO(stream);
       return false;
     }
+
     total += read;
   }
 
@@ -72,9 +77,11 @@ bool FileIO::fileWrite(const void* buf, size_t length, off_t offset) {
   }
 
   SDL_IOStream* stream = fileOpen(m_path, "r+b");
+
   if (stream == nullptr) {
     stream = fileOpen(m_path, "w+b");
   }
+
   if (stream == nullptr) {
     return false;
   }
@@ -87,12 +94,15 @@ bool FileIO::fileWrite(const void* buf, size_t length, off_t offset) {
 
   size_t total = 0;
   auto* src = static_cast<const uint8_t*>(buf);
+
   while (total < length) {
     const size_t written = SDL_WriteIO(stream, src + total, length - total);
+
     if (written == 0) {
       SDL_CloseIO(stream);
       return false;
     }
+
     total += written;
   }
 
@@ -104,9 +114,11 @@ bool FileIO::fileWrite(const void* buf, size_t length, off_t offset) {
 size_t FileIO::fileSize() const {
   SDL_PathInfo info;
   const auto tr = fs_path_to_string(m_path);
+
   if (SDL_GetPathInfo(m_path.c_str(), &info)) {
     return info.size;
   }
+
   return 0;
 }
 
@@ -116,6 +128,7 @@ bool FileIO::deleteFile() {
     m_path.clear();
     return true;
   }
+
   return false;
 }
 

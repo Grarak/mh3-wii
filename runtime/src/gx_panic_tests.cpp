@@ -22,19 +22,24 @@ uint32_t process(const uint8_t*, uint32_t, bool);
 namespace {
 void ExpectPanic(const char* name, const char* message, CpuContext* cpu, const std::function<void()>& operation) {
     int pipeFd[2];
+
     if (pipe(pipeFd))
         throw std::runtime_error("GX panic test pipe failed");
+
     std::fflush(nullptr);
     const pid_t child = fork();
+
     if (child < 0) {
         close(pipeFd[0]);
         close(pipeFd[1]);
         throw std::runtime_error("GX panic test fork failed");
     }
+
     if (!child) {
         close(pipeFd[0]);
         dup2(pipeFd[1], STDERR_FILENO);
         close(pipeFd[1]);
+
         // Construct a real PPC linkage chain; saved LR belongs to parent SP+4.
         cpu->lr = 0x8003F794;
         cpu->pc = 0x8003F7A0;
@@ -45,31 +50,42 @@ void ExpectPanic(const char* name, const char* message, CpuContext* cpu, const s
         operation();
         std::_Exit(99); // A disabled entry must never return to its caller.
     }
+
     close(pipeFd[1]);
     std::string output;
     bool timedOut = false;
+
     for (;;) {
         pollfd descriptor{pipeFd[0], POLLIN | POLLHUP, 0};
         const int ready = poll(&descriptor, 1, 5000);
+
         if (ready < 0 && errno == EINTR)
             continue;
+
         if (ready <= 0 || output.size() > 65536) {
             timedOut = true;
             kill(child, SIGKILL);
             break;
         }
+
         char bytes[2048];
         const ssize_t count = read(pipeFd[0], bytes, sizeof(bytes));
+
         if (count < 0 && errno == EINTR)
             continue;
+
         if (count <= 0)
             break;
+
         output.append(bytes, size_t(count));
     }
+
     close(pipeFd[0]);
     int status;
+
     while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
     }
+
     if (timedOut || !WIFEXITED(status) || WEXITSTATUS(status) != 1 || output.find("MH3 GX PANIC: ") == std::string::npos || output.find(message) == std::string::npos ||
         output.find("LR 0x8003f794") == std::string::npos || output.find("caller 0x8003fa48") == std::string::npos || output.find("Native backtrace") == std::string::npos ||
         output.find("#0 ") == std::string::npos)
@@ -85,6 +101,7 @@ void RunGxPanicSelfTests(CpuContext* cpu) {
         ExpectPanic(name, message, cpu, operation);
         ++checked;
     };
+
     expect("direct SDK", "GXInit", [&] { InvokeDirectCpu<0x804B3D10>(cpu); });
     expect("indirect SDK", "GXInvalidateTexAll", [&] { InvokeIndirectCpu(0x804B8FA0, cpu); });
     expect("unnamed SDK", "func_804B4AE0", [&] { InvokeIndirectCpu(0x804B4AE0, cpu); });
@@ -112,6 +129,7 @@ void RunGxPanicSelfTests(CpuContext* cpu) {
         volatile uint16_t value = MemoryInline::FlatLoad<uint16_t>(0xCC000020);
         (void)value;
     });
+
     // Valid and unsupported GX offsets all trap, on each physical/cached alias.
     for (const uint32_t alias : {0u, 0x80000000u, 0xC0000000u}) {
         for (const uint32_t offset : {0x0C000000u, 0x0C000020u, 0x0C001008u, 0x0C00300Cu}) {
@@ -120,6 +138,7 @@ void RunGxPanicSelfTests(CpuContext* cpu) {
             expect("GX MMIO write", "GX CP/PE/FIFO register write", [&] { Memory::Write16(address, 0xFFFF); });
         }
     }
+
     expect("CPU EFB read", "GX CPU EFB color read", [] {
         uint32_t pixel;
         ReadEfbColor32(0xC8000000, pixel);

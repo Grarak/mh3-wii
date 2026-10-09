@@ -97,8 +97,10 @@ const char* HostString(uint32_t address) {
 // FNV-1a over the name up to its terminator.
 uint32_t NameHash(const char* name) {
     uint32_t h = 2166136261u;
+
     for (const unsigned char* p = reinterpret_cast<const unsigned char*>(name); *p; ++p)
         h = (h ^ *p) * 16777619u;
+
     return h;
 }
 
@@ -110,6 +112,7 @@ struct ProjectIndex {
         uint32_t name; // guest address, 0 for an empty slot
         uint32_t result;
     };
+
     std::vector<Slot> slots;
     uint32_t mask = 0;
 
@@ -117,23 +120,29 @@ struct ProjectIndex {
         const uint32_t table = project + FlatRead32(project);
         const uint32_t count = FlatRead16(table + 4);
         uint32_t size = 8;
+
         while (size < count * 2)
             size *= 2;
+
         slots.assign(size, Slot{0, 0, 0});
         mask = size - 1;
         uint32_t entry = table;
+
         for (uint32_t i = 0; i < count; ++i) {
             const uint32_t name = entry + 10;
             entry = name + FlatRead16(entry + 8);
             const uint32_t result = table + FlatRead32(entry);
             const char* text = HostString(name);
             const uint32_t hash = NameHash(text);
+
             for (uint32_t k = hash & mask;; k = (k + 1) & mask) {
                 Slot& slot = slots[k];
+
                 if (!slot.name) {
                     slot = Slot{hash, name, result};
                     break;
                 }
+
                 if (slot.hash == hash && !std::strcmp(HostString(slot.name), text))
                     break; // a later duplicate: the walk stops at the first
             }
@@ -143,8 +152,10 @@ struct ProjectIndex {
     uint32_t Find(const char* name, uint32_t hash) const {
         for (uint32_t k = hash & mask;; k = (k + 1) & mask) {
             const Slot& slot = slots[k];
+
             if (!slot.name)
                 return 0;
+
             if (slot.hash == hash && !std::strcmp(HostString(slot.name), name))
                 return slot.result;
         }
@@ -167,8 +178,10 @@ const ProjectIndex& IndexOf(uint32_t project) {
     if (project == g_lastProject) [[likely]]
         return *g_lastIndex;
     auto [it, inserted] = g_indexes.try_emplace(project);
+
     if (inserted)
         it->second.Build(project);
+
     g_lastProject = project;
     g_lastIndex = &it->second;
     return it->second;
@@ -187,17 +200,23 @@ uint32_t FindInProject(uint32_t project, uint32_t name) {
 uint32_t FindInList(uint32_t list, uint32_t name, uint32_t hint) {
     const char* text = HostString(name);
     const uint32_t hash = NameHash(text);
+
     if (hint) {
         CheckPointer(hint, "project");
+
         if (const uint32_t result = IndexOf(hint).Find(text, hash))
             return result;
     }
+
     const uint32_t linkOffset = FlatRead16(list + 10);
+
     for (uint32_t project = FlatRead32(list + 4); project; project = FlatRead32(project + linkOffset)) {
         CheckPointer(project, "project");
+
         if (const uint32_t result = IndexOf(project).Find(text, hash))
             return result;
     }
+
     return 0;
 }
 
@@ -208,8 +227,10 @@ uint32_t FindEmitter(uint32_t resource, uint32_t name, uint32_t hint) {
 
 uint32_t FindTexture(uint32_t resource, uint32_t name, uint32_t hint) {
     CheckPointer(name, "name");
+
     if (!FlatRead8(name))
         return 0;
+
     return FindInList(resource + 0x10, name, hint);
 }
 
@@ -219,6 +240,7 @@ struct ProjectKind {
     uint32_t magic;    // "REFF" / "REFT"
     uint32_t relocate; // the guest relocation of a new project
 };
+
 constexpr ProjectKind kEffects{0x52454646u, kRelocateEffects};
 constexpr ProjectKind kTextures{0x52454654u, kRelocateTextures};
 
@@ -235,6 +257,7 @@ void Initialize(uint32_t resource) {
         MemoryInline::FlatWrite16(list + 10, 4);
         FlatWrite32(list + 0xC, 0);
     }
+
     DropIndexes();
 }
 
@@ -242,15 +265,21 @@ void Initialize(uint32_t resource) {
 // then the first block (magic) holding the project at +8.
 uint32_t AddProject(CpuContext* ctx, uint32_t list, uint32_t data, const ProjectKind& kind) {
     CheckPointer(data, "data");
+
     if (FlatRead32(data) != kind.magic)
         Panic("strncmp(fhd->signature) failed", data);
+
     if (FlatRead8(data + 4) != 0xFE || FlatRead8(data + 5) != 0xFF)
         Panic("fhd->byteOrder", data);
+
     if (FlatRead16(data + 6) != 11)
         Panic("fhd->version", data);
+
     const uint32_t block = data + FlatRead16(data + 12);
+
     if (FlatRead32(block) != kind.magic)
         Panic("strncmp(bhd->kind) failed", block);
+
     const uint32_t project = block + 8;
     FlatWrite32(project + 4, 0);
     FlatWrite32(project + 8, 0);
@@ -265,21 +294,26 @@ uint32_t AddProject(CpuContext* ctx, uint32_t list, uint32_t data, const Project
 uint32_t RemoveProject(CpuContext* ctx, uint32_t list, uint32_t project) {
     CheckPointer(project, "target");
     const uint32_t linkOffset = FlatRead16(list + 10);
+
     for (uint32_t p = FlatRead32(list); p; p = FlatRead32(p + linkOffset + 4)) {
         if (p != project)
             continue;
+
         GuestCall{ctx}(kListRemove, {list, project});
         FlatWrite32(list + 0xC, FlatRead32(list + 0xC) - ProjectCount(project));
         DropIndexes();
         return 1;
     }
+
     return 0;
 }
 
 uint32_t RemoveAllProjects(CpuContext* ctx, uint32_t list) {
     GuestCall call{ctx};
+
     while (const uint32_t head = FlatRead32(list))
         call(kListRemove, {list, head});
+
     FlatWrite32(list + 0xC, 0);
     DropIndexes();
     return 1;
@@ -288,21 +322,27 @@ uint32_t RemoveAllProjects(CpuContext* ctx, uint32_t list) {
 void InitializePort(CpuContext* ctx) {
     Initialize(ctx->gpr[3]);
 }
+
 void AddEffectProjectPort(CpuContext* ctx) {
     ctx->gpr[3] = AddProject(ctx, ctx->gpr[3], ctx->gpr[4], kEffects);
 }
+
 void AddTextureProjectPort(CpuContext* ctx) {
     ctx->gpr[3] = AddProject(ctx, ctx->gpr[3] + 0x10, ctx->gpr[4], kTextures);
 }
+
 void RemoveEffectProjectPort(CpuContext* ctx) {
     ctx->gpr[3] = RemoveProject(ctx, ctx->gpr[3], ctx->gpr[4]);
 }
+
 void RemoveTextureProjectPort(CpuContext* ctx) {
     ctx->gpr[3] = RemoveProject(ctx, ctx->gpr[3] + 0x10, ctx->gpr[4]);
 }
+
 void RemoveAllEffectProjectsPort(CpuContext* ctx) {
     ctx->gpr[3] = RemoveAllProjects(ctx, ctx->gpr[3]);
 }
+
 void RemoveAllTextureProjectsPort(CpuContext* ctx) {
     ctx->gpr[3] = RemoveAllProjects(ctx, ctx->gpr[3] + 0x10);
 }
@@ -310,6 +350,7 @@ void RemoveAllTextureProjectsPort(CpuContext* ctx) {
 void ListChange(CpuContext* ctx, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
 #ifdef MH3_DEVELOPMENT
     const bool check = PortCheck::Enabled("EfResourceLists");
+
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "EfResourceLists", original, port);
         DropIndexes();
@@ -324,9 +365,11 @@ void ListChange(CpuContext* ctx, void (*original)(CpuContext*), void (*port)(Cpu
 void FindEmitterInProjectPort(CpuContext* p) {
     p->gpr[3] = FindInProject(p->gpr[3], p->gpr[4]);
 }
+
 void FindEmitterPort(CpuContext* p) {
     p->gpr[3] = FindEmitter(p->gpr[3], p->gpr[4], p->gpr[5]);
 }
+
 void FindTexturePort(CpuContext* p) {
     p->gpr[3] = FindTexture(p->gpr[3], p->gpr[4], p->gpr[5]);
 }
@@ -352,14 +395,17 @@ uint32_t FindEmitterInProjectChecked(uint32_t r1, uint32_t r3, uint32_t r4, [[ma
     MH3_LOOKUP_CHECK(EfFindEmitterInProject, 800B2E5C, FindEmitterInProjectPort)
     return FindInProject(r3, r4);
 }
+
 uint32_t FindTextureInProjectChecked(uint32_t r1, uint32_t r3, uint32_t r4, [[maybe_unused]] uint32_t r5) {
     MH3_LOOKUP_CHECK(EfFindTextureInProject, 800B3440, FindEmitterInProjectPort)
     return FindInProject(r3, r4);
 }
+
 uint32_t FindEmitterChecked(uint32_t r1, uint32_t r3, uint32_t r4, uint32_t r5) {
     MH3_LOOKUP_CHECK(EfFindEmitter, 800B3A78, FindEmitterPort)
     return FindEmitter(r3, r4, r5);
 }
+
 uint32_t FindTextureChecked(uint32_t r1, uint32_t r3, uint32_t r4, uint32_t r5) {
     MH3_LOOKUP_CHECK(EfFindTexture, 800B3C08, FindTexturePort)
     return FindTexture(r3, r4, r5);

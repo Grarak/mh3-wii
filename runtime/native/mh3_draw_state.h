@@ -15,6 +15,7 @@ typedef struct mh3_raster_state {
     uint32_t depth_test, depth_compare, depth_write, cull_mode;
     uint32_t color_write, alpha_write;
 } mh3_raster_state;
+
 typedef struct mh3_draw_state {
     float projection[16], position[12], viewport[6];
     uint32_t perspective;

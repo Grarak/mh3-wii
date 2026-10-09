@@ -19,6 +19,7 @@ constexpr uint32_t kPhase = 0x80797038; // u8: r13-17064
 constexpr uint32_t kValue = 0x8079703C; // f32
 constexpr uint32_t kPeriod = 40;
 constexpr uint32_t SinRad = 0x800AB6BC; // nw4r::math::SinRad (f1 radians) -> f1
+
 // sda2 constants (r2-12840..-12828).
 constexpr uint32_t kHalf = 0x8079CD38, kOne = 0x8079CD3C, kRadPerStep = 0x8079CD40, kZero = 0x8079CD44;
 } // namespace
@@ -26,6 +27,7 @@ constexpr uint32_t kHalf = 0x8079CD38, kOne = 0x8079CD3C, kRadPerStep = 0x8079CD
 static void PulseUpdatePort(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
+
     // The original: phase + 1, back to 0 past 39.
     const uint32_t phase = (Memory::Read8(kPhase) + GameStep::Ticks()) % kPeriod;
     Memory::Write8(kPhase, uint8_t(phase));
@@ -36,6 +38,7 @@ static void PulseUpdatePort(CpuContext* ctx) {
     Memory::WriteFloat32(kValue, value);
     *ctx = saved;
 }
+
 extern "C" void func_802D9F18(CpuContext* ctx);
 extern "C" void MH3_PulseUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "PulseUpdate", func_802D9F18, PulseUpdatePort);

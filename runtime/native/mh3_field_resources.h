@@ -18,13 +18,16 @@ typedef struct {
     const uint8_t *data;
     size_t bytes;
 } mh3_field_res_bytes;
+
 typedef struct {
     mh3_field_res_bytes records;
     uint32_t address;
 } mh3_field_res_table;
+
 typedef struct {
     uint32_t bytes, path;
 } mh3_field_res_pair;
+
 enum {
     MH3_FIELD_RES_PRIMARY,
     MH3_FIELD_RES_EFFECT,

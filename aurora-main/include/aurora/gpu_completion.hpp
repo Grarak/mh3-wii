@@ -20,6 +20,7 @@ public:
     const auto& fence = m_fences[m_slot];
     return gpu_notification_pending(fence.notification, fence.serial);
   }
+
   void record_scene(volatile unsigned* notification, uint32_t serial) noexcept { m_fences[m_slot] = {notification, serial}; }
   void advance() noexcept { m_slot = (m_slot + 1) % BufferCount; }
 
@@ -28,6 +29,7 @@ private:
     volatile unsigned* notification = nullptr;
     uint32_t serial = 0;
   };
+
   std::array<Fence, BufferCount> m_fences{};
   unsigned m_slot = 0;
 };

@@ -27,6 +27,7 @@ struct NativePoseVersion {
     std::atomic<uint32_t> epoch{0};
 #endif
 };
+
 /* Game thread: the version of the arrays at `addresses` that `live`
  * (ReadNativeModelPose of them) describes; without arrays (addresses[0] 0)
  * an empty one. Valid until the packets recorded meanwhile have rendered. */
@@ -44,6 +45,7 @@ struct NativePoseStatistics {
     uint64_t captures, copies, copied_bytes, same_revision, same_contents, verified, mismatches, lifetime_errors;
     uint32_t versions, bindings;
 };
+
 /* Since the last call; verified/mismatches are totals. */
 NativePoseStatistics TakeNativePoseStatistics();
 #endif

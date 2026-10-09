@@ -247,6 +247,7 @@ void CARDSetGameAndMaker(const s32 chan, const char* game, const char* maker);
 
 // pass -1 to set both
 void CARDDetectDolphin(s32 chan);
+
 // pass -1 to set both
 void CARDSetBasePath(const char*, s32 chan);
 void CARDSetLoadType(CARDFileType type);

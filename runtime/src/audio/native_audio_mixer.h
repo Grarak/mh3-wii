@@ -55,6 +55,7 @@ class Mixer {
     uint32_t mem1Size_ = 0, mem2Size_ = 0;
 
     Voice voices_[kMaxVoices];
+
     // Bus order: main L R S, aux A L R S, aux B L R S, aux C L R S.
     alignas(16) int32_t bus_[12][kTickSamples];
     uint16_t masterVolume_ = 0x8000, lastMasterVolume_ = 0x8000;
@@ -82,6 +83,7 @@ class Reverb {
             samples.reset(n ? new float[n]() : nullptr);
         }
     };
+
     ReverbConfig config_;
     Line early_[3], preDelay_[3], comb_[3][3], allpass_[3][2], last_[3];
     float lowpass_[3] = {};

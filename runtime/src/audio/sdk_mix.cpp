@@ -30,6 +30,7 @@ constexpr uint32_t kVoiceCount = 0x80797768;
 constexpr uint32_t kSoundMode = 0x8079776C;   // 0 mono, 1 stereo, 2 surround, 3 DPL2
 constexpr uint32_t kRemotes = 0x80797770;     // per voice remote record (0x44)
 constexpr uint32_t kChannelStorage = 0x8074B078, kRemoteStorage = 0x8074DA78;
+
 // AX state read by MIXInit (native_audio.h Guest::kAxInitialized/kVoiceCount).
 constexpr uint32_t kAxInitialized = 0x80797388, kAxVoiceCount = 0x807974A4;
 
@@ -59,6 +60,7 @@ enum : uint32_t {
     kVolume = 0x3C,  // u16 current, u16 target (+2) pairs from here
     kChannelSize = 0x70,
 };
+
 // Volume slots (current; target at +2).
 enum : uint32_t {
     kV = 0x3C, kVL = 0x40, kVR = 0x44, kVS = 0x48,
@@ -66,6 +68,7 @@ enum : uint32_t {
     kVBL = 0x58, kVBR = 0x5C, kVBS = 0x60,
     kVCL = 0x64, kVCR = 0x68, kVCS = 0x6C,
 };
+
 // MIXChannel.mode.
 enum : uint32_t {
     kAuxAPreFader = 1u << 0,
@@ -77,6 +80,7 @@ enum : uint32_t {
     kMixRamp = 1u << 31,     // copy the bus targets next frame
     kMixDirty = 1u << 30,
 };
+
 // Remote record (0x44): flags, main dB [4], aux dB [4], then 8 (current,
 // target) u16 pairs from 0x24.
 enum : uint32_t { kRemoteFlags = 0x00, kRemoteMain = 0x04, kRemoteAux = 0x14, kRemoteVolume = 0x24, kRemoteSize = 0x44 };
@@ -89,8 +93,10 @@ int32_t S32(uint32_t address) {
 uint16_t Volume(int32_t db) {
     if (db < -0x387)
         return 0;
+
     if (db > 0x3B)
         return 0xFF64;
+
     return FlatRead16(kVolumeTable + uint32_t(db + 0x388) * 2);
 }
 
@@ -101,6 +107,7 @@ uint32_t Channel(uint32_t voice) {
 // __MIXSetPan: the pan and surround pan attenuations.
 void SetPan(uint32_t c) {
     const uint32_t pan = FlatRead32(c + kPan), span = FlatRead32(c + kSPan);
+
     if (FlatRead32(kSoundMode) == 3) {
         auto front = [](uint32_t i) { return uint32_t(int32_t(int16_t(FlatRead16(kDpl2Front + i * 2)))); };
         auto rear = [](uint32_t i) { return uint32_t(int32_t(int16_t(FlatRead16(kDpl2Rear + i * 2)))); };
@@ -112,6 +119,7 @@ void SetPan(uint32_t c) {
         FlatWrite32(c + kR1, rear(pan));
         return;
     }
+
     FlatWrite32(c + kL, FlatRead32(kPanTable + pan * 4));
     FlatWrite32(c + kR, FlatRead32(kPanTable + (0x7F - pan) * 4));
     FlatWrite32(c + kF, FlatRead32(kPanTable + (0x7F - span) * 4));
@@ -130,11 +138,13 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
     auto put = [&](uint32_t slot, int32_t db) { FlatWrite16(c + slot + at, Volume(db)); };
     const uint32_t aux[3] = {kAuxA, kAuxB, kAuxC};
     const uint32_t preFader[3] = {kAuxAPreFader, kAuxBPreFader, kAuxCPreFader};
+
     if (mode == 1 || mode == 2) {
         put(kVL, l + f + fader);
         put(kVR, r + f + fader);
         put(kVS, fader + b - 30);
         const uint32_t slots[3][3] = {{kVAL, kVAR, kVAS}, {kVBL, kVBR, kVBS}, {kVCL, kVCR, kVCS}};
+
         for (uint32_t k = 0; k < 3; ++k) {
             const int32_t send = S32(c + aux[k]);
             const int32_t post = (flags & preFader[k]) ? 0 : fader;
@@ -142,13 +152,16 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
             put(slots[k][1], r + f + post + send);
             put(slots[k][2], post + send + b - 30);
         }
+
         return true;
     }
+
     if (mode == 0) {
         put(kVL, fader + f);
         put(kVR, fader + f);
         put(kVS, fader + b - 30);
         const uint32_t slots[3][3] = {{kVAL, kVAR, kVAS}, {kVBL, kVBR, kVBS}, {kVCL, kVCR, kVCS}};
+
         for (uint32_t k = 0; k < 3; ++k) {
             const int32_t send = S32(c + aux[k]);
             const int32_t post = (flags & preFader[k]) ? 0 : fader;
@@ -156,8 +169,10 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
             put(slots[k][1], send + f + post);
             put(slots[k][2], post + send + b - 30);
         }
+
         return true;
     }
+
     if (mode == 3) {
         // DPL2: the surround and aux C slots carry the rear left/right pairs.
         put(kVL, l + f + fader);
@@ -165,6 +180,7 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
         put(kVS, l1 + b + fader);
         put(kVCL, r1 + b + fader);
         const uint32_t slots[2][4] = {{kVAL, kVAR, kVAS, kVCR}, {kVBL, kVBR, kVBS, kVCS}};
+
         for (uint32_t k = 0; k < 2; ++k) {
             const int32_t send = S32(c + aux[k]);
             const int32_t post = (flags & preFader[k]) ? 0 : fader;
@@ -173,8 +189,10 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
             put(slots[k][2], l1 + b + post + send);
             put(slots[k][3], r1 + b + post + send);
         }
+
         return true;
     }
+
     return false;
 }
 
@@ -184,6 +202,7 @@ bool ComputeBuses(uint32_t c, uint32_t at) {
 struct MixSlot {
     uint32_t slot, pair, on, ramp;
 };
+
 constexpr MixSlot kMixSlots[12] = {
     {kVL, 0, 0x1, 0x4},           {kVR, 1, 0x2, 0x4},
     {kVAL, 2, 0x10000, 0x40000},  {kVAR, 3, 0x20000, 0x40000},
@@ -201,10 +220,13 @@ uint16_t Delta(uint16_t current, uint16_t target, int32_t samples) {
 // __MIXRmtResetChannel (0x804C6230).
 void RemoteReset(uint32_t index) {
     const uint32_t r = FlatRead32(kRemotes) + index * kRemoteSize;
+
     for (uint32_t i = 0; i < 5; ++i)
         FlatWrite32(r + i * 4, 0);
+
     for (uint32_t i = 5; i < 9; ++i)
         FlatWrite32(r + i * 4, 0xFFFFFC40u);
+
     for (uint32_t i = 0; i < 8; ++i)
         FlatWrite16(r + kRemoteVolume + i * 4, 0);
 }
@@ -213,10 +235,12 @@ void RemoteReset(uint32_t index) {
 void Init() {
     if (FlatRead32(kAxInitialized) == 0 || FlatRead32(kInitialized) != 0)
         return;
+
     const uint32_t count = FlatRead32(kAxVoiceCount);
     FlatWrite32(kVoiceCount, count);
     FlatWrite32(kChannels, kChannelStorage);
     FlatWrite32(kRemotes, kRemoteStorage);
+
     for (uint32_t i = 0; i < count; ++i) {
         const uint32_t c = kChannelStorage + i * kChannelSize;
         FlatWrite32(c + kVoice, 0);
@@ -228,11 +252,14 @@ void Init() {
         FlatWrite32(c + kFader, 0);
         FlatWrite32(c + kPan, 0x40);
         FlatWrite32(c + kSPan, 0x7F);
+
         for (uint32_t slot = kV; slot <= kVCS; slot += 4)
             FlatWrite16(c + slot, 0);
+
         SetPan(c);
         RemoteReset(i);
     }
+
     FlatWrite32(kSoundMode, 1);
     FlatWrite32(kInitialized, 1);
 }
@@ -254,16 +281,21 @@ void InitChannel(uint32_t voice, uint32_t mode, int32_t input, uint32_t auxA, ui
     FlatWrite16(c + kV, (mode & kMute) ? 0 : Volume(input));
     uint32_t control = 0;
     ComputeBuses(c, 0);
+
     if (FlatRead32(kSoundMode) == 3)
         control = 0x80000000u;
+
     uint16_t mix[24];
+
     for (const MixSlot& m : kMixSlots) {
         const uint16_t v = FlatRead16(c + m.slot);
         mix[m.pair * 2] = v;
         mix[m.pair * 2 + 1] = 0;
+
         if (v)
             control |= m.on;
     }
+
     SoundVoice::SetVe(voice, FlatRead16(c + kV), 0);
     SoundVoice::SetMix(voice, mix, control);
 }
@@ -272,57 +304,78 @@ void InitChannel(uint32_t voice, uint32_t mode, int32_t input, uint32_t auxA, ui
 void UpdateSettings() {
     if (FlatRead32(kInitialized) == 0)
         return;
+
     const uint32_t count = FlatRead32(kVoiceCount), channels = FlatRead32(kChannels);
+
     for (uint32_t i = 0; i < count; ++i) {
         const uint32_t c = channels + i * kChannelSize;
         const uint32_t voice = FlatRead32(c + kVoice);
+
         if (!voice)
             continue;
+
         uint32_t control = 0;
         uint32_t flags = FlatRead32(c + kMode);
+
         // Settled channel: nothing to ramp or recompute (the common case).
         if (!(flags & (kInputRamp | kInputDirty | kMixRamp | kMixDirty)))
             continue;
+
         bool input = (flags & kInputRamp) != 0;
+
         if (input) {
             FlatWrite16(c + kV, FlatRead16(c + kV + 2));
             flags &= ~kInputRamp;
         }
+
         if (flags & kInputDirty) {
             FlatWrite16(c + kV + 2, (flags & kMute) ? 0 : Volume(S32(c + kInput)));
             input = true;
             flags = (flags & ~kInputDirty) | kInputRamp;
         }
+
         bool mix = (flags & kMixRamp) != 0;
+
         if (mix) {
             for (uint32_t slot = kVL; slot <= kVCS; slot += 4)
                 FlatWrite16(c + slot, FlatRead16(c + slot + 2));
+
             flags &= ~kMixRamp;
         }
+
         FlatWrite32(c + kMode, flags);
+
         if (flags & kMixDirty) {
             ComputeBuses(c, 2);
+
             if (FlatRead32(kSoundMode) == 3)
                 control = 0x80000000u;
+
             mix = true;
             flags = (flags & ~kMixDirty) | kMixRamp;
             FlatWrite32(c + kMode, flags);
         }
+
         if (input) {
             const uint16_t current = FlatRead16(c + kV);
             SoundVoice::SetVe(voice, current, Delta(current, FlatRead16(c + kV + 2), 96));
         }
+
         if (mix) {
             uint16_t pairs[24];
+
             for (const MixSlot& m : kMixSlots) {
                 const uint16_t current = FlatRead16(c + m.slot), delta = Delta(current, FlatRead16(c + m.slot + 2), 96);
                 pairs[m.pair * 2] = current;
                 pairs[m.pair * 2 + 1] = delta;
+
                 if (current)
                     control |= m.on;
+
                 if (delta)
                     control |= m.ramp;
             }
+
             SoundVoice::SetMix(voice, pairs, control);
         }
     }
@@ -342,10 +395,12 @@ uint32_t ClampPan(int32_t value) {
 void InitPort(CpuContext*) {
     Init();
 }
+
 void InitChannelPort(CpuContext* cpu) {
     const uint32_t fader = FlatRead32(cpu->gpr[1] + 8);
     InitChannel(cpu->gpr[3], cpu->gpr[4], int32_t(cpu->gpr[5]), cpu->gpr[6], cpu->gpr[7], cpu->gpr[8], cpu->gpr[9], cpu->gpr[10], fader);
 }
+
 void UpdateSettingsPort(CpuContext*) {
     UpdateSettings();
 }
@@ -356,27 +411,33 @@ namespace SdkMix {
 void InitChannel(uint32_t voice, uint32_t mode, int32_t input, uint32_t auxA, uint32_t auxB, uint32_t auxC, uint32_t pan, uint32_t span, uint32_t fader) {
     ::InitChannel(voice, mode, input, auxA, auxB, auxC, pan, span, fader);
 }
+
 void ReleaseChannel(uint32_t voice) {
     FlatWrite32(Channel(voice) + kVoice, 0);
 }
+
 void SetInput(uint32_t voice, int32_t db) {
     SetField(voice, kInput, uint32_t(db), kInputDirty);
 }
+
 void SetPan(uint32_t voice, int32_t pan) {
     const uint32_t c = Channel(voice);
     FlatWrite32(c + kPan, ClampPan(pan));
     ::SetPan(c);
     FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
 }
+
 void SetSPan(uint32_t voice, int32_t span) {
     const uint32_t c = Channel(voice);
     FlatWrite32(c + kSPan, ClampPan(span));
     ::SetPan(c);
     FlatWrite32(c + kMode, FlatRead32(c + kMode) | kMixDirty);
 }
+
 void UpdateSettings() {
     ::UpdateSettings();
 }
+
 uint32_t SoundMode() {
     return FlatRead32(kSoundMode);
 }
@@ -390,38 +451,49 @@ void func_804C4750(CpuContext*);
 void MH3_MIXInit(CpuContext* cpu) {
     PortCheck::Call(cpu, "MIXInit", func_804C2D60, InitPort);
 }
+
 void MH3_MIXQuit(CpuContext*) {
     FlatWrite32(kChannels, 0);
     FlatWrite32(kRemotes, 0);
     FlatWrite32(kInitialized, 0);
 }
+
 void MH3_MIXSetSoundMode(CpuContext* cpu) {
     FlatWrite32(kSoundMode, cpu->gpr[3]);
 }
+
 void MH3_MIXInitChannel(CpuContext* cpu) {
     PortCheck::Call(cpu, "MIXInitChannel", func_804C2EC0, InitChannelPort);
 }
+
 void MH3_MIXReleaseChannel(CpuContext* cpu) {
     SdkMix::ReleaseChannel(cpu->gpr[3]);
 }
+
 void MH3_MIXSetInput(CpuContext* cpu) {
     SdkMix::SetInput(cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
+
 void MH3_MIXSetAuxA(CpuContext* cpu) {
     SetField(cpu->gpr[3], kAuxA, cpu->gpr[4], kMixDirty);
 }
+
 void MH3_MIXSetAuxB(CpuContext* cpu) {
     SetField(cpu->gpr[3], kAuxB, cpu->gpr[4], kMixDirty);
 }
+
 void MH3_MIXSetPan(CpuContext* cpu) {
     SdkMix::SetPan(cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
+
 void MH3_MIXSetSPan(CpuContext* cpu) {
     SdkMix::SetSPan(cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
+
 void MH3_MIXSetFader(CpuContext* cpu) {
     SetField(cpu->gpr[3], kFader, cpu->gpr[4], kMixDirty);
 }
+
 void MH3_MIXUpdateSettings(CpuContext* cpu) {
     PortCheck::Call(cpu, "MIXUpdateSettings", func_804C4750, UpdateSettingsPort);
 }

@@ -45,12 +45,14 @@ class FastHasher {
             return add(value == 0 ? 0u : std::bit_cast<uint32_t>(value));
         } else {
             static_assert(std::is_integral_v<T> && sizeof(T) <= 8, "FastHasher hashes integers, enums, pointers and floats");
+
             if constexpr (sizeof(T) > 4)
                 Mix(uint32_t(uint64_t(value) >> 32));
             Mix(uint32_t(value));
             return *this;
         }
     }
+
     uint32_t finish() const {
         uint32_t h = h_;
         h ^= h >> 16;
@@ -120,6 +122,7 @@ class FastMap {
             if (skip)
                 Skip();
         }
+
         template <bool C = Const, typename = std::enable_if_t<C>>
         Iter(const Iter<false>& other) : map_(other.map_), i_(other.i_) {}
         reference operator*() const { return *map_->slots_[i_]; }
@@ -129,11 +132,13 @@ class FastMap {
             Skip();
             return *this;
         }
+
         Iter operator++(int) {
             Iter old = *this;
             ++*this;
             return old;
         }
+
         friend bool operator==(const Iter& a, const Iter& b) { return a.i_ == b.i_; }
         friend bool operator!=(const Iter& a, const Iter& b) { return a.i_ != b.i_; }
         friend class FastMap;
@@ -151,11 +156,14 @@ class FastMap {
         if (this != &other) {
             clear();
             reserve(other.size_);
+
             for (const auto& item : other)
                 try_emplace(item.first, item.second);
         }
+
         return *this;
     }
+
     FastMap& operator=(FastMap&& other) noexcept {
         if (this != &other) {
             clear();
@@ -165,8 +173,10 @@ class FastMap {
             shift_ = 32;
             Swap(other);
         }
+
         return *this;
     }
+
     ~FastMap() { clear(); }
 
     size_t size() const { return size_; }
@@ -183,16 +193,20 @@ class FastMap {
         for (value_type*& slot : slots_) {
             if (Live(slot))
                 delete slot;
+
             slot = nullptr;
         }
+
         size_ = used_ = 0;
     }
 
     // Room for `n` entries without a rehash.
     void reserve(size_t n) {
         size_t capacity = 8;
+
         while (capacity < n * 2)
             capacity *= 2;
+
         if (capacity > slots_.size())
             Rehash(capacity);
     }
@@ -204,57 +218,75 @@ class FastMap {
 
     V& at(const K& key) {
         const uint32_t i = Find(key);
+
         if (i == slots_.size())
             throw std::out_of_range("FastMap::at");
+
         return slots_[i]->second;
     }
+
     const V& at(const K& key) const {
         const uint32_t i = Find(key);
+
         if (i == slots_.size())
             throw std::out_of_range("FastMap::at");
+
         return slots_[i]->second;
     }
+
     V& operator[](const K& key) { return try_emplace(key).first->second; }
 
     template <typename... Args>
     std::pair<iterator, bool> try_emplace(const K& key, Args&&... args) {
         bool inserted;
         const uint32_t i = Slot(key, inserted);
+
         if (inserted)
             slots_[i] = new value_type(std::piecewise_construct, std::forward_as_tuple(key), std::forward_as_tuple(std::forward<Args>(args)...));
+
         return {iterator(this, i, false), inserted};
     }
+
     template <typename M>
     std::pair<iterator, bool> insert_or_assign(const K& key, M&& value) {
         auto result = try_emplace(key, std::forward<M>(value));
+
         if (!result.second)
             result.first->second = std::forward<M>(value);
+
         return result;
     }
+
     template <typename M>
     std::pair<iterator, bool> emplace(const K& key, M&& value) {
         return try_emplace(key, std::forward<M>(value));
     }
+
     std::pair<iterator, bool> insert(const value_type& item) { return try_emplace(item.first, item.second); }
 
     size_t erase(const K& key) {
         const uint32_t i = Find(key);
+
         if (i == slots_.size())
             return 0;
+
         Remove(i);
         return 1;
     }
+
     iterator erase(const_iterator position) {
         const uint32_t i = position.i_;
         Remove(i);
         return iterator(this, i + 1, true);
     }
+
     iterator erase(iterator position) { return erase(const_iterator(position)); }
 
     // Erases every entry `pred(entry)` holds for; returns how many.
     template <typename Pred>
     size_t erase_if(Pred pred) {
         const uint32_t before = size_;
+
         for (uint32_t i = 0; i < slots_.size(); ++i)
             if (Live(slots_[i]) && pred(*slots_[i]))
                 Remove(i);
@@ -268,9 +300,11 @@ class FastMap {
 
     static uint32_t Hash(const K& key) {
         const uint64_t x = uint64_t(H{}(key));
+
         // Fibonacci hashing: the top bits of the product are the bucket.
         return (uint32_t(x) ^ uint32_t(x >> 32) * 0x85EBCA6Bu) * 0x9E3779B1u;
     }
+
     uint32_t Mask() const { return uint32_t(slots_.size()) - 1; }
     uint32_t Home(const K& key) const { return shift_ >= 32 ? 0 : Hash(key) >> shift_; }
 
@@ -278,11 +312,15 @@ class FastMap {
     uint32_t Find(const K& key) const {
         if (size_ == 0)
             return uint32_t(slots_.size());
+
         const uint32_t mask = Mask();
+
         for (uint32_t i = Home(key);; i = (i + 1) & mask) {
             const value_type* p = slots_[i];
+
             if (!p)
                 return uint32_t(slots_.size());
+
             if (p != Tomb() && p->first == key)
                 return i;
         }
@@ -292,18 +330,24 @@ class FastMap {
     uint32_t Slot(const K& key, bool& inserted) {
         if ((used_ + 1) * 2 > slots_.size())
             Rehash(size_ * 4 + 2 > slots_.size() ? (slots_.empty() ? 8 : slots_.size() * 2) : slots_.size());
+
         const uint32_t mask = Mask();
         uint32_t tomb = UINT32_MAX;
+
         for (uint32_t i = Home(key);; i = (i + 1) & mask) {
             value_type* p = slots_[i];
+
             if (!p) {
                 inserted = true;
                 ++size_;
+
                 if (tomb != UINT32_MAX)
                     return tomb;
+
                 ++used_;
                 return i;
             }
+
             if (p == Tomb()) {
                 if (tomb == UINT32_MAX)
                     tomb = i;
@@ -325,17 +369,23 @@ class FastMap {
         old.swap(slots_);
         slots_.assign(capacity, nullptr);
         uint32_t bits = 0;
+
         while ((size_t(1) << bits) < capacity)
             ++bits;
+
         shift_ = 32 - bits;
         used_ = size_;
         const uint32_t mask = Mask();
+
         for (value_type* p : old) {
             if (!Live(p))
                 continue;
+
             uint32_t i = Home(p->first);
+
             while (slots_[i])
                 i = (i + 1) & mask;
+
             slots_[i] = p;
         }
     }
@@ -377,14 +427,17 @@ class FastSet {
             ++it_;
             return *this;
         }
+
         const_iterator operator++(int) {
             const_iterator old = *this;
             ++it_;
             return old;
         }
+
         friend bool operator==(const const_iterator& a, const const_iterator& b) { return a.it_ == b.it_; }
         friend bool operator!=(const const_iterator& a, const const_iterator& b) { return a.it_ != b.it_; }
     };
+
     using iterator = const_iterator;
 
     size_t size() const { return map_.size(); }
@@ -402,6 +455,7 @@ class FastSet {
         const auto [it, inserted] = map_.try_emplace(key);
         return {const_iterator(it), inserted};
     }
+
     size_t erase(const K& key) { return map_.erase(key); }
     const_iterator erase(const_iterator position) { return const_iterator(map_.erase(position.it_)); }
     template <typename Pred>

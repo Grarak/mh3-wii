@@ -164,6 +164,7 @@ void GDSetSpecularDir(GXLightID light, f32 nx, f32 ny, f32 nz) {
     hz = 1.0f + -nz;
 
     mag = hx * hx + hy * hy + hz * hz;
+
     if (mag != 0.0f) {
         mag = 1.0f / sqrtf(mag);
     }
@@ -209,8 +210,10 @@ void GDSetChanCtrl(GXChannelID chan, u8 enable, GXColorSrc amb_src, GXColorSrc m
 
 u16 __GDLightID2Index(GXLightID id) {
   u16 idx = 0x1F - std::countl_zero((u32) id);
+
   if (idx > 7) {
     idx = 0;
   }
+
   return idx;
 }

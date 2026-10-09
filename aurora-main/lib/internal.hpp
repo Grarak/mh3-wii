@@ -166,10 +166,12 @@ public:
     assert(!empty());
     return ptr[0];
   }
+
   const T& back() const {
     assert(!empty());
     return ptr[length - 1];
   }
+
   const T& operator[](size_t i) const {
     assert(i < length && "Invalid index!");
     return ptr[i];

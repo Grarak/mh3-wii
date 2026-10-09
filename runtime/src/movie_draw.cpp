@@ -57,14 +57,17 @@ static void MovieDrawFrame(CpuContext* ctx) {
     Memory::Write32(ctx->gpr[1], saved.gpr[1]);
     auto call = [ctx](uint32_t fn, std::initializer_list<uint32_t> ints = {}) {
         uint32_t r = 3;
+
         for (uint32_t v : ints)
             ctx->gpr[r++] = v;
+
         InvokeIndirectCpu(fn, ctx);
         return ctx->gpr[3];
     };
 
     Memory::Write32(kMovie + kRetraceStamp, Memory::Read32(sda + uint32_t(kRetraceCount)));
     const uint32_t frames = Memory::Read8(kMovie + kFrameDrawn) ? GameStep::Ticks() : 1;
+
     for (uint32_t i = 0; i < frames; ++i) {
         if (Memory::Read8(kResetting) == 0) {
             if (call(DecodeFrame) == 1) {
@@ -75,8 +78,10 @@ static void MovieDrawFrame(CpuContext* ctx) {
             }
         }
     }
+
     const uint32_t rmode = Memory::Read32(sda + uint32_t(kRenderMode));
     const uint32_t width = Memory::Read32(kMovie + kMovieWidth), height = Memory::Read32(kMovie + kMovieHeight);
+
     // DrawFrame takes the position as s16 (a taller movie than the EFB starts
     // above it) and the size too.
     const uint32_t x = (Memory::Read16(rmode + 4) - width) >> 1;

@@ -33,14 +33,17 @@ void GXInsertDebugMarker(const char* label) {
 
 void AuroraSetViewportPolicy(AuroraViewportPolicy policy) {
   const bool changed = g_gxState.viewportPolicy != policy;
+
   if (changed) {
     // Finish commands using the old framebuffer mapping before changing it.
     aurora::gx::fifo::drain();
   }
+
   g_gxState.viewportPolicy = policy;
   aurora::window::set_frame_buffer_aspect_fit(policy == AURORA_VIEWPORT_FIT);
   aurora::window::set_force_aspect_16_9(policy == AURORA_VIEWPORT_16_9);
   aurora::window::set_present_surface_fill(policy == AURORA_VIEWPORT_STRETCH);
+
   if (changed) {
     // Reapply the guest viewport and scissor after a resize.
     aurora::gx::set_logical_viewport(g_gxState.logicalViewport);
@@ -51,9 +54,11 @@ void AuroraSetViewportPolicy(AuroraViewportPolicy policy) {
 void AuroraGetRenderSize(u32* width, u32* height) {
   // The guest CPU thread uses this safe render-size value outside render passes.
   const auto renderSize = aurora::gfx::get_frame_buffer_size();
+
   if (width != nullptr) {
     *width = renderSize.x;
   }
+
   if (height != nullptr) {
     *height = renderSize.y;
   }
@@ -61,9 +66,11 @@ void AuroraGetRenderSize(u32* width, u32* height) {
 
 void AuroraGetSurfaceSize(u32* width, u32* height) {
   const auto windowSize = aurora::window::get_window_size();
+
   if (width != nullptr) {
     *width = windowSize.native_fb_width;
   }
+
   if (height != nullptr) {
     *height = windowSize.native_fb_height;
   }

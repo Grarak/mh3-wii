@@ -51,6 +51,7 @@ struct PathPose {
         for (int i = 0; i < 8; ++i)
             v[i] = Memory::ReadFloat32(script + kOffsets[i]);
     }
+
     void Write(uint32_t script) const {
         for (int i = 0; i < 8; ++i)
             Memory::WriteFloat32(script + kOffsets[i], v[i]);
@@ -71,13 +72,16 @@ static void CameraScriptInterpolatePort(CpuContext* ctx) {
     const uint32_t script = ctx->gpr[4];
     const int16_t left = int16_t(Memory::Read16(script + kLeft));
     const int16_t total = int16_t(Memory::Read16(script + kTotal));
+
     // The countdown runs after this call: it has counted every tick before this
     // step, so this step's time is ticks + fraction - 1 past `left`.
     const double pending = Pending();
+
     if (total < 1 || pending == 0.0) {
         func_802BD3A0(ctx);
         return;
     }
+
     const double now = std::clamp(double(left) - pending, 0.0, double(total));
     const int32_t scale = std::max(1, std::min(256, 32767 / total));
     Memory::Write16(script + kLeft, uint16_t(int16_t(std::lround(now * scale))));
@@ -157,16 +161,21 @@ uint32_t SeekKey(uint32_t keys, int32_t half) {
     static int32_t lastHalf;
     const uint8_t* base = GuestFlat::Host(keys);
     uint32_t i = 0;
+
     if (keys == lastKeys && half >= lastHalf && lastIndex) {
         const int32_t before = int32_t(Word(base + (lastIndex - 1) * kKeyBytes));
+
         if (before >= 0 && before < lastHalf)
             i = lastIndex;
     }
+
     for (;; ++i) {
         const int32_t key = int32_t(Word(base + i * kKeyBytes));
+
         if (key < 0 || key >= half)
             break;
     }
+
     lastKeys = keys, lastIndex = i, lastHalf = half;
     return i;
 }
@@ -180,14 +189,18 @@ uint32_t EvaluatePath(uint32_t script, uint32_t flags, uint32_t keys, uint32_t s
     uint8_t* w = GuestFlat::Host(script);
     const uint8_t* k = GuestFlat::Host(keys) + start * kKeyBytes;
     int32_t key;
+
     for (;; k += kKeyBytes) {
         key = int32_t(Word(k));
+
         if (key < 0)
             break;
+
         if (key == frame) {
             CopyKey(w, k);
             break;
         }
+
         if (frame < key) {
             // t and every step rounded to single, as fdivs and the paired-single
             // subtract, scale and add round them.
@@ -200,21 +213,26 @@ uint32_t EvaluatePath(uint32_t script, uint32_t flags, uint32_t keys, uint32_t s
                 d = d * t;
                 PutFloat(w + to, d + a);
             };
+
             for (uint32_t i = 0; i < 12; i += 4) {
                 lerp(kEye + i, 0xC + i);
                 lerp(kTarget + i, 0x18 + i);
             }
+
             lerp(kFovY, 8);
             lerp(kAspect, 4);
             break;
         }
     }
+
     if (key >= 0)
         return 0;
+
     if (flags & 8) {
         CopyKey(w, k - kKeyBytes);
         return 0;
     }
+
     return 1;
 }
 
@@ -226,16 +244,20 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
     const uint32_t flags = PathFlags(script);
     const uint32_t keys = MemoryInline::FlatRead32(script + kPathKeys);
     const double pending = Pending();
+
     if (pending == 0.0) {
         if (flags & 3)
             func_802BD938(ctx);
         else
             ctx->gpr[3] = EvaluatePath(script, flags, keys, SeekKey(keys, HalfFrames(frame)));
+
         return;
     }
+
     const double position = std::max(0.0, double(frame) + pending);
     const int32_t low = int32_t(std::floor(position));
     const float blend = float(position - low);
+
     // Evaluate at the counted frame for the result (done or not), then at the
     // two frames around the position for the pose.
     if (!(flags & 3)) {
@@ -243,38 +265,49 @@ static void CameraPathEvaluatePort(CpuContext* ctx) {
         auto evaluate = [&](int32_t at, PathPose* pose) {
             Memory::Write16(script + kFrame, uint16_t(int16_t(at)));
             const uint32_t done = EvaluatePath(script, flags, keys, start);
+
             if (pose)
                 pose->Read(script);
+
             return done;
         };
+
         const uint32_t result = evaluate(frame, nullptr);
         PathPose a, b;
         evaluate(low, &a);
         evaluate(low + 1, &b);
+
         for (int i = 0; i < 8; ++i)
             a.v[i] += (b.v[i] - a.v[i]) * blend;
+
         a.Write(script);
         Memory::Write16(script + kFrame, uint16_t(frame));
         ctx->gpr[3] = result;
         return;
     }
+
     // The original changes volatile registers: each run starts from the entry's.
     const CpuContext entry = *ctx;
     auto evaluate = [&](int32_t at, PathPose* pose) {
         *ctx = entry;
         Memory::Write16(script + kFrame, uint16_t(int16_t(at)));
         func_802BD938(ctx);
+
         if (pose)
             pose->Read(script);
+
         return ctx->gpr[3];
     };
+
     const uint32_t result = evaluate(frame, nullptr);
     const CpuContext after = *ctx;
     PathPose a, b;
     evaluate(low, &a);
     evaluate(low + 1, &b);
+
     for (int i = 0; i < 8; ++i)
         a.v[i] += (b.v[i] - a.v[i]) * blend;
+
     a.Write(script);
     Memory::Write16(script + kFrame, uint16_t(frame));
     *ctx = after;

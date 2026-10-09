@@ -57,9 +57,11 @@ File* Directory::getFirstFreeFile(const char* game, const char* maker, const cha
   }
 
   *iter = File(filename);
+
   if (game != nullptr && std::strlen(game) == 4) {
     std::memcpy(iter->m_game, game, 4);
   }
+
   if (maker != nullptr && std::strlen(maker) == 2) {
     std::memcpy(iter->m_maker, maker, 2);
   }
@@ -76,12 +78,14 @@ File* Directory::getFirstNonFreeFile(uint32_t start, const char* game, const cha
 
         const auto* const game_ptr = reinterpret_cast<const char*>(file.m_game);
         const auto game_size = 4;
+
         if (game != nullptr && std::strlen(game) == game_size && std::strncmp(game_ptr, game, game_size) != 0) {
           return false;
         }
 
         const auto* const maker_ptr = reinterpret_cast<const char*>(file.m_maker);
         const auto maker_size = 2;
+
         if (maker != nullptr && std::strlen(maker) == maker_size && std::strncmp(maker_ptr, maker, maker_size) != 0) {
           return false;
         }
@@ -99,11 +103,13 @@ File* Directory::getFirstNonFreeFile(uint32_t start, const char* game, const cha
 File* Directory::getFile(const char* game, const char* maker, const char* filename) {
   const auto iter = std::find_if(std::begin(data.m_files), std::end(data.m_files), [=](const auto& file) {
     const auto game_size = 4;
+
     if (game != nullptr && std::strlen(game) == game_size && std::memcmp(file.m_game, game, game_size) != 0) {
       return false;
     }
 
     const auto maker_size = 2;
+
     if (maker != nullptr && std::strlen(maker) == maker_size && std::memcmp(file.m_maker, maker, maker_size) != 0) {
       return false;
     }

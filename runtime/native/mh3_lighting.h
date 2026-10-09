@@ -24,6 +24,7 @@ enum {
 typedef struct {
     uint8_t r, g, b, a;
 } mh3_rgba8;
+
 typedef struct {
     uint32_t flags;
     mh3_rgba8 color;
@@ -33,6 +34,7 @@ typedef struct {
      * set_direction(). Specular view preparation replaces it by a half vector. */
     mh3_vec3 direction;
 } mh3_light;
+
 typedef struct {
     int8_t light[8], ambient;
 } mh3_light_set;

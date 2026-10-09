@@ -40,6 +40,7 @@ struct GXLightObj_ {
   float ny = 0.f;
   float nz = 0.f;
 };
+
 static_assert(sizeof(GXLightObj_) <= sizeof(GXLightObj), "GXLightObj too small!");
 
 #if GX_IS_WII
@@ -66,6 +67,7 @@ constexpr u32 MaxIndStages = GX_MAX_INDTEXSTAGE;
 constexpr u32 MaxIndTexMtxs = 3;
 constexpr u32 MaxVtxFmt = GX_MAX_VTXFMT;
 constexpr u32 MaxPnMtx = (GX_PNMTX9 / 3) + 1;
+
 // Position and texture matrices share one shader array (`ubuf.postex_mtx`), mirroring XF matrix memory: rows 0..29 (slots 0..9) are position matrices and rows 30..59 (slots 10..19) are texture matrices.
 constexpr u32 MaxPostexMtx = MaxPnMtx + MaxTexMtx;
 constexpr u32 MaxIndexAttr = 12; // VA_POS -> VA_TEX7
@@ -82,6 +84,7 @@ struct TevPass {
   bool operator==(const TevPass& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
   bool operator!=(const TevPass& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(std::has_unique_object_representations_v<TevPass<GXTevColorArg, GX_CC_ZERO>>);
 static_assert(std::has_unique_object_representations_v<TevPass<GXTevAlphaArg, GX_CA_ZERO>>);
 struct TevOp {
@@ -97,6 +100,7 @@ struct TevOp {
   bool operator==(const TevOp& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
   bool operator!=(const TevOp& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(std::has_unique_object_representations_v<TevOp>);
 struct TevStage {
   TevPass<GXTevColorArg, GX_CC_ZERO> colorPass;
@@ -125,6 +129,7 @@ struct TevStage {
   bool operator==(const TevStage& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
   bool operator!=(const TevStage& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(std::has_unique_object_representations_v<TevStage>);
 struct IndStage {
   GXTexCoordID texCoordId;
@@ -132,7 +137,9 @@ struct IndStage {
   GXIndTexScale scaleS;
   GXIndTexScale scaleT;
 };
+
 static_assert(std::has_unique_object_representations_v<IndStage>);
+
 // For shader generation
 struct ColorChannelConfig {
   GXColorSrc matSrc = GX_SRC_REG;
@@ -147,13 +154,16 @@ struct ColorChannelConfig {
   bool operator==(const ColorChannelConfig& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
   bool operator!=(const ColorChannelConfig& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(std::has_unique_object_representations_v<ColorChannelConfig>);
+
 // For uniform generation
 struct ColorChannelState {
   Vec4<float> matColor;
   Vec4<float> ambColor;
   GX::LightMask lightMask;
 };
+
 struct TcgConfig {
   GXTexGenType type = GX_TG_MTX2x4;
   GXTexGenSrc src = GX_MAX_TEXGENSRC;
@@ -167,6 +177,7 @@ struct TcgConfig {
   bool operator==(const TcgConfig& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
   bool operator!=(const TcgConfig& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(std::has_unique_object_representations_v<TcgConfig>);
 struct FogState {
   GXFogType type = GX_FOG_NONE;
@@ -175,6 +186,7 @@ struct FogState {
   float c = 0.f;
   float aRaw = 0.f;
   Vec4<float> color;
+
   // Raw encoded register values for A/B reconstruction across separate BP writes
   u32 fog0Raw = 0; // 0xEE: encoded A parameter
   u32 fog1Raw = 0; // 0xEF: B mantissa
@@ -186,8 +198,10 @@ struct FogState {
     return type == rhs.type && a == rhs.a && b == rhs.b && c == rhs.c && aRaw == rhs.aRaw && color == rhs.color &&
            bMagnitude == rhs.bMagnitude && bShift == rhs.bShift;
   }
+
   bool operator!=(const FogState& rhs) const { return !(*this == rhs); }
 };
+
 struct TevSwap {
   GXTevColorChan red = GX_CH_RED;
   GXTevColorChan green = GX_CH_GREEN;
@@ -198,6 +212,7 @@ struct TevSwap {
   bool operator!=(const TevSwap& rhs) const { return !(*this == rhs); }
   explicit operator bool() const { return !(*this == TevSwap{}); }
 };
+
 static_assert(std::has_unique_object_representations_v<TevSwap>);
 struct AlphaCompare {
   GXCompare comp0 = GX_ALWAYS;
@@ -210,16 +225,19 @@ struct AlphaCompare {
   bool operator!=(const AlphaCompare& rhs) const { return !(*this == rhs); }
   explicit operator bool() const { return comp0 != GX_ALWAYS || comp1 != GX_ALWAYS || op == GX_AOP_XOR; }
 };
+
 static_assert(std::has_unique_object_representations_v<AlphaCompare>);
 struct IndTexMtxInfo {
   Mat3x2<float> mtx;
   s8 scaleExp = 0;
+
   // Accumulated adjScale bits from BP registers (2 bits per row, 3 rows)
   u8 adjScaleRaw = 0;
 
   bool operator==(const IndTexMtxInfo& rhs) const { return mtx == rhs.mtx && scaleExp == rhs.scaleExp; }
   bool operator!=(const IndTexMtxInfo& rhs) const { return !(*this == rhs); }
 };
+
 struct TexCoordScale {
   u16 scaleS = 0; // texture width - 1
   u16 scaleT = 0; // texture height - 1
@@ -235,8 +253,10 @@ struct TexCoordScale {
            cylWrapS == rhs.cylWrapS && cylWrapT == rhs.cylWrapT && lineOffset == rhs.lineOffset &&
            pointOffset == rhs.pointOffset;
   }
+
   bool operator!=(const TexCoordScale& rhs) const { return !(*this == rhs); }
 };
+
 struct VtxAttrFmt {
   GXCompCnt cnt;
   GXCompType type;
@@ -245,15 +265,18 @@ struct VtxAttrFmt {
   u8 _p2 = 0;
   u8 _p3 = 0;
 };
+
 static_assert(std::has_unique_object_representations_v<VtxAttrFmt>);
 struct VtxFmt {
   std::array<VtxAttrFmt, MaxVtxAttr> attrs;
 };
+
 static_assert(std::has_unique_object_representations_v<VtxFmt>);
 struct PnMtx {
   Mat3x4<float> pos;
   Mat3x4<float> nrm;
 };
+
 static_assert(sizeof(PnMtx) == sizeof(Mat3x4<float>) * 2);
 struct Light {
   Vec4<float> pos{0.f, 0.f, 0.f};
@@ -265,8 +288,10 @@ struct Light {
   bool operator==(const Light& rhs) const {
     return pos == rhs.pos && dir == rhs.dir && color == rhs.color && cosAtt == rhs.cosAtt && distAtt == rhs.distAtt;
   }
+
   bool operator!=(const Light& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(sizeof(Light) == 80);
 struct Fog {
   Vec4<float> color;
@@ -277,6 +302,7 @@ struct Fog {
   Vec4<float> rangeBase;
   std::array<Vec4<float>, 3> rangeK;
 };
+
 static_assert(sizeof(Fog) == 96);
 struct AttrArray {
   const void* data;
@@ -285,9 +311,11 @@ struct AttrArray {
   bool le = true;
   gfx::Range cachedRange;
 };
+
 inline bool operator==(const AttrArray& lhs, const AttrArray& rhs) {
   return lhs.data == rhs.data && lhs.size == rhs.size && lhs.stride == rhs.stride && lhs.le == rhs.le;
 }
+
 inline bool operator!=(const AttrArray& lhs, const AttrArray& rhs) { return !(lhs == rhs); }
 
 // Stamps GXState::pipelineStateGeneration, both when a GXState is constructed and on every pipeline-state write.
@@ -310,6 +338,7 @@ struct GXState {
 
     operator bool() const noexcept { return handle.operator bool(); }
   };
+
   std::array<PnMtx, MaxPnMtx> pnMtx;
   u32 currentPnMtx;
   Mat4x4<float> proj;
@@ -341,6 +370,7 @@ struct GXState {
   std::array<ColorChannelConfig, MaxColorChannels> colorChannelConfig;
   std::array<ColorChannelState, MaxColorChannels> colorChannelState;
   std::array<Light, GX::MaxLights> lights;
+
   // Light direction sanitization/normalization is independent of the draw.
   std::array<Light, GX::MaxLights> preparedLights;
   bool preparedLightsDirty = true;
@@ -370,6 +400,7 @@ struct GXState {
       TevSwap{GX_CH_GREEN, GX_CH_GREEN, GX_CH_GREEN, GX_CH_ALPHA},
       TevSwap{GX_CH_BLUE, GX_CH_BLUE, GX_CH_BLUE, GX_CH_ALPHA},
   };
+
   std::array<IndStage, MaxIndStages> indStages;
   std::array<IndTexMtxInfo, MaxIndTexMtxs> indTexMtxs;
   u8 indTexMask = 0;
@@ -416,6 +447,7 @@ struct GXState {
       return FastHash(key.dest, key.width, key.height, key.format);
     }
   };
+
   FastMap<const void*, CopyTextureRef> copyTextures;
   FastMap<CopyTextureKey, CopyTextureRef> copyTextureCache;
   gfx::TextureHandle displayCopyTexture;
@@ -430,15 +462,18 @@ struct GXState {
   u8 numTevStages = 0;
   u8 numTexGens = 0;
   bool stateDirty = true;
+
   // Bumped by the decoded register writes that feed populate_pipeline_config, and by nothing else.
   u32 pipelineStateGeneration = next_gx_state_epoch();
   std::array<u32, 0x100> bpRegCache = [] {
     std::array<u32, 0x100> regs{};
+
     // Force the first GEN_MODE decode without changing its masked reset value.
     regs[0x00] = 0xFF000000;
     regs[0xFE] = 0x00FFFFFF;
     return regs;
   }();
+
   // Covers XF 0x00-0x5F: the scalar bank, viewport/projection, and the TexGen and post-transform registers that every material's display list re-emits.
   std::array<u32, 0x60> xfRegCache{};
   std::array<u64, 2> xfRegCacheValid{};
@@ -446,15 +481,18 @@ struct GXState {
   [[nodiscard]] bool xfRegMatches(u32 reg, u32 val) const {
     return (xfRegCacheValid[reg >> 6] >> (reg & 63) & 1) != 0 && xfRegCache[reg] == val;
   }
+
   void storeXfReg(u32 reg, u32 val) {
     xfRegCache[reg] = val;
     xfRegCacheValid[reg >> 6] |= u64{1} << (reg & 63);
   }
+
   // For state that another register bank writes behind the XF cache's back.
   void invalidateXfReg(u32 reg) { xfRegCacheValid[reg >> 6] &= ~(u64{1} << (reg & 63)); }
 
   void clearVtxSizeCache() { lastVtxFmt = GX_MAX_VTXFMT; }
 };
+
 extern GXState g_gxState;
 struct ShaderInfo;
 struct MappedRenderState {
@@ -468,6 +506,7 @@ void clear_copy_texture_cache() noexcept;
 void clear_display_copy_cache() noexcept;
 void set_display_copy_present_source() noexcept;
 void evict_copy_texture(const void* dest) noexcept;
+
 // Drops retired GX copy targets so they cannot outlive the destination they were recycled for.
 void prune_copy_texture_pool(const void* dest) noexcept;
 void evict_texture_object(u32 texObjId) noexcept;
@@ -512,6 +551,7 @@ static inline bool is_depth_format(u32 fmt) {
   return fmt == GX_TF_Z8 || fmt == GX_TF_Z16 || fmt == GX_TF_Z24X8 || fmt == GX_CTF_Z4 || fmt == GX_CTF_Z8M ||
          fmt == GX_CTF_Z8L || fmt == GX_CTF_Z16L;
 }
+
 static inline bool copy_texture_format_compatible(GXTexFmt copyFmt, u32 sampleFmt) noexcept {
   if (static_cast<u32>(copyFmt) == sampleFmt) {
     return true;
@@ -551,6 +591,7 @@ struct AttrConfig {
   bool le = true;
   u8 nrmIndexCount = 0;  // GX_NRM_NBT3 stores three separate normal/tangent/binormal indices.
 };
+
 struct ShaderConfig {
   u8 fogType = GX_FOG_NONE;
   u8 vtxStride = 0;
@@ -572,22 +613,26 @@ struct ShaderConfig {
 
   bool operator==(const ShaderConfig& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
 };
+
 static_assert(std::has_unique_object_representations_v<ShaderConfig>);
 
 // GX supplies an opaque white color when a draw omits vertex colors.
 inline int shader_vertex_color_attr(const ShaderConfig& config, u32 channel) noexcept {
   const bool hasColor0 = config.attrs[GX_VA_CLR0].attrType != GX_NONE;
   const bool hasColor1 = config.attrs[GX_VA_CLR1].attrType != GX_NONE;
+
   if (channel == 0) {
     if (hasColor0) {
       return GX_VA_CLR0;
     }
+
     if (hasColor1) {
       return GX_VA_CLR1;
     }
   } else if (channel == 1 && hasColor0 && hasColor1) {
     return GX_VA_CLR1;
   }
+
   return -1;
 }
 
@@ -683,6 +728,7 @@ inline TevStageTextureDependency tev_stage_texture_dependency(const ShaderConfig
       .needsFixedTexcoordState = tev_stage_needs_fixed_texcoord_state(config, stageIdx),
       .combinerUsesTexture = tev_stage_combiner_uses_texture(stage),
   };
+
   dependency.canSampleTexture = dependency.texCoordId >= 0 && dependency.texMapId >= 0;
   return dependency;
 }
@@ -693,6 +739,7 @@ inline bool shader_uses_fixed_texcoord_state(const ShaderConfig& config) noexcep
       return true;
     }
   }
+
   return false;
 }
 
@@ -704,11 +751,13 @@ inline int tev_z_texture_stage(const ShaderConfig& config) noexcept {
   if (!tev_z_texture_enabled(config)) {
     return -1;
   }
+
   for (int i = static_cast<int>(config.tevStageCount) - 1; i >= 0; --i) {
     if (tev_stage_texture_dependency(config, static_cast<u32>(i)).canSampleTexture) {
       return i;
     }
   }
+
   return -1;
 }
 
@@ -716,33 +765,41 @@ struct PipelineConfig;
 
 struct GXBindGroups {
   gfx::BindGroupRef textureBindGroup;
+
   // Bind group resolved at draw-build time so that gx::render does not have to hash-map the ref again for every draw.
   const gfx::TextureBindGroup* resolvedTextureBindGroup = nullptr;
 };
+
 // Which matrix-memory slots a generated shader can actually read, and where each one lives in the compacted uniform arrays.
 struct UniformMatrixLayout {
   // `postexSlots`/`nrmSlots` entry meaning "the matrix selected by the current matrix index", which is only known per draw.
   static constexpr u8 kCurrentPnMtx = 0xFE;
+
   // `postexRemap` entry for a slot that this shader never reads.
   static constexpr u8 kAbsent = 0xFF;
 
   // Compact index -> absolute postex slot (or kCurrentPnMtx).
   std::array<u8, MaxPostexMtx> postexSlots{};
+
   // Absolute postex slot -> compact index (or kAbsent).
   std::array<u8, MaxPostexMtx> postexRemap{};
+
   // Compact index -> absolute position slot (or kCurrentPnMtx).
   std::array<u8, MaxPnMtx> nrmSlots{};
   u8 postexCount = 0;
   u8 nrmCount = 0;
+
   // Position slots 0..MaxPnMtx-1 are uploaded 1:1 at compact indices 0..9, so `current_pnmtx` and any per-vertex index need no remapping.
   bool absolutePosRegion = false;
 };
+
 // Output info from shader generation
 struct ShaderInfo {
   std::bitset<MaxTexCoord> sampledTexCoords;
   std::bitset<MaxTextures> sampledTextures;
   std::bitset<MaxKColors> sampledKColors;
   std::bitset<MaxColorChannels / 2> sampledColorChannels;
+
   // TEV color and alpha outputs are independently addressable.
   std::bitset<MaxTevRegs> loadsTevRegRgb;
   std::bitset<MaxTevRegs> loadsTevRegAlpha;
@@ -759,12 +816,15 @@ struct ShaderInfo {
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
 };
+
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};
 };
+
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept;
 gfx::PipelinePtr build_pipeline(const PipelineConfig& config, gl::ProgramPtr program) noexcept;
 gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept;
+
 // Pure material equation generator. Native mode has direct vertex attributes
 // and normalized texture coordinates; it does not consume GX state or bytes.
 // Each set bit certifies that texture unit's sampler LOD bias is exactly zero.

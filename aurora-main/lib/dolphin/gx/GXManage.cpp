@@ -70,6 +70,7 @@ static void __SetSURegs(u32 tmap, u32 tcoord) {
   u32 h = GET_REG_FIELD(__gx->tImage0[tmap], 10, 10);
   SET_REG_FIELD(0, __gx->suTs0[tcoord], 16, 0, w);
   SET_REG_FIELD(0, __gx->suTs1[tcoord], 16, 0, h);
+
   // Bias from wrap mode
   u8 s_bias = GET_REG_FIELD(__gx->tMode0[tmap], 2, 0) == 1;
   u8 t_bias = GET_REG_FIELD(__gx->tMode0[tmap], 2, 2) == 1;

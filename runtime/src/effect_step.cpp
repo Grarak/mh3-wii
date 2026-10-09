@@ -52,6 +52,7 @@ extern "C" void func_800A8E5C(CpuContext*);  // nw4r::ef::Emitter::CalcEmission(
 extern "C" void func_800AC35C(CpuContext*);  // nw4r::ef::ParticleManager::Calc()
 void ParticleManagerCalcNative(CpuContext*); // its port (particle_manager_calc.cpp)
 void EffectCalcNative(CpuContext*);          // Effect::Calc's port (effect_calc.cpp)
+
 // Native ports (ef_anim_curve.cpp, nw4r_accessors.cpp), called directly.
 extern "C" void MH3_ResEmitterNumPtclTrack(CpuContext*);
 extern "C" void MH3_ResEmitterGetPtclTrack(CpuContext*);
@@ -76,6 +77,7 @@ struct List {
 enum : uint32_t {
     kLifeActive = 1
 };
+
 enum : uint32_t {
     kEvalWait = 0
 };
@@ -103,12 +105,14 @@ enum : uint32_t {
     kParticleSeed = 0xDE,          // u16
     kParticleLife = 0xE0,          // u16
 };
+
 // Track header: u8 magic (0xAB/0xAC), u8 target offset, u8 kind, u8, u8 flags.
 enum : uint8_t {
     kTrackU8 = 0,
     kTrackF32 = 3,
     kTrackRotate = 6
 };
+
 enum : uint8_t {
     kTrackSkip = 0x08,
     kTrackEmitterTick = 0x10
@@ -118,6 +122,7 @@ using Vec3 = std::array<float, 3>;
 Vec3 ReadVec(uint32_t a) {
     return {MemoryInline::FlatReadFloat32(a), MemoryInline::FlatReadFloat32(a + 4), MemoryInline::FlatReadFloat32(a + 8)};
 }
+
 void WriteVec(uint32_t a, const Vec3& v) {
     for (int k = 0; k < 3; ++k)
         MemoryInline::FlatWriteFloat32(a + 4 * k, v[k]);
@@ -125,10 +130,12 @@ void WriteVec(uint32_t a, const Vec3& v) {
 
 constexpr size_t kCurveWords = (kParticleCurvesEnd - kParticleCurves) / 4;
 using Curves = std::array<uint32_t, kCurveWords>;
+
 // The 32 big-endian words in one pass (NEON: four byte reversals per load).
 void ReadCurves(uint32_t particle, Curves& c) {
 #if defined(__ARM_NEON)
     const uint8_t* source = GuestFlat::Host(particle + kParticleCurves);
+
     for (size_t i = 0; i < kCurveWords; i += 4)
         vst1q_u32(c.data() + i, vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(source + 4 * i))));
 #else
@@ -136,20 +143,24 @@ void ReadCurves(uint32_t particle, Curves& c) {
         c[i] = MemoryInline::FlatRead32(particle + kParticleCurves + 4 * i);
 #endif
 }
+
 Curves ReadCurves(uint32_t particle) {
     Curves c;
     ReadCurves(particle, c);
     return c;
 }
+
 void WriteCurves(uint32_t particle, const Curves& c) {
     for (size_t i = 0; i < kCurveWords; ++i)
         MemoryInline::FlatWrite32(particle + kParticleCurves + 4 * i, c[i]);
 }
+
 float F(uint32_t bits) {
     float f;
     std::memcpy(&f, &bits, 4);
     return f;
 }
+
 uint32_t Bits(float f) {
     uint32_t b;
     std::memcpy(&b, &f, 4);
@@ -178,41 +189,54 @@ class AddressMap {
         shift_ = 32 - 6;
         count_ = 0;
     }
+
     V* Find(uint32_t key) {
         for (uint32_t i = Home(key);; i = (i + 1) & mask_) {
             if (slots_[i].key == key)
                 return &slots_[i].value;
+
             if (slots_[i].key == 0)
                 return nullptr;
         }
     }
+
     V& operator[](uint32_t key) {
         if (V* v = Find(key))
             return *v;
+
         if (2 * (count_ + 1) > slots_.size())
             Rehash(uint32_t(slots_.size()) * 2);
+
         uint32_t i = Home(key);
+
         while (slots_[i].key != 0)
             i = (i + 1) & mask_;
+
         ++count_;
         slots_[i] = {key, V{}};
         return slots_[i].value;
     }
+
     void Erase(uint32_t key) {
         uint32_t i = Home(key);
+
         while (slots_[i].key != key) {
             if (slots_[i].key == 0)
                 return;
+
             i = (i + 1) & mask_;
         }
+
         // Backward-shift deletion: pull later entries of the run into the hole.
         for (uint32_t j = (i + 1) & mask_; slots_[j].key != 0; j = (j + 1) & mask_) {
             const uint32_t home = Home(slots_[j].key);
+
             if (((j - home) & mask_) >= ((j - i) & mask_)) {
                 slots_[i] = slots_[j];
                 i = j;
             }
         }
+
         slots_[i].key = 0;
         --count_;
     }
@@ -222,6 +246,7 @@ class AddressMap {
         uint32_t key; // 0: empty
         V value;
     };
+
     uint32_t Home(uint32_t key) const { return ((key >> 2) * 0x9E3779B1u) >> shift_; }
     void Rehash(uint32_t size) {
         std::vector<Slot> old = std::move(slots_);
@@ -229,10 +254,12 @@ class AddressMap {
         mask_ = size - 1;
         shift_ = 32 - uint32_t(__builtin_ctz(size));
         count_ = 0;
+
         for (const Slot& s : old)
             if (s.key != 0)
                 (*this)[s.key] = s.value;
     }
+
     std::vector<Slot> slots_;
     uint32_t mask_ = 0, shift_ = 0, count_ = 0;
 };
@@ -243,6 +270,7 @@ struct Step {
     double particleStep = 1.0; // ticks particles advance in this Effect::Calc pass
     bool particlesOnly = false;
 };
+
 Step step;
 
 // Particles whose age crosses no whole tick in the running ParticleManager::Calc.
@@ -258,22 +286,28 @@ void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t ti
     // their argument registers: call them without the indirect dispatch.
     auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
         uint32_t r = 3;
+
         for (uint32_t v : ints)
             game.cpu->gpr[r++] = v;
+
         fn(game.cpu);
         return game.cpu->gpr[3];
     };
+
     const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
     const uint32_t count = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
     const uint32_t first = tick == 0 ? 0 : native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
     const uint32_t seed = MemoryInline::FlatRead16(particle + kParticleSeed);
     const uint32_t life = MemoryInline::FlatRead16(particle + kParticleLife);
+
     for (uint32_t i = first; i < count; ++i) {
         const uint32_t track = native(MH3_ResEmitterGetPtclTrack, {res, i});
         const uint8_t magic = MemoryInline::FlatRead8(track), target = MemoryInline::FlatRead8(track + 1);
         const uint8_t kind = MemoryInline::FlatRead8(track + 2), flags = MemoryInline::FlatRead8(track + 4);
+
         if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2)
             continue;
+
         if (kind == kTrackU8)
             native(MH3_AnimCurveExecuteU8, {track, particle + kParticleCurves + target, tick, seed, life});
         else if (kind == kTrackF32)
@@ -298,8 +332,10 @@ struct CurveFootprint {
     std::array<uint8_t, kCurveWords> word{}, bytes{};
     void Index() {
         count = 0;
+
         for (uint32_t i = 0; i < kCurveWords; ++i) {
             const uint8_t mask = uint8_t(bits[i / 8] >> (4 * (i % 8)) & 15);
+
             if (mask) {
                 word[count] = uint8_t(i);
                 bytes[count++] = mask;
@@ -307,27 +343,35 @@ struct CurveFootprint {
         }
     }
 };
+
 CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
     auto native = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints) {
         uint32_t r = 3;
+
         for (uint32_t v : ints)
             game.cpu->gpr[r++] = v;
+
         fn(game.cpu);
         return game.cpu->gpr[3];
     };
+
     constexpr uint32_t kChannelCount = 0x80592428, kChannelBound = 0x80592528; // u8[256] tables
     CurveFootprint f;
     const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
     const uint32_t count = native(MH3_ResEmitterNumPtclTrack, {res}) & 0xFFFF;
     const uint32_t first = native(MH3_ResEmitterNumPtclInitTrack, {res}) & 0xFFFF;
+
     for (uint32_t i = first; i < count; ++i) {
         const uint32_t track = native(MH3_ResEmitterGetPtclTrack, {res, i});
         const uint8_t magic = MemoryInline::FlatRead8(track), target = MemoryInline::FlatRead8(track + 1);
         const uint8_t kind = MemoryInline::FlatRead8(track + 2), mask = MemoryInline::FlatRead8(track + 3);
         const uint8_t flags = MemoryInline::FlatRead8(track + 4);
+
         if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2)
             continue;
+
         uint32_t base, width;
+
         if (kind == kTrackU8)
             base = target, width = 1;
         else if (kind == kTrackF32)
@@ -336,21 +380,27 @@ CurveFootprint FootprintOf(GuestCall& game, uint32_t manager) {
             base = kParticleRotate - kParticleCurves, width = 4;
         else
             continue;
+
         if (MemoryInline::FlatRead8(kChannelCount + mask) == 0)
             continue;
+
         const uint32_t bound = MemoryInline::FlatRead8(kChannelBound + mask);
         uint32_t at = base;
+
         for (uint32_t bit = 1; bit <= bound; bit = (bit << 1) & 0xFFFF, at += width) {
             if ((mask & bit) == 0)
                 continue;
+
             if (at + width > kParticleCurvesEnd - kParticleCurves) {
                 f.inside = false;
                 return f;
             }
+
             for (uint32_t b = at; b < at + width; ++b)
                 f.bits[b / 32] |= 1u << (b % 32);
         }
     }
+
     f.Index();
     return f;
 }
@@ -366,30 +416,38 @@ Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, co
     auto ramp = [](double in, double out, double slack) {
         return std::fabs(out - in) <= 0.1 * std::max(std::fabs(in), std::fabs(out)) + slack;
     };
+
     Curves s = kept;
     constexpr size_t colours = (kParticleColours - kParticleCurves) / 4;
     constexpr size_t floats = (kParticleFloats - kParticleCurves) / 4;
     constexpr size_t rotate = (kParticleRotate - kParticleCurves) / 4;
     constexpr size_t translate = (kParticleTexTranslate - kParticleCurves) / 4;
+
     for (size_t i = 0; i < colours; ++i) {
         uint32_t v = 0;
+
         for (int shift = 24; shift >= 0; shift -= 8) {
             // Guest bytes are big-endian: the top byte is the word's first.
             if (owned && !owned->Has(i * 4 + (24 - shift) / 8)) {
                 v |= kept[i] & 0xFFu << shift;
                 continue;
             }
+
             const float w = float(before[i] >> shift & 0xFF);
             const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
             const float shown = ramp(x - w, y - x, 1.0) ? x + (y - x) * t : x;
             v |= uint32_t(shown + 0.5f) << shift; // shown >= 0: lround without the libm call
         }
+
         s[i] = v;
     }
+
     for (size_t i = colours; i < floats; ++i) {
         if (owned && !owned->Has(i * 4))
             continue;
+
         const float w = F(before[i]), x = F(a[i]), y = F(b[i]);
+
         // A rotation curve wrapping between the two ticks snaps. Texture
         // offsets step through a flipbook's frames even when evenly: never
         // blended.
@@ -397,6 +455,7 @@ Curves BlendCurves(const Curves& kept, const Curves& before, const Curves& a, co
         const bool blend = i < translate && std::isfinite(w) && std::isfinite(x) && std::isfinite(y) && !wraps && ramp(double(x) - w, double(y) - x, 1e-6);
         s[i] = blend ? Bits(x + (y - x) * t) : a[i];
     }
+
     return s;
 }
 
@@ -407,21 +466,27 @@ void BlendOwned(uint32_t particle, const Curves& kept, const Curves& before, con
     auto ramp = [](double in, double out, double slack) {
         return std::fabs(out - in) <= 0.1 * std::max(std::fabs(in), std::fabs(out)) + slack;
     };
+
     constexpr size_t colours = (kParticleColours - kParticleCurves) / 4;
     constexpr size_t floats = (kParticleFloats - kParticleCurves) / 4;
     constexpr size_t rotate = (kParticleRotate - kParticleCurves) / 4;
     constexpr size_t translate = (kParticleTexTranslate - kParticleCurves) / 4;
+
     for (uint32_t n = 0; n < owned.count; ++n) {
         const size_t i = owned.word[n];
         uint32_t v;
+
         if (i < colours) {
             v = 0;
+
             for (int k = 0; k < 4; ++k) {
                 const int shift = 24 - 8 * k;
+
                 if (!(owned.bytes[n] >> k & 1)) {
                     v |= kept[i] & 0xFFu << shift;
                     continue;
                 }
+
                 const float w = float(before[i] >> shift & 0xFF);
                 const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
                 const float shown = ramp(x - w, y - x, 1.0) ? x + (y - x) * t : x;
@@ -439,6 +504,7 @@ void BlendOwned(uint32_t particle, const Curves& kept, const Curves& before, con
         } else {
             v = kept[i];
         }
+
         MemoryInline::FlatWrite32(particle + kParticleCurves + 4 * uint32_t(i), v);
     }
 }
@@ -449,11 +515,13 @@ void CurvesAtFull(GuestCall& game, uint32_t manager, uint32_t particle, double a
     const uint32_t tick = uint32_t(at);
     const Curves kept = ReadCurves(particle);
     Curves before = kept;
+
     if (tick > 0) {
         RunCurves(game, manager, particle, tick - 1);
         before = ReadCurves(particle);
         WriteCurves(particle, kept);
     }
+
     RunCurves(game, manager, particle, tick);
     const Curves a = ReadCurves(particle);
     RunCurves(game, manager, particle, tick + 1);
@@ -471,12 +539,14 @@ struct CurveCache {
     std::array<uint32_t, 3> ticks{~0u, ~0u, ~0u};
     std::array<Curves, 3> values;
 };
+
 // The caches in a slab, the map holding slot + 1: a cache is 450 bytes, which
 // the map's rehashes and backward-shift deletions would otherwise move.
 class CurveCaches {
   public:
     CurveCache& operator[](uint32_t particle) {
         uint32_t& slot = index_[particle];
+
         if (!slot) {
             if (!free_.empty()) {
                 slot = free_.back() + 1;
@@ -487,8 +557,10 @@ class CurveCaches {
                 slot = uint32_t(slab_.size());
             }
         }
+
         return slab_[slot - 1];
     }
+
     void Erase(uint32_t particle) {
         if (const uint32_t* slot = index_.Find(particle)) {
             free_.push_back(*slot - 1);
@@ -501,6 +573,7 @@ class CurveCaches {
     std::vector<CurveCache> slab_;
     std::vector<uint32_t> free_;
 };
+
 CurveCaches curveCache;
 
 // CurvesAtFull with the evaluations reused: ParticleManager::Calc just left
@@ -509,12 +582,15 @@ CurveCaches curveCache;
 // tracks own are taken from evaluations; the rest keep the block's.
 void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, uint32_t keptTick) {
     const uint32_t tick = uint32_t(at);
+
     // The first tick runs the initial tracks too: rare, and done in full.
     if (tick == 0)
         return CurvesAtFull(game, manager, particle, at);
+
     const uint32_t res = MemoryInline::FlatRead32(manager + kManagerResource);
     const uint16_t seed = MemoryInline::FlatRead16(particle + kParticleSeed), life = MemoryInline::FlatRead16(particle + kParticleLife);
     CurveCache& cache = curveCache[particle];
+
     if (cache.res != res || cache.seed != seed || cache.life != life) {
         cache.res = res;
         cache.seed = seed;
@@ -522,6 +598,7 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
         cache.owned = FootprintOf(game, manager);
         cache.ticks = {~0u, ~0u, ~0u};
     }
+
     if (!cache.owned.inside)
         return CurvesAtFull(game, manager, particle, at);
 
@@ -531,6 +608,7 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
     const Curves kept = ReadCurves(particle);
     std::array<int, 3> slotOf{-1, -1, -1};
     bool used[3] = {}, initial = false;
+
     for (uint32_t k = 0; k < 3; ++k)
         for (int s = 0; s < 3; ++s)
             if (!used[s] && cache.ticks[s] == tick - 1 + k) {
@@ -540,10 +618,12 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
     for (uint32_t k = 0; k < 3; ++k) {
         const uint32_t want = tick - 1 + k;
         int s = slotOf[k];
+
         if (s < 0) {
             s = int(std::find(used, used + 3, false) - used);
             slotOf[k] = s, used[s] = true;
             cache.ticks[s] = want;
+
             if (want != keptTick) {
                 RunCurves(game, manager, particle, want);
                 ReadCurves(particle, cache.values[s]);
@@ -551,9 +631,11 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
                 continue;
             }
         }
+
         if (want == keptTick)
             cache.values[s] = kept;
     }
+
     // Tick 0 also ran the initial tracks, which write outside the footprint:
     // put the whole block back then.
     if (initial)
@@ -564,12 +646,14 @@ void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at, u
     // MH3_PORT_CHECK=CurvesAt: the block BlendOwned left is the whole-block
     // blend it replaces (BlendCurves, every word written).
     const bool check = PortCheck::Enabled("CurvesAt");
+
     if (check) [[unlikely]] {
         static uint64_t checks = 0, mismatches = 0;
         const Curves expected = BlendCurves(kept, cache.values[slotOf[0]], cache.values[slotOf[1]], cache.values[slotOf[2]], float(at - tick), &cache.owned);
         Curves actual;
         ReadCurves(particle, actual);
         ++checks;
+
         if (actual != expected) {
             if (++mismatches <= 20)
                 for (size_t i = 0; i < kCurveWords; ++i)
@@ -590,6 +674,7 @@ namespace EffectStep {
 std::any Save() {
     return step;
 }
+
 void Restore(const std::any& state) {
     step = std::any_cast<const Step&>(state);
 }
@@ -600,41 +685,52 @@ static void EffectCalcPort(CpuContext* ctx) {
     const bool onlyBillboard = (ctx->gpr[4] & 0xFF) != 0;
     const double scale = GameStep::Scale();
     const uint32_t ticks = GameStep::Ticks();
+
     if (onlyBillboard) {
         EffectCalcNative(ctx);
         return;
     }
+
     const CpuContext saved = *ctx;
+
     if (ticks == 0) {
         // Particles only. Emitters keep their last whole tick's positions, from
         // which emission derives the emitter's velocity.
         const List emitters{effect + kEffectEmitters};
         std::vector<std::pair<uint32_t, std::array<uint32_t, 6>>> kept;
+
         for (uint32_t e = emitters.First(); e; e = emitters.Next(e)) {
             std::array<uint32_t, 6> words;
+
             for (size_t i = 0; i < 6; ++i)
                 words[i] = MemoryInline::FlatRead32(e + kEmitterLastTranslate + i * 4);
+
             kept.emplace_back(e, words);
         }
+
         step.particleStep = scale;
         step.particlesOnly = true;
         ++step.generation;
         EffectCalcNative(ctx);
         step.particlesOnly = false;
+
         for (const auto& [e, words] : kept)
             for (size_t i = 0; i < 6; ++i)
                 MemoryInline::FlatWrite32(e + kEmitterLastTranslate + i * 4, words[i]);
     } else {
         step.particleStep = scale / ticks;
+
         for (uint32_t i = 0; i < ticks; ++i) {
             *ctx = saved;
             ++step.generation;
             EffectCalcNative(ctx);
         }
     }
+
     step.particleStep = 1.0;
     *ctx = saved;
 }
+
 extern "C" void func_800A4C20(CpuContext* ctx);
 extern "C" void MH3_EffectCalc(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
@@ -649,6 +745,7 @@ static void EmitterCalcEmitterPort(CpuContext* ctx) {
     if (!step.particlesOnly)
         func_800A8AC0(ctx);
 }
+
 extern "C" void func_800A8AC0(CpuContext* ctx);
 extern "C" void MH3_EmitterCalcEmitter(CpuContext* ctx) {
     PortCheck::Call(ctx, "EmitterCalcEmitter", func_800A8AC0, EmitterCalcEmitterPort);
@@ -659,6 +756,7 @@ static void EmitterCalcEmissionPort(CpuContext* ctx) {
     if (!step.particlesOnly)
         func_800A8E5C(ctx);
 }
+
 extern "C" void func_800A8E5C(CpuContext* ctx);
 extern "C" void MH3_EmitterCalcEmission(CpuContext* ctx) {
     PortCheck::Call(ctx, "EmitterCalcEmission", func_800A8E5C, EmitterCalcEmissionPort);
@@ -672,6 +770,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         ParticleManagerCalcNative(ctx);
         return;
     }
+
     // One frame for the whole port: Calc runs inside it, and leaving it
     // restores the caller's registers.
     GuestFrame frame(ctx, 0x20);
@@ -685,30 +784,40 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         float momentum;
         Vec3 velocity, position;
     };
+
     // Calc does not nest: one list serves every call.
     static std::vector<Work> work;
     work.clear();
+
     if (betweenTicks.Size() > 4096)
         betweenTicks.Clear();
+
     for (uint32_t p = lastCalced ? list.Next(lastCalced) : list.First(); p; p = list.Next(p)) {
         if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive || MemoryInline::FlatRead32(p + kParticleEval) != kEvalWait)
             continue;
+
         const uint16_t tick = MemoryInline::FlatRead16(p + kParticleTick);
         double age = tick, dt = step.particleStep;
         Particle* found = step.particles.Find(p);
+
         if (found) {
             const Particle& e = *found;
+
             if (e.seed == MemoryInline::FlatRead16(p + kParticleSeed) && uint32_t(e.age) == tick) {
                 age = e.age;
+
                 // Calc again in the same pass (calc remain: a particle emitted
                 // with ticks to catch up) is a whole tick.
                 if (e.generation == step.generation)
                     dt = 1.0;
             }
         }
+
         Work w{p, age, dt, MemoryInline::FlatReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity), ReadVec(p + kParticlePosition)};
+
         if (dt != 1.0)
             MemoryInline::FlatWriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
+
         if (std::floor(age + dt) == std::floor(age)) {
             // Its step entry carries the stamp; a particle on a whole tick has
             // none, and the map takes it.
@@ -717,47 +826,61 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
             else
                 betweenTicks[p] = betweenCall;
         }
+
         work.push_back(w);
     }
+
     ParticleManagerCalcNative(ctx);
     ++betweenCall; // this call's stamps no longer hold
 
     GuestCall game{ctx};
+
     for (const Work& w : work) {
         const uint32_t p = w.address;
+
         if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive) { // retired
             step.particles.Erase(p);
             curveCache.Erase(p);
             continue;
         }
+
         if (w.dt != 1.0) {
             MemoryInline::FlatWriteFloat32(p + kParticleMomentum, w.momentum);
             const Vec3 after = ReadVec(p + kParticleVelocity);
             Vec3 velocity, position = ReadVec(p + kParticlePosition), previous;
+
             for (int k = 0; k < 3; ++k) {
                 velocity[k] = float(w.velocity[k] + (after[k] - w.velocity[k]) * w.dt);
                 position[k] = float(position[k] - (after[k] - velocity[k]) * w.momentum * w.dt);
+
                 // The previous position trails by a tick's movement, as on the Wii.
                 previous[k] = float(position[k] - (position[k] - w.position[k]) / w.dt);
             }
+
             WriteVec(p + kParticleVelocity, velocity);
             WriteVec(p + kParticlePosition, position);
             WriteVec(p + kParticlePrevPosition, previous);
         }
+
         const double age = w.age + w.dt;
         MemoryInline::FlatWrite16(p + kParticleTick, uint16_t(age));
+
         if (age == std::floor(age)) {
             step.particles.Erase(p);
             continue;
         }
+
         step.particles[p] = {MemoryInline::FlatRead16(p + kParticleSeed), age, step.generation, 0};
+
         // After the tick from age k the Wii shows the curves at k: the curves
         // run one tick behind the age, here at age - 1.
         if (age <= 1.0)
             continue;
+
         CurvesAt(game, manager, p, age - 1.0, uint32_t(w.age));
     }
 }
+
 extern "C" void func_800AC35C(CpuContext* ctx);
 extern "C" void MH3_ParticleManagerCalc(CpuContext* ctx) {
     PortCheck::Call(ctx, "ParticleManagerCalc", func_800AC35C, ParticleManagerCalcPort);
@@ -769,9 +892,11 @@ extern "C" void func_800A1D0C(CpuContext* ctx);
 static void AnimCurveExecuteChildPort(CpuContext* ctx) {
     const Particle* entry = step.particles.Find(ctx->gpr[4]);
     const uint32_t* stamp = betweenTicks.Find(ctx->gpr[4]);
+
     if (!(entry && entry->between == betweenCall) && !(stamp && *stamp == betweenCall))
         func_800A1D0C(ctx);
 }
+
 extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) {
     PortCheck::Call(ctx, "AnimCurveExecuteChild", func_800A1D0C, AnimCurveExecuteChildPort);
 }

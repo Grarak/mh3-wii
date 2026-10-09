@@ -21,20 +21,24 @@ enum : uint32_t {
     kFieldFlag = 0x868,      // u8: cleared when the field starts
     kExitHook = 0x904,       // u32: a function the scene leaves to run on exit
 };
+
 constexpr uint32_t kTaskSlots = 0x8065B5D0, kTaskSize = 32;
 constexpr uint16_t kTaskNew = 8;
 enum : uint32_t {
     kSceneSlot = 4
 };
+
 enum : uint32_t {
     kTaskFunction = 4,
     kBootPhase = 8,
     kBootTimer = 12
 };
+
 enum : uint8_t {
     kBootStrapFadeIn = 2,
     kBootStrapFadeOut = 4
 };
+
 constexpr int16_t kBootStrapFadeOutEnd = 20;
 enum : uint32_t {
     BootTask = 0x80059648,
@@ -48,8 +52,10 @@ enum : uint32_t {
 // 0x80041930 StartTask(function, s16 slot): the slot restarts with `function`.
 void GameTasks::StartTask(uint32_t function, int16_t slot) {
     const uint32_t task = kTaskSlots + uint32_t(int32_t(slot)) * kTaskSize;
+
     for (uint32_t offset = 0; offset < kTaskSize; offset += 4)
         Memory::Write32(task + offset, 0);
+
     Memory::Write16(task, kTaskNew);
     Memory::Write32(task + 4, function);
 }
@@ -92,8 +98,10 @@ REGISTER_NATIVE_FUNCTION_AS(0x800419DC, MH3_StartGameModeTask, "StartGameModeTas
 extern "C" void func_800408B8(CpuContext* ctx);
 static void RunExitHookPort(CpuContext* ctx) {
     const uint32_t hook = Memory::Read32(kSystem + kExitHook);
+
     if (!hook)
         return;
+
     ctx->ctr = hook;
     InvokeIndirectCpu(hook, ctx);
 }
@@ -110,6 +118,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x800408B8, MH3_RunExitHook, "RunExitHook");
 void GameTasks::SkipStrapScreen() {
     if (Memory::Read32(kTaskSlots + kTaskFunction) != BootTask || Memory::Read8(kTaskSlots + kBootPhase) != kBootStrapFadeIn)
         return;
+
     Memory::Write8(kTaskSlots + kBootPhase, kBootStrapFadeOut);
     Memory::Write16(kTaskSlots + kBootTimer, uint16_t(kBootStrapFadeOutEnd - 1));
 }

@@ -29,6 +29,7 @@ struct Entry {
   size_t bytes;
   uint64_t used;
 };
+
 std::map<Key, Entry> cache;
 std::array<gl::TexturePtr, 8> bindings;
 struct Binding {
@@ -36,6 +37,7 @@ struct Binding {
   NativeTextureSampler sampling;
   bool valid = false;
 };
+
 std::array<Binding, 8> logicalBindings;
 std::array<float, 8> shaderLodBias{};
 std::array<NativeTexturePortableSampling, 8> portableSampling{};
@@ -45,6 +47,7 @@ void owner() {
   if (!gl::on_render_thread())
     throw std::runtime_error("Native texture changed outside graphics owner");
 }
+
 gl::SamplerDesc sampler(const NativeTextureSampler& source) {
   if (source.wrap_s > 2 || source.wrap_t > 2 || source.min_filter > 5 || source.mag_filter > 1 || source.anisotropy > 2 || !std::isfinite(source.min_lod) || !std::isfinite(source.max_lod) ||
       !std::isfinite(source.lod_bias) || source.min_lod > source.max_lod)
@@ -53,28 +56,35 @@ gl::SamplerDesc sampler(const NativeTextureSampler& source) {
   constexpr GLenum filter[]{GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST, GL_NEAREST_MIPMAP_LINEAR, GL_LINEAR_MIPMAP_LINEAR};
   return {wrap[source.wrap_s], wrap[source.wrap_t], filter[source.min_filter], filter[source.mag_filter], source.min_lod, source.max_lod, 1u << source.anisotropy};
 }
+
 void make_room(size_t bytes) {
   if (bytes > CacheBudget)
     throw std::runtime_error("Native texture exceeds resident cache budget");
   while (residentBytes > CacheBudget - bytes) {
     auto victim = cache.end();
+
     for (auto it = cache.begin(); it != cache.end(); ++it)
       if (it->second.texture.use_count() == 1 && (victim == cache.end() || it->second.used < victim->second.used))
         victim = it;
     if (victim == cache.end())
       throw std::runtime_error("Bound native textures exceed resident cache budget");
+
     residentBytes -= victim->second.bytes;
     cache.erase(victim);
   }
 }
+
 size_t rgba_allocation(const NativeTextureSource& source) {
   size_t bytes = 0;
+
   for (unsigned mip = 0; mip < source.levels; ++mip) {
     const size_t w = std::max(source.width >> mip, 1u), h = std::max(source.height >> mip, 1u);
     bytes += mip + 1 < source.levels ? size_t(std::max(std::bit_ceil(source.width) >> mip, 8u)) * std::max(std::bit_ceil(source.height) >> mip, 1u) * 4 : ((w + 7) & ~size_t(7)) * h * 4;
   }
+
   return (bytes + 63) & ~size_t(63);
 }
+
 size_t offline_allocation(const gl::NativeTextureInfo& info) {
 #ifdef AURORA_GXM
   // NativeAssets reads the complete prepared image/palette layout into CDRAM.
@@ -84,11 +94,14 @@ size_t offline_allocation(const gl::NativeTextureInfo& info) {
   // retain their native channel widths; archive padding is not GPU storage.
   const size_t pixel = gfx::native_swizzled(info.format) ? 4 : gfx::native_pixel_bytes(info.format);
   size_t bytes = 0;
+
   for (unsigned mip = 0; mip < info.mips; ++mip)
     bytes += size_t(std::max(info.width >> mip, 1u)) * std::max(info.height >> mip, 1u) * pixel;
+
   return (bytes + 63) & ~size_t(63);
 #endif
 }
+
 // NativeTextureFormatYuv420 -> linear RGBA8. The THP player's four TEV stages
 // (C0 = (-90, 0, -114, 135), K0 = (0, 0, 226, 88), K1 = (179, 0, 0, 182),
 // K2 = (255, 0, 255)) compute, with GX's konst weights (k + (k >> 7)) / 256:
@@ -109,20 +122,24 @@ void convert_yuv420(const uint8_t* planes, uint32_t width, uint32_t height, uint
   const int16x8_t k135 = vdupq_n_s16(135), k180s = vdupq_n_s16(180), k228 = vdupq_n_s16(228);
   uint8x16x4_t pixels;
   pixels.val[3] = vdupq_n_u8(255);
+
   for (uint32_t y = first; y < first + rows; ++y) {
     // I8 tiles are 8x4 texels, 32 bytes, row-major across the plane.
     const uint8_t* lumaRow = luma + size_t(y >> 2) * lumaTiles * 32 + (y & 3) * 8;
     const uint32_t cy = y >> 1;
     const size_t chromaRow = size_t(cy >> 2) * chromaTiles * 32 + (cy & 3) * 8;
     uint8_t* row = out + size_t(y - first) * width * 4;
+
     // Sixteen luma texels (two tiles) use one chroma tile row of eight.
     for (uint32_t tile = 0; tile < lumaTiles; tile += 2) {
       const uint8x8_t u = vld1_u8(blue + chromaRow + (tile >> 1) * 32), v = vld1_u8(red + chromaRow + (tile >> 1) * 32);
+
       // (x * k + 128) >> 8, as the scalar tables round.
       const int16x8_t r = vsubq_s16(vreinterpretq_s16_u16(vshll_n_u8(vrshrn_n_u16(vmull_u8(v, k180), 8), 1)), k180s);
       const int16x8_t g = vsubq_s16(vsubq_s16(k135, vreinterpretq_s16_u16(vmovl_u8(vrshrn_n_u16(vmull_u8(u, k88), 8)))),
                                     vreinterpretq_s16_u16(vmovl_u8(vrshrn_n_u16(vmull_u8(v, k183), 8))));
       const int16x8_t b = vsubq_s16(vreinterpretq_s16_u16(vshll_n_u8(vrshrn_n_u16(vmull_u8(u, k227), 8), 1)), k228);
+
       // Each chroma sample covers two horizontal texels.
       const int16x8x2_t rr = vzipq_s16(r, r), gg = vzipq_s16(g, g), bb = vzipq_s16(b, b);
       const int16x8_t l0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(lumaRow + tile * 32)));
@@ -138,32 +155,41 @@ void convert_yuv420(const uint8_t* planes, uint32_t width, uint32_t height, uint
     int16_t red[256], green_u[256], green_v[256], blue[256];
     uint8_t clamp[1024];
   };
+
   static const Tables tables = [] {
     Tables t{};
+
     for (int i = 0; i < 256; ++i) {
       t.red[i] = int16_t(2 * ((i * 180 + 128) >> 8) - 180);
       t.green_u[i] = int16_t((i * 88 + 128) >> 8);
       t.green_v[i] = int16_t((i * 183 + 128) >> 8);
       t.blue[i] = int16_t(2 * ((i * 227 + 128) >> 8) - 228);
     }
+
     for (int i = 0; i < 1024; ++i)
       t.clamp[i] = uint8_t(std::clamp(i - 384, 0, 255));
+
     return t;
   }();
   const uint8_t* clamp = tables.clamp + 384;
+
   for (uint32_t y = first; y < first + rows; ++y) {
     // I8 tiles are 8x4 texels, 32 bytes, row-major across the plane.
     const uint8_t* lumaRow = luma + size_t(y >> 2) * lumaTiles * 32 + (y & 3) * 8;
     const uint32_t cy = y >> 1;
     const size_t chromaRow = size_t(cy >> 2) * chromaTiles * 32 + (cy & 3) * 8;
     uint8_t* row = out + size_t(y - first) * width * 4;
+
     for (uint32_t tile = 0; tile < lumaTiles; ++tile) {
       const uint8_t* l = lumaRow + tile * 32;
+
       // Eight luma texels use four chroma texels: half of a chroma tile row.
       const size_t c = chromaRow + (tile >> 1) * 32 + (tile & 1) * 4;
+
       for (uint32_t i = 0; i < 4; ++i) {
         const int u = blue[c + i], v = red[c + i];
         const int r = tables.red[v], g = 135 - tables.green_u[u] - tables.green_v[v], b = tables.blue[u];
+
         for (uint32_t k = 0; k < 2; ++k) {
           const int luminance = l[2 * i + k];
           uint8_t* p = row + (tile * 8 + 2 * i + k) * 4;
@@ -182,13 +208,17 @@ void convert_yuv420(const uint8_t* planes, uint32_t width, uint32_t height, uint
 size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t height, uint32_t levels) {
   if (!width || !height || width > 4096 || height > 4096 || !levels || levels > std::bit_width(std::max(width, height)))
     throw std::runtime_error("Invalid native texture dimensions");
+
   if (format == NativeTextureFormatYuv420) {
     // Whole 8x4 I8 tiles in all three planes.
     if (width % 16 || height % 8 || levels != 1)
       throw std::runtime_error("Invalid native YUV texture dimensions");
+
     return size_t(width) * height * 3 / 2;
   }
+
   uint32_t tileWidth = 4, tileHeight = 4, tileBytes = 32;
+
   switch (format) {
   case 0:
   case 8:
@@ -213,34 +243,46 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
   default:
     throw std::runtime_error("Unsupported native texture source format");
   }
+
   size_t bytes = 0;
+
   for (unsigned mip = 0; mip < levels; ++mip) {
     bytes += size_t((width + tileWidth - 1) / tileWidth) * ((height + tileHeight - 1) / tileHeight) * tileBytes;
     width = std::max(width >> 1, 1u);
     height = std::max(height >> 1, 1u);
   }
+
   return bytes;
 }
+
 void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampling) {
   owner();
+
   if (unit >= bindings.size())
     throw std::runtime_error("Invalid native texture unit");
+
   const auto descriptor = sampler(sampling);
   const size_t sourceBytes = native_texture_source_size(source.format, source.width, source.height, source.levels);
+
   // GPU producers publish their own backing revisions. A guest texture slot
   // naming such a target is not a mutable CPU image and needs no byte revision.
   // Resolve this before the frame gate so skipped bindings remain validated.
   const auto identity = source.bytes.data();
   const uint64_t feedbackRevision = identity ? scene_feedback_texture_version(identity, source.width, source.height) : 0;
   const uint32_t generatedRevision = identity && !feedbackRevision ? generated_texture_version(identity, source.width, source.height) : 0;
+
   if (source.mutable_source && !source.generation && !feedbackRevision && !generatedRevision)
     throw std::runtime_error("Mutable native texture has no producer revision");
+
   logicalBindings[unit] = {source, sampling, true};
   shaderLodBias[unit] = sampling.lod_bias;
+
   if (!aurora_native_frame_should_render())
     return;
+
   const auto publish = [&](const gl::TexturePtr& texture) {
     auto nativeDescriptor = descriptor;
+
     // With one stored mip, equal point/linear minification and magnification
     // filters, and no anisotropy, a bias cannot change the sampled texels.
     // Use the admitted backing's mip count, including generated textures.
@@ -271,6 +313,7 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     bindings[unit] = texture;
     gl::bind_texture(unit, texture->gl(), gl::sampler(nativeDescriptor));
   };
+
   if (feedbackRevision) {
     if (!bind_scene_feedback_texture(unit, identity, source.width, source.height, sampling))
       throw std::runtime_error("Published scene feedback disappeared before binding");
@@ -291,25 +334,32 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     bindings[unit].reset();
     return;
   }
+
   if (generatedRevision) {
     publish(gfx::find_generated_texture(identity, generatedRevision)->texture);
     return;
   }
+
   const bool indexed = source.format == 8 || source.format == 9 || source.format == 10;
+
   // A native asset already includes its immutable palette. Live palette or
   // image revisions must use their own producer payload instead.
   bool offline = source.asset && !source.mutable_source && source.original_image;
   gl::NativeTextureInfo offlineInfo{};
+
   if (offline) {
     offlineInfo = gl::native_texture_info(source.asset);
+
     if (offlineInfo.width != source.width || offlineInfo.height != source.height || offlineInfo.mips != source.levels || (offlineInfo.sourceProvenance && offlineInfo.sourceFormat != source.format))
       throw std::runtime_error("Native asset metadata disagrees with published texture");
+
     if (indexed) {
       const int64_t delta = int64_t(reinterpret_cast<uintptr_t>(source.palette.data())) - int64_t(reinterpret_cast<uintptr_t>(source.bytes.data()));
       offline = source.original_palette && offlineInfo.sourceProvenance && delta == offlineInfo.sourcePaletteDelta && source.palette_entries == offlineInfo.sourcePaletteEntries &&
                 source.palette_format == offlineInfo.sourcePaletteFormat;
     }
   }
+
   const Key key{offline ? 0 : reinterpret_cast<uintptr_t>(source.bytes.data()),
                 offline ? source.asset : 0,
                 source.width,
@@ -326,9 +376,11 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     publish(found->second.texture);
     return;
   }
+
   // Drop the binding being replaced before evicting cold cache entries. Other
   // units keep their texture owners, and GPU consumers retain backing fences.
   bindings[unit].reset();
+
   for (auto it = cache.begin(); it != cache.end();) {
     if (!offline && std::get<0>(it->first) == std::get<0>(key) && std::get<6>(it->first) != source.generation && it->second.texture.use_count() == 1) {
       residentBytes -= it->second.bytes;
@@ -336,8 +388,10 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
     } else
       ++it;
   }
+
   gl::TexturePtr texture;
   size_t allocated = rgba_allocation(source);
+
   if (offline) {
     allocated = offline_allocation(offlineInfo);
     make_room(allocated);
@@ -345,44 +399,56 @@ void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const
   } else {
     if (source.bytes.size() < sourceBytes)
       throw std::runtime_error("Native texture source is truncated");
+
     make_room(allocated);
+
     if (source.format == NativeTextureFormatYuv420) {
       // One movie frame per generation, converted and uploaded in bands of
       // eight rows that stay in the L1 cache (20 KiB at 640 texels).
       constexpr uint32_t Band = 8;
       const std::unique_ptr<uint8_t[]> rgba(new uint8_t[size_t(source.width) * Band * 4]);
       texture = gl::create_texture(source.width, source.height, 1, gl::Format::RGBA8, "Native movie frame");
+
       for (uint32_t y = 0; y < source.height; y += Band) {
         convert_yuv420(source.bytes.data(), source.width, source.height, y, Band, rgba.get());
         gl::upload_texture(*texture, 0, 0, y, source.width, Band, rgba.get(), source.width * 4);
       }
+
       cache.emplace(key, Entry{texture, allocated, ++serial});
       residentBytes += allocated;
       publish(texture);
       return;
     }
+
     gfx::ConvertedTexture converted;
+
     if (indexed) {
       if (source.palette_format > 2 || !source.palette_entries || source.palette_entries > 16384 || source.palette.size() < size_t(source.palette_entries) * 2)
         throw std::runtime_error("Native indexed texture has no valid palette");
+
       converted = gfx::convert_texture_palette(source.format, source.width, source.height, source.levels, {source.bytes.data(), sourceBytes}, static_cast<GXTlutFmt>(source.palette_format),
                                                source.palette_entries, {source.palette.data(), size_t(source.palette_entries) * 2});
     } else
       converted = gfx::convert_texture(source.format, source.width, source.height, source.levels, {source.bytes.data(), sourceBytes});
+
     if (converted.data.empty() || converted.format != gl::Format::RGBA8)
       throw std::runtime_error("Native texture conversion produced no RGBA image");
+
     texture = gl::create_texture(source.width, source.height, source.levels, converted.format, "Native producer texture");
     size_t offset = 0;
+
     for (unsigned mip = 0; mip < source.levels; ++mip) {
       const unsigned w = std::max(source.width >> mip, 1u), h = std::max(source.height >> mip, 1u);
       gl::upload_texture(*texture, mip, 0, 0, w, h, converted.data.data() + offset, w * 4);
       offset += size_t(w) * h * 4;
     }
   }
+
   cache.emplace(key, Entry{texture, allocated, ++serial});
   residentBytes += allocated;
   publish(texture);
 }
+
 void clear_native_textures() {
   owner();
   logicalBindings = {};
@@ -393,20 +459,27 @@ void clear_native_textures() {
   residentBytes = 0;
   serial = 0;
 }
+
 float native_texture_shader_lod_bias(uint32_t unit) {
   owner();
+
   if (unit >= logicalBindings.size() || !logicalBindings[unit].valid || !aurora_native_frame_should_render())
     throw std::runtime_error("Native texture shader bias requested without an admitted binding");
+
   return shaderLodBias[unit];
 }
+
 NativeTexturePortableSampling native_texture_portable_sampling(uint32_t unit) {
   (void)native_texture_shader_lod_bias(unit);
   return portableSampling[unit];
 }
+
 void restore_native_textures() {
   owner();
+
   for (unsigned unit = 0; unit < logicalBindings.size(); ++unit) {
     const auto binding = logicalBindings[unit];
+
     if (binding.valid)
       bind_native_texture(unit, binding.source, binding.sampling);
   }

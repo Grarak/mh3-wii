@@ -17,6 +17,7 @@ struct FrameInterpolationDrawIdentity {
   HashType combined = 0;
   HashType pipeline = 0;
   HashType texture = 0;
+
   // Hash of the per-vertex PNMTXIDX stream. Matrix values animate, but this topology decides which
   // absolute palette slot each vertex reads, so it must match across a pair.
   HashType matrixTopology = 0;
@@ -30,6 +31,7 @@ struct InterpolatedUniformLayout {
   size_t projectionOffset = 0;
   size_t positionOffset = 0;
   size_t normalOffset = 0;
+
   // Slot the live matrix occupies; a compacted position region holds it at 0.
   size_t currentMatrix = 0;
   bool indexedMatrices = false;
@@ -45,6 +47,7 @@ extern std::atomic_uint32_t g_frameInterpolationFps;
 inline uint32_t frame_interpolation_fps() noexcept {
   return detail::g_frameInterpolationFps.load(std::memory_order_acquire);
 }
+
 inline bool frame_interpolation_active() noexcept { return frame_interpolation_fps() != 0; }
 
 void set_frame_interpolation_fps(uint32_t targetFps) noexcept;
@@ -55,11 +58,13 @@ void report_producer_paced(bool paced) noexcept;
 
 void begin_frame_interpolation() noexcept;
 void finalize_frame_interpolation() noexcept;
+
 // Fills the observability snapshot behind aurora_get_frame_interpolation_diagnostics.
 void get_frame_interpolation_diagnostics(AuroraFrameInterpolationDiagnostics& diagnostics) noexcept;
 bool has_interpolated_frame() noexcept;
 uint32_t interpolated_frame_count() noexcept;
 void mark_frame_interpolation_replay_unsafe() noexcept;
+
 // Drops the interpolation tasks staged into the currently mapped uniform range. Required of
 // anything that unmaps or rotates that range before the frame is finalized.
 void drop_pending_frame_interpolation_uniforms() noexcept;

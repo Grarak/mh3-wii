@@ -13,20 +13,25 @@ typedef struct mh3_model_catalog {
     uint32_t material_count, material_offset;
     uint32_t version, block_count, block_offset;
 } mh3_model_catalog;
+
 typedef struct {
     uint64_t partition_offset;
     uint32_t file_bytes, model_offset, model_bytes, model_id, pack_index, revision;
     uint32_t parent_offset, shape_first, shape_count, material_first, material_count;
 } mh3_catalog_model;
+
 typedef struct {
     uint32_t model_index, source_id, source_offset, source_bytes, asset_id, pack_index;
 } mh3_catalog_resource;
+
 enum {
     MH3_CATALOG_MATERIAL_BLOCKS = 5
 };
+
 typedef struct {
     uint32_t material_index, kind, source_offset, source_bytes, flags;
 } mh3_catalog_material_block;
+
 /* Transactional M3ID v1/v2 reader. References, ordering, reserved fields and all
  * source extents are checked. UINT32_MAX denotes an unconverted shape. */
 mh3_pack_status mh3_model_catalog_open(mh3_pack_span bytes, mh3_model_catalog *out);
@@ -50,14 +55,17 @@ typedef struct {
     uint32_t address, bytes;
     uint64_t partition_offset, generation;
 } mh3_source_range;
+
 typedef struct {
     mh3_source_range *ranges, *work, *transfer;
     size_t count, capacity;
     uint64_t generation;
 } mh3_source_tracker;
+
 typedef struct {
     uint64_t partition_offset, generation;
 } mh3_source_identity;
+
 /* Certified once from a complete loaded file. Typed nonstructural mutations
  * preserve this allocation/model identity while retiring content provenance;
  * unknown writes, DI replacement and allocation retirement invalidate it. */
@@ -65,6 +73,7 @@ typedef struct {
     uint32_t container_address, model_address, catalog_index, file_bytes;
     uint64_t load_generation;
 } mh3_source_owner;
+
 mh3_res_status mh3_source_owner_certify(const mh3_source_tracker *tracker, const mh3_model_catalog *catalog, uint32_t model_address, mh3_source_owner *out);
 /* A complete certified container also certifies the allocation identity of
  * its other cataloged models. The bridge validates their live headers before

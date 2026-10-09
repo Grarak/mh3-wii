@@ -4,6 +4,7 @@ namespace aurora::gl {
 class NativeMeshBuffer;
 struct MeshLayout;
 } // namespace aurora::gl
+
 /* Graphics-owner APIs. The caller retains pack metadata and retires its model
  * catalog before unregistering this GPU payload. Registration binds the pack
  * directly to resident data and validates all immutable indices once. */
@@ -15,6 +16,7 @@ void ClearNativeModelGPU();
  * cost includes Vita's 256 KiB memblock rounding. */
 size_t NativeModelGPUAllocationBytes(uint32_t payload_bytes);
 size_t NativeModelGPUResidentBytes();
+
 // Logical frame serial advances on skipped and canceled game frames too.
 uint32_t NativeModelGPUFrameSerial();
 struct NativeModelGPUView {
@@ -22,4 +24,5 @@ struct NativeModelGPUView {
     const aurora::gl::MeshLayout* layout;
     const mh3_pack_mesh* mesh;
 };
+
 NativeModelGPUView ResolveNativeModelGPU(const mh3_resolved_mesh_submit& mesh);

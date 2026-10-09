@@ -11,6 +11,7 @@ typedef struct {
     uint32_t flags, mode;
     mh3_pack_texture_srt slot[8];
 } mh3_native_texture_srt;
+
 mh3_res_status mh3_texture_srt_read(mh3_res_span bytes, mh3_native_texture_srt *out);
 /* Preparation-only view of the same 0x248-byte resource. Decode live bit-0
  * slots and only values consumed by mapping/matrices_prepare. Inactive slots
@@ -34,6 +35,7 @@ typedef struct {
     mh3_light light;
     int reference_present, light_present;
 } mh3_texture_mapping_input;
+
 mh3_res_status mh3_texture_mapping(uint32_t map_mode, const mh3_texture_mapping_input *input, mh3_matrix34 *out);
 /* Checked selection from serialized G3D CameraState and LightState. Changes
  * the inverse-cache bytes only after successful complete extraction. */
@@ -44,6 +46,7 @@ typedef struct {
     uint32_t source[8]; /* 0 coordinates/identity,1 normal,2 position */
     uint8_t present, identity, apply;
 } mh3_texture_matrices;
+
 /* supplied_mapping is precomputed for every present nonzero-map slot. Output
  * and next identity mask remain unchanged when any input is unsupported. */
 mh3_res_status mh3_texture_matrices_prepare(const mh3_native_texture_srt *srt, const mh3_matrix34 supplied_mapping[8], const uint32_t mapping_source[8], uint32_t previous_identity,

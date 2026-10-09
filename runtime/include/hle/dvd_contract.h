@@ -53,38 +53,49 @@ inline std::string CanonicalizePath(const std::string& input) {
 
     std::vector<std::string> components;
     size_t cursor = 0;
+
     while (cursor < path.size()) {
         while (cursor < path.size() && path[cursor] == '/') {
             ++cursor;
         }
+
         const size_t start = cursor;
+
         while (cursor < path.size() && path[cursor] != '/') {
             ++cursor;
         }
+
         if (start == cursor) {
             continue;
         }
 
         std::string component = path.substr(start, cursor - start);
+
         if (component == ".") {
             continue;
         }
+
         if (component == "..") {
             if (!components.empty()) {
                 components.pop_back();
             }
+
             continue;
         }
+
         components.push_back(std::move(component));
     }
 
     std::string canonical = "/";
+
     for (size_t i = 0; i < components.size(); ++i) {
         if (i != 0) {
             canonical.push_back('/');
         }
+
         canonical += components[i];
     }
+
     return canonical;
 }
 
@@ -105,12 +116,14 @@ struct TreeNode {
 inline std::vector<std::string> Components(const std::string& canonicalPath) {
     std::vector<std::string> result;
     size_t cursor = canonicalPath == "/" ? canonicalPath.size() : 1;
+
     while (cursor < canonicalPath.size()) {
         const size_t slash = canonicalPath.find('/', cursor);
         const size_t end = slash == std::string::npos ? canonicalPath.size() : slash;
         result.push_back(canonicalPath.substr(cursor, end - cursor));
         cursor = end + 1;
     }
+
     return result;
 }
 
@@ -130,6 +143,7 @@ inline uint32_t EmitTree(const TreeNode& directory, uint32_t directoryIndex, con
             if (child.file.has_value()) {
                 throw std::runtime_error("DVD FST path is both a file and a directory: " + childPath);
             }
+
             image.entries.push_back({{}, childPath, 0, 0, directoryIndex, 0, true});
             names.push_back(child.name);
             image.pathToEntry.emplace(NormalizeLookupPath(childPath), static_cast<int32_t>(index));
@@ -140,11 +154,13 @@ inline uint32_t EmitTree(const TreeNode& directory, uint32_t directoryIndex, con
         if (!child.file.has_value()) {
             throw std::runtime_error("DVD FST contains an empty implicit node: " + childPath);
         }
+
         const RegisteredFile& file = *child.file;
         image.entries.push_back({file.hostPath, childPath, file.size, file.discOffsetWords, directoryIndex, index + 1, false});
         names.push_back(child.name);
         image.pathToEntry.emplace(NormalizeLookupPath(childPath), static_cast<int32_t>(index));
     }
+
     return static_cast<uint32_t>(image.entries.size());
 }
 
@@ -154,28 +170,36 @@ inline Image BuildImage(const std::vector<RegisteredFile>& registrations) {
     // Overlay scanning deliberately registers later mappings last. Collapse those
     // mappings before assigning FST indices so one guest path has one stable entry.
     std::map<std::string, RegisteredFile> filesByPath;
+
     for (RegisteredFile file : registrations) {
         file.dvdPath = CanonicalizePath(file.dvdPath);
+
         if (file.dvdPath == "/") {
             throw std::runtime_error("DVD FST cannot register the root as a file");
         }
+
         filesByPath[NormalizeLookupPath(file.dvdPath)] = std::move(file);
     }
 
     Detail::TreeNode root;
+
     for (const auto& [lookupPath, file] : filesByPath) {
         (void)lookupPath;
         Detail::TreeNode* node = &root;
         const std::vector<std::string> components = Detail::Components(file.dvdPath);
+
         for (const std::string& component : components) {
             const std::string key = Detail::Lowercase(component);
             auto& child = node->children[key];
+
             if (!child) {
                 child = std::make_unique<Detail::TreeNode>();
                 child->name = component;
             }
+
             node = child.get();
         }
+
         node->name = components.back();
         node->file = file;
     }
@@ -193,16 +217,19 @@ inline Image BuildImage(const std::vector<RegisteredFile>& registrations) {
     const size_t entriesSize = image.entries.size() * 12u;
     std::vector<uint8_t> stringTable(1, 0);
     std::vector<uint32_t> nameOffsets(image.entries.size(), 0);
+
     for (size_t i = 1; i < names.size(); ++i) {
         if (stringTable.size() > 0x00FFFFFFu) {
             throw std::runtime_error("DVD FST name table exceeds the Wii 24-bit offset limit");
         }
+
         nameOffsets[i] = static_cast<uint32_t>(stringTable.size());
         stringTable.insert(stringTable.end(), names[i].begin(), names[i].end());
         stringTable.push_back(0);
     }
 
     image.bytes.assign(entriesSize + stringTable.size(), 0);
+
     for (size_t i = 0; i < image.entries.size(); ++i) {
         const IndexedEntry& entry = image.entries[i];
         const uint32_t typeAndName = (entry.isDirectory ? 0x01000000u : 0u) | nameOffsets[i];
@@ -212,24 +239,31 @@ inline Image BuildImage(const std::vector<RegisteredFile>& registrations) {
         BigEndian::Write32(image.bytes.data(), i * 12u + 4u, word1);
         BigEndian::Write32(image.bytes.data(), i * 12u + 8u, word2);
     }
+
     std::copy(stringTable.begin(), stringTable.end(), image.bytes.begin() + entriesSize);
     return image;
 }
 
 inline std::optional<GuestPlacement> ReserveBelowArena(uint32_t arenaLo, uint32_t arenaHi, size_t byteCount) {
     constexpr uint32_t kAlignment = 32;
+
     if (byteCount == 0 || byteCount > std::numeric_limits<uint32_t>::max() || arenaHi <= arenaLo) {
         return std::nullopt;
     }
+
     const uint32_t size = static_cast<uint32_t>(byteCount);
+
     if (size > arenaHi - arenaLo) {
         return std::nullopt;
     }
+
     const uint32_t unaligned = arenaHi - size;
     const uint32_t address = unaligned & ~(kAlignment - 1u);
+
     if (address < arenaLo || static_cast<uint64_t>(address) + size > arenaHi) {
         return std::nullopt;
     }
+
     return GuestPlacement{address, address};
 }
 
@@ -267,6 +301,7 @@ inline constexpr const char* Describe(HostReadFailure failure) noexcept {
     case HostReadFailure::ShortRead:
         return "host file did not contain the complete requested range";
     }
+
     return "unknown host read error";
 }
 
@@ -277,6 +312,7 @@ inline bool ReadExact(const std::filesystem::path& hostPath, uint64_t offset, ui
     failure = HostReadFailure::None;
 
     std::ifstream file(hostPath, std::ios::binary);
+
     if (!file.is_open()) {
         failure = HostReadFailure::MissingFile;
         return false;
@@ -284,12 +320,14 @@ inline bool ReadExact(const std::filesystem::path& hostPath, uint64_t offset, ui
 
     file.seekg(0, std::ios::end);
     const std::streamoff fileSize = file.tellg();
+
     if (fileSize < 0 || offset > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max()) || offset >= static_cast<uint64_t>(fileSize)) {
         failure = HostReadFailure::BadOffset;
         return false;
     }
 
     const uint64_t remaining = static_cast<uint64_t>(fileSize) - offset;
+
     if (static_cast<uint64_t>(length) > remaining) {
         failure = HostReadFailure::ShortRead;
         return false;
@@ -297,6 +335,7 @@ inline bool ReadExact(const std::filesystem::path& hostPath, uint64_t offset, ui
 
     std::vector<uint8_t> staged(length);
     file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+
     if (!file) {
         failure = HostReadFailure::BadOffset;
         return false;
@@ -304,6 +343,7 @@ inline bool ReadExact(const std::filesystem::path& hostPath, uint64_t offset, ui
 
     if (length != 0) {
         file.read(reinterpret_cast<char*>(staged.data()), static_cast<std::streamsize>(length));
+
         if (file.gcount() != static_cast<std::streamsize>(length)) {
             failure = HostReadFailure::ShortRead;
             return false;

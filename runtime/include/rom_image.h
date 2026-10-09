@@ -13,12 +13,15 @@ class RomImage {
     explicit RomImage(const std::filesystem::path& path);
     ~RomImage();
     RomImage(const RomImage&) = delete;
+
     // Size of the image file itself (identifies it in rom.txt).
     uint64_t FileBytes() const;
+
     // The game partition's decrypted data, 0x7c00 bytes per Wii sector.
     uint64_t PartitionBytes() const { return flatBytes; }
     void ReadPartition(uint64_t at, uint8_t* bytes, size_t count) const;
     std::vector<uint8_t> ReadPartition(uint64_t at, size_t count) const;
+
     // Raw disc bytes: headers, partition table, ticket, TMD and certificates.
     std::vector<uint8_t> ReadDisc(uint64_t at, size_t count) const;
     uint64_t PartitionOffset() const { return partition; }

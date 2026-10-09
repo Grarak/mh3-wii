@@ -73,16 +73,19 @@ uint32_t LoadU32(const uint8_t* p) {
     std::memcpy(&v, p, 4);
     return __builtin_bswap32(v);
 }
+
 void StoreU32(uint8_t* p, uint32_t v) {
     v = __builtin_bswap32(v);
     std::memcpy(p, &v, 4);
 }
+
 float LoadF(const uint8_t* p) {
     const uint32_t bits = LoadU32(p);
     float f;
     std::memcpy(&f, &bits, 4);
     return f;
 }
+
 void StoreF(uint8_t* p, float v) {
     uint32_t bits;
     std::memcpy(&bits, &v, 4);
@@ -94,12 +97,15 @@ void StoreF(uint8_t* p, float v) {
 float Adds(float a, float b) {
     return a + b;
 }
+
 float Subs(float a, float b) {
     return a - b;
 }
+
 float Muls(float a, float c) {
     return a * c;
 }
+
 uint32_t ToInt(float v) {
     return PPC_FprLowWordInline(PPC_Fctiwz(v));
 }
@@ -119,12 +125,14 @@ float32x4_t Gather(const uint8_t* a0, const uint8_t* a1, const uint8_t* a2) {
     v = vld1q_lane_u32(reinterpret_cast<const uint32_t*>(a2), v, 2);
     return vreinterpretq_f32_u8(vrev32q_u8(vreinterpretq_u8_u32(v)));
 }
+
 void Scatter(uint32x4_t v, uint8_t* a0, uint8_t* a1, uint8_t* a2) {
     v = vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(v)));
     vst1q_lane_u32(reinterpret_cast<uint32_t*>(a0), v, 0);
     vst1q_lane_u32(reinterpret_cast<uint32_t*>(a1), v, 1);
     vst1q_lane_u32(reinterpret_cast<uint32_t*>(a2), v, 2);
 }
+
 void Scatter(float32x4_t v, uint8_t* a0, uint8_t* a1, uint8_t* a2) {
     Scatter(vreinterpretq_u32_f32(v), a0, a1, a2);
 }
@@ -135,39 +143,51 @@ void Scatter(float32x4_t v, uint8_t* a0, uint8_t* a1, uint8_t* a2) {
 static void AudioReverb(CpuContext* ctx) {
     const uint32_t rv = ctx->gpr[4];
     uint8_t* const state = Memory::GetPointer(rv, 0x148);
+
     if (const uint32_t flags = LoadU32(state + kFlags)) {
         StoreU32(state + kFlags, flags & ~2u);
         return;
     }
+
     auto u32 = [&](uint32_t offset) {
         return LoadU32(state + offset);
     };
+
     auto f32 = [&](uint32_t offset) {
         return LoadF(state + offset);
     };
 
     uint8_t* in[3];
+
     for (unsigned c = 0; c < 3; ++c)
         in[c] = Memory::GetPointer(Memory::Read32(ctx->gpr[3] + 4 * c), kSamples * 4);
+
     uint8_t* aux[3]{};
+
     if (const uint32_t a = u32(kAuxInput))
         for (unsigned c = 0; c < 3; ++c)
             aux[c] = Memory::GetPointer(Memory::Read32(a + 4 * c), kSamples * 4);
     uint8_t* send[3]{};
+
     if (const uint32_t s = u32(kSend))
         for (unsigned c = 0; c < 3; ++c)
             send[c] = Memory::GetPointer(Memory::Read32(s + 4 * c), kSamples * 4);
 
     const uint32_t earlyLength = u32(kEarlyLength), preDelayLength = u32(kPreDelayLength);
     uint8_t *early[3], *preDelay[3]{}, *comb[3][3], *allpass[3][2], *last[3];
+
     for (unsigned c = 0; c < 3; ++c) {
         early[c] = Line(u32(kEarlyLines + 4 * c), earlyLength);
+
         if (preDelayLength)
             preDelay[c] = Line(u32(kPreDelayLines + 4 * c), preDelayLength);
+
         for (unsigned k = 0; k < 3; ++k)
             comb[c][k] = Line(u32(kCombLines + 12 * c + 4 * k), u32(kCombLength + 4 * k));
+
         for (unsigned k = 0; k < 2; ++k)
             allpass[c][k] = Line(u32(kAllpassLines + 8 * c + 4 * k), u32(kAllpassLength + 4 * k));
+
         last[c] = Line(u32(kLastLines + 4 * c), u32(kLastLength + 4 * c));
     }
 
@@ -179,6 +199,7 @@ static void AudioReverb(CpuContext* ctx) {
     const float outGain = f32(kOutputGain), sendGain = f32(kSendGain);
     float earlyGain[3], combGain[3], lowpassState[3];
     uint32_t taps[3], combPos[3], combLength[3], apPos[2], apLength[2], lastPos[3], lastLength[3];
+
     for (unsigned k = 0; k < 3; ++k) {
         earlyGain[k] = f32(kEarlyGains + 4 * k);
         combGain[k] = f32(kCombGains + 4 * k);
@@ -189,10 +210,12 @@ static void AudioReverb(CpuContext* ctx) {
         lastPos[k] = u32(kLastPos + 4 * k);
         lastLength[k] = u32(kLastLength + 4 * k);
     }
+
     for (unsigned k = 0; k < 2; ++k) {
         apPos[k] = u32(kAllpassPos + 4 * k);
         apLength[k] = u32(kAllpassLength + 4 * k);
     }
+
     uint32_t preDelayPos = u32(kPreDelayPos);
     auto advance = [](uint32_t& pos, uint32_t length) {
         pos = pos + 1 < length ? pos + 1 : 0;
@@ -209,33 +232,44 @@ static void AudioReverb(CpuContext* ctx) {
         const float32x4_t vApGain = vdupq_n_f32(apGain), vOutGain = vdupq_n_f32(outGain);
         const float32x4_t vSendGain = vdupq_n_f32(sendGain);
         float32x4_t vEarlyGain[3], vCombGain[3];
+
         for (unsigned k = 0; k < 3; ++k) {
             vEarlyGain[k] = vdupq_n_f32(earlyGain[k]);
             vCombGain[k] = vdupq_n_f32(combGain[k]);
         }
+
         float32x4_t vLowpass = {lowpassState[0], lowpassState[1], lowpassState[2], 0.0f};
+
         for (unsigned s = 0; s < kSamples; ++s) {
             const unsigned o = 4 * s;
+
             // The filter waits on its ~30 delay-line streams (each sample
             // touches every line once); fetch each 16 samples ahead. A prefetch
             // past a line's end is harmless.
             if ((s & 7) == 0) {
                 constexpr unsigned ahead = 4 * 16;
+
                 for (unsigned c = 0; c < 3; ++c) {
                     for (unsigned k = 0; k < 3; ++k) {
                         __builtin_prefetch(early[c] + 4 * taps[k] + ahead, 1);
                         __builtin_prefetch(comb[c][k] + 4 * combPos[k] + ahead, 1);
                     }
+
                     if (preDelayLength)
                         __builtin_prefetch(preDelay[c] + 4 * preDelayPos + ahead, 1);
+
                     for (unsigned k = 0; k < 2; ++k)
                         __builtin_prefetch(allpass[c][k] + 4 * apPos[k] + ahead, 1);
+
                     __builtin_prefetch(last[c] + 4 * lastPos[c] + ahead, 1);
                 }
             }
+
             uint32x4_t samples = vreinterpretq_u32_f32(Gather(in[0] + o, in[1] + o, in[2] + o));
+
             if (aux[0])
                 samples = vaddq_u32(samples, vreinterpretq_u32_f32(Gather(aux[0] + o, aux[1] + o, aux[2] + o)));
+
             const float32x4_t x = vcvtq_f32_s32(vreinterpretq_s32_u32(samples));
 
             const unsigned t0 = 4 * taps[0], t1 = 4 * taps[1], t2 = 4 * taps[2];
@@ -246,19 +280,24 @@ static void AudioReverb(CpuContext* ctx) {
             const float32x4_t sum = vaddq_f32(vmulq_f32(vEarlyGain[2], tap2), vaddq_f32(e0, e1));
 
             float32x4_t delayed = x;
+
             if (preDelayLength) {
                 const unsigned pd = 4 * preDelayPos;
                 delayed = Gather(preDelay[0] + pd, preDelay[1] + pd, preDelay[2] + pd);
                 Scatter(x, preDelay[0] + pd, preDelay[1] + pd, preDelay[2] + pd);
             }
+
             float32x4_t combs = vdupq_n_f32(0.0f);
+
             for (unsigned k = 0; k < 3; ++k) {
                 const unsigned cp = 4 * combPos[k];
                 const float32x4_t y = Gather(comb[0][k] + cp, comb[1][k] + cp, comb[2][k] + cp);
                 combs = vaddq_f32(combs, y);
                 Scatter(vaddq_f32(delayed, vmulq_f32(y, vCombGain[k])), comb[0][k] + cp, comb[1][k] + cp, comb[2][k] + cp);
             }
+
             float32x4_t through = combs;
+
             for (unsigned k = 0; k < 2; ++k) {
                 const unsigned ap = 4 * apPos[k];
                 const float32x4_t y = Gather(allpass[0][k] + ap, allpass[1][k] + ap, allpass[2][k] + ap);
@@ -266,6 +305,7 @@ static void AudioReverb(CpuContext* ctx) {
                 Scatter(v, allpass[0][k] + ap, allpass[1][k] + ap, allpass[2][k] + ap);
                 through = vsubq_f32(y, vmulq_f32(v, vApGain));
             }
+
             vLowpass = vaddq_f32(vmulq_f32(vCoefRest, through), vmulq_f32(vCoef, vLowpass));
 
             uint8_t* const l0 = last[0] + 4 * lastPos[0];
@@ -274,8 +314,10 @@ static void AudioReverb(CpuContext* ctx) {
             const float32x4_t y = Gather(l0, l1, l2);
             const float32x4_t v = vaddq_f32(vLowpass, vmulq_f32(y, vApGain));
             Scatter(v, l0, l1, l2);
+
             for (unsigned c = 0; c < 3; ++c)
                 advance(lastPos[c], lastLength[c]);
+
             const float32x4_t wet = vaddq_f32(vmulq_f32(vsubq_f32(y, vmulq_f32(v, vApGain)), vWetScale), sum);
 
             // Each channel gets the other two: (w1 + w2, w0 + w2, w0 + w1).
@@ -283,28 +325,36 @@ static void AudioReverb(CpuContext* ctx) {
             const float32x4_t others = vaddq_f32(a, b);
             const float32x4_t out = vaddq_f32(wet, vmulq_f32(others, vCross));
             Scatter(vreinterpretq_u32_s32(vcvtq_s32_f32(vmulq_f32(out, vOutGain))), in[0] + o, in[1] + o, in[2] + o);
+
             if (send[0])
                 Scatter(vreinterpretq_u32_s32(vcvtq_s32_f32(vmulq_f32(out, vSendGain))), send[0] + o, send[1] + o, send[2] + o);
 
             for (unsigned k = 0; k < 3; ++k)
                 advance(taps[k], earlyLength);
+
             if (preDelayLength)
                 advance(preDelayPos, preDelayLength);
+
             for (unsigned k = 0; k < 3; ++k)
                 advance(combPos[k], combLength[k]);
+
             for (unsigned k = 0; k < 2; ++k)
                 advance(apPos[k], apLength[k]);
         }
+
         for (unsigned c = 0; c < 3; ++c)
             lowpassState[c] = vLowpass[c];
     } else
 #endif
         for (unsigned s = 0; s < kSamples; ++s) {
             float wet[3];
+
             for (unsigned c = 0; c < 3; ++c) {
                 uint32_t sample = LoadU32(in[c] + 4 * s);
+
                 if (aux[c])
                     sample += LoadU32(aux[c] + 4 * s);
+
                 const float x = float(int32_t(sample));
 
                 uint8_t* e = early[c];
@@ -316,12 +366,15 @@ static void AudioReverb(CpuContext* ctx) {
                 const float sum = Adds(e2, Adds(e0, e1));
 
                 float delayed = x;
+
                 if (preDelayLength) {
                     uint8_t* p = preDelay[c] + 4 * preDelayPos;
                     delayed = LoadF(p);
                     StoreF(p, x);
                 }
+
                 float combs = 0.0f;
+
                 for (unsigned k = 0; k < 3; ++k) {
                     uint8_t* p = comb[c][k] + 4 * combPos[k];
                     const float y = LoadF(p);
@@ -329,6 +382,7 @@ static void AudioReverb(CpuContext* ctx) {
                     combs = Adds(combs, y);
                     StoreF(p, Adds(delayed, fed));
                 }
+
                 uint8_t* p = allpass[c][0] + 4 * apPos[0];
                 float y = LoadF(p);
                 float v = Adds(combs, Muls(y, apGain));
@@ -357,6 +411,7 @@ static void AudioReverb(CpuContext* ctx) {
             StoreU32(in[0] + 4 * s, ToInt(Muls(out0, outGain)));
             StoreU32(in[1] + 4 * s, ToInt(Muls(out1, outGain)));
             StoreU32(in[2] + 4 * s, ToInt(Muls(out2, outGain)));
+
             if (send[0]) {
                 StoreU32(send[0] + 4 * s, ToInt(Muls(out0, sendGain)));
                 StoreU32(send[1] + 4 * s, ToInt(Muls(out1, sendGain)));
@@ -365,10 +420,13 @@ static void AudioReverb(CpuContext* ctx) {
 
             for (unsigned k = 0; k < 3; ++k)
                 advance(taps[k], earlyLength);
+
             if (preDelayLength)
                 advance(preDelayPos, preDelayLength);
+
             for (unsigned k = 0; k < 3; ++k)
                 advance(combPos[k], combLength[k]);
+
             for (unsigned k = 0; k < 2; ++k)
                 advance(apPos[k], apLength[k]);
         }
@@ -380,11 +438,14 @@ static void AudioReverb(CpuContext* ctx) {
         StoreU32(state + kCombPos + 4 * k, combPos[k]);
         StoreU32(state + kLastPos + 4 * k, lastPos[k]);
     }
+
     for (unsigned k = 0; k < 2; ++k)
         StoreU32(state + kAllpassPos + 4 * k, apPos[k]);
+
     if (preDelayLength)
         StoreU32(state + kPreDelayPos, preDelayPos);
 }
+
 extern "C" void func_80475880(CpuContext* ctx);
 
 extern "C" void MH3_AudioReverb(CpuContext* ctx) {

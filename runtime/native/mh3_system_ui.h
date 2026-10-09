@@ -9,12 +9,14 @@ typedef struct {
     float position[3], coordinate[8][3];
     uint8_t color[4];
 } mh3_system_ui_vertex;
+
 typedef enum {
     MH3_SYSTEM_UI_MODULATE,
     MH3_SYSTEM_UI_INTENSITY,
     MH3_SYSTEM_UI_COLOR_MAPPING,
     MH3_SYSTEM_UI_SOLID
 } mh3_system_ui_pipeline;
+
 /* Authored pipeline updates overlay inherited material fields. */
 void mh3_system_ui_material(mh3_native_material_state *, mh3_system_ui_pipeline, const uint8_t first[4], const uint8_t second[4]);
 void mh3_system_ui_quad(mh3_system_ui_vertex out[4], const float origin[3], const float size[2], int y_sign, const float coordinates[8][4][2], uint32_t count, const uint8_t colors[4][4]);
@@ -32,6 +34,7 @@ typedef struct {
     uint8_t texgen_count, vertex_colors, modulation, texture_matrices[10], indirect_matrices[3];
     uint8_t texgen_type[8], texgen_source[8], texgen_selector[8];
 } mh3_system_ui_layout;
+
 mh3_res_status mh3_system_ui_layout_size(uint32_t capacity, int hbm, uint32_t *size);
 /* Decode the entire authored material, retaining fields it does not publish. */
 mh3_res_status mh3_system_ui_layout_material(mh3_native_material_state *, mh3_res_span header, mh3_res_span storage, int hbm, int vertex_colors, uint8_t alpha, const uint8_t konst_color[8],
@@ -48,6 +51,7 @@ typedef struct {
     uint8_t swap, channel, material_color, alpha, blend;
     uint32_t resource_flags;
 } mh3_system_ui_capacity;
+
 mh3_res_status mh3_system_ui_hbm_capacity(mh3_res_span resource, mh3_system_ui_capacity *);
 mh3_res_status mh3_system_ui_hbm_construct(mh3_res_mut_span header, mh3_res_mut_span storage, mh3_res_span resource, const mh3_system_ui_capacity *);
 uint32_t mh3_system_ui_panel_selection(int32_t current, int32_t low, int32_t high, int32_t pivot);
@@ -56,6 +60,7 @@ typedef struct {
     mh3_system_ui_vertex vertex[4];
     uint8_t blend_mode;
 } mh3_system_ui_hud_quad;
+
 int mh3_system_ui_hud_rectangle(mh3_system_ui_vertex out[4], float left, float top, float width, float height, const uint8_t rgba[4], float u0, float v0, float u1, float v1);
 mh3_res_status mh3_system_ui_hud_background(uint32_t type, int wide, float atlas_width, float atlas_height, const int16_t atlas_origins[4][2], const uint8_t title_rgba[4],
                                             mh3_system_ui_hud_quad out[5], uint32_t *count);
@@ -68,12 +73,14 @@ typedef struct {
     void (*draw)(void *, uint32_t cursor, uint32_t count, float x);
     void (*newline)(void *);
 } mh3_system_ui_text_callbacks;
+
 mh3_res_status mh3_system_ui_text_lines(const mh3_system_ui_text_callbacks *, uint32_t cursor, uint32_t count, float left, float width, float alignment, float wrap_width);
 typedef struct {
     void *user;
     uint32_t (*field)(void *, uint32_t, uint32_t);
     uint32_t (*method)(void *, uint32_t, uint32_t);
 } mh3_system_ui_callbacks;
+
 void mh3_system_ui_save_draw(const mh3_system_ui_callbacks *, uint32_t self, unsigned variant);
 #ifdef __cplusplus
 }

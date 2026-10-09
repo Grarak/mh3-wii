@@ -24,22 +24,27 @@ inline std::atomic<int8_t> g_set{-1};
 bool SetSlow();
 inline bool Set() {
     const int8_t set = g_set.load(std::memory_order_relaxed);
+
     if (set >= 0) [[likely]]
         return set != 0;
     return SetSlow();
 }
+
 bool EnabledSlow(const char* name);
+
 // Whether MH3_PORT_CHECK names the port (or `all`). Cheap enough to test per
 // call, so callers need no static copy.
 inline bool Enabled(const char* name) {
     return Set() && EnabledSlow(name);
 }
+
 // The `originals` option: the sound engine's entry points not named run their
 // translated originals, so a named port is reached from original callers.
 bool OriginalsSlow();
 inline bool Originals() {
     return Set() && OriginalsSlow();
 }
+
 // Runs original(ctx) and port(ctx) from the same state, reports differences,
 // and leaves the port's result in place.
 void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));
@@ -53,6 +58,7 @@ enum class Returns {
     Gpr3,
     Fpr1
 };
+
 void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*));
 
 // For ports whose only guest writes (besides their stack frames) are a few
@@ -62,6 +68,7 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 struct Region {
     uint32_t address, bytes;
 };
+
 void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), std::initializer_list<Region> outputs);
 
 // MH3_PORT_CHECK=...,P:0xADDR,E:0xADDR,... (development): ports the game rarely

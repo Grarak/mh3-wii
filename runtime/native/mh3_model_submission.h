@@ -11,6 +11,7 @@ typedef struct mh3_model_texcoord_sizes {
     uint16_t width[8], height[8];
     uint8_t known;
 } mh3_model_texcoord_sizes;
+
 /* Direct native model boundary, not a GPU uniform ABI. Borrowed CPU metadata,
  * resident GPU ranges and typed live inputs must survive the submit call. The
  * backend retains GPU allocations through its existing asynchronous fences and
@@ -37,6 +38,7 @@ typedef struct mh3_resolved_mesh_submit {
     uint32_t first_index, index_count;
     const mh3_pack_palette_batch *palette_batch; /* admitted typed batch; null for rigid */
 } mh3_resolved_mesh_submit;
+
 /* Admit once per resident generation. Metadata-only packs may have both GPU
  * spans absent; actual submission must resolve the validated resident mesh.
  * No borrowed live material/pose/camera
@@ -51,6 +53,7 @@ typedef struct mh3_prepared_mesh {
      * bind_batch. NULL until admitted; non-indexed meshes have count0. */
     const mh3_pack_palette_batch *palette_batches;
 } mh3_prepared_mesh;
+
 typedef struct mh3_prepared_material {
     mh3_native_material_state state;
     mh3_native_texture_srt srt;
@@ -58,6 +61,7 @@ typedef struct mh3_prepared_material {
     mh3_pack_binding bindings[8];
     uint8_t texcoord_map[8], texcoord_map_known;
 } mh3_prepared_material;
+
 /* Field ownership of the resource submitters, not an instruction stream. The
  * selected record is an overlay: its top-level counts/references/generation
  * are deliberately unknown and must not replace inherited pass state. */
@@ -69,6 +73,7 @@ typedef enum mh3_model_material_block {
     MH3_MODEL_MATERIAL_PIPELINE,
     MH3_MODEL_MATERIAL_BLOCK_COUNT
 } mh3_model_material_block;
+
 /* Pure C replacements for the field effects of 80094480/8009454C/80096634/
  * 80097210/8009A244 once the caller resolves a certified typed block producer.
  * count is the caller's indirect/texgen count; ignored by the other blocks.

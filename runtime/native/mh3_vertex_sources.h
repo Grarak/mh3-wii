@@ -11,6 +11,7 @@ typedef enum {
     MH3_VERTEX_UV,
     MH3_VERTEX_FUR_POSITION
 } mh3_vertex_kind;
+
 typedef struct mh3_native_vertex_source {
     uint32_t resource_address, payload_address, source_id, resource_bytes, payload_bytes;
     uint32_t count, stride, components, format, fraction, component_mode;
@@ -18,6 +19,7 @@ typedef struct mh3_native_vertex_source {
     mh3_vertex_kind kind;
     uint64_t source_generation, binding_generation;
 } mh3_native_vertex_source;
+
 /* Reads only the resource header. Exact source numeric/color format enums are
  * retained; they are NOT GXM format enums. Bounds checks cover the last element
  * at source stride. This does not decode, inspect or hash vertex contents. */

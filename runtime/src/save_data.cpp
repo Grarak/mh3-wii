@@ -26,6 +26,7 @@ enum : uint32_t {
     kSystemSaveBuffer = 0x950,    // u32: the save file buffer
     kSystemCharacter = 0x95C,     // u32: the working character record
 };
+
 enum : uint32_t {
     kSaveName = 0x14,
     kSaveBuffer = 0x54,
@@ -36,11 +37,13 @@ enum : uint32_t {
     kSaveFile = 0x100,
     kSaveAccess = 0x101,
 };
+
 constexpr uint32_t kRequestRead = 5;
 enum : uint32_t {
     kCharacterWords = 0x3920,
     kCharacterId = 0x1C
 };
+
 constexpr int32_t kWorkingCharacterSda = -17824; // r13-relative copy of system_w+0x95C
 enum : uint32_t {
     Memcpy = 0x80004000,
@@ -57,8 +60,10 @@ void LoadCharacterWork(CpuContext* ctx, uint32_t record) {
         GuestFrame frame{ctx, 16};
         GuestCall{ctx}(Memcpy, {work, record, SaveData::kCharacterSize});
     }
+
     for (uint32_t i = 0; i < 4; ++i)
         Memory::Write16(kSystem + kSystemCharacterWords + 2 * i, Memory::Read16(work + kCharacterWords + 2 * i));
+
     Memory::Write32(kSystem + kSystemCharacterId, Memory::Read32(work + kCharacterId));
 }
 
@@ -69,8 +74,10 @@ void LoadCharacterWork(CpuContext* ctx, uint32_t record) {
 extern "C" void func_80441AD8(CpuContext* ctx);
 static void SaveReadRequestPort(CpuContext* ctx) {
     const auto file = int8_t(ctx->gpr[3]), access = int8_t(ctx->gpr[4]);
+
     for (uint32_t word = 0; word <= 0x10; word += 4)
         Memory::Write32(kSave + word, 0);
+
     Memory::Write8(kSave + kSaveFile, uint8_t(file));
     Memory::Write8(kSave + kSaveAccess, uint8_t(access));
     uint32_t result = 0;
@@ -80,6 +87,7 @@ static void SaveReadRequestPort(CpuContext* ctx) {
         game.Call<Strcpy>({kSave + kSaveName, Memory::Read32(kSaveNames + 4 * uint32_t(int32_t(file)))});
         const uint32_t buffer = Memory::Read32(kSystem + kSystemSaveBuffer);
         Memory::Write32(kSave + kSaveBuffer, buffer);
+
         if (buffer) {
             Memory::Write32(kSave + kSaveSize, SaveData::kFileSize);
             Memory::Write32(kSave + kSaveRequest, kRequestRead);
@@ -89,6 +97,7 @@ static void SaveReadRequestPort(CpuContext* ctx) {
             result = 1;
         }
     }
+
     ctx->gpr[3] = result;
 }
 
@@ -115,10 +124,13 @@ uint32_t SaveData::LoadCharacter(CpuContext* ctx, uint8_t slot) {
     const uint32_t file = Memory::Read32(kSave + kSaveBuffer);
     const uint8_t* bytes = Memory::GetPointer(file, kFileSize);
     uint32_t sum = 0;
+
     for (uint32_t i = 8; i < kFileSize; ++i)
         sum += bytes[i];
+
     if (Memory::Read32(file + 4) != sum || Memory::Read32(file) == 0)
         return 0;
+
     LoadCharacterWork(ctx, file + kCharacters + slot * kCharacterSize);
     return 1;
 }

@@ -52,12 +52,14 @@ enum class TickSite : uint32_t {
 struct Site {
     uint32_t pc;
     TickSite kind;
+
     // Countup: the largest value the guest still adds 1 to (0: none).
     // Countdown: the value the guest counts down to (x - 1 while x > limit).
     // Advance: the amount the guest adds each step.
     // CountupEvery / CountdownEvery: the N of the % N == 0 test.
     int32_t limit = 0;
 };
+
 constexpr Site kSites[] = {
 #include "tick_sites.inc"
 };
@@ -73,32 +75,43 @@ const Site* Find(uint32_t pc) {
 extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     const int32_t ticks = int32_t(GameStep::Ticks());
     const Site* site = Find(pc);
+
     if (site && site->kind == TickSite::Advance) {
         return value + uint32_t(GameStep::Share(site->limit) - site->limit);
     }
+
     if (site && site->kind == TickSite::Rate)
         return uint32_t(GameStep::Share(int32_t(value)));
+
     if (!site || ticks == 1)
         return value;
+
     const int32_t v = int32_t(value);
+
     if (site->kind == TickSite::CountupEvery || site->kind == TickSite::CountdownEvery) {
         const int64_t n = site->limit;
         const auto mod = [n](int64_t x) {
             return (x % n + n) % n;
         };
+
         const int64_t step = site->kind == TickSite::CountupEvery ? 1 : -1;
         int64_t target;
+
         if (ticks == 0) {
             target = mod(v) == 0 ? v + step : v;
         } else {
             target = v + step * ticks;
+
             // The multiple of N passed first (nearest v), if one was passed.
             const int64_t first = step > 0 ? v + 1 + mod(-(v + 1)) : v - 1 - mod(v - 1);
+
             if (mod(target) != 0 && (step > 0 ? first < target : first > target))
                 target = first;
         }
+
         return uint32_t(int32_t(target - step));
     }
+
     switch (site->kind) {
     case TickSite::Countdown:
         return v > site->limit ? uint32_t(std::max(v - ticks, site->limit) + 1) : value;
@@ -115,15 +128,19 @@ extern "C" uint32_t MH3_TickLoad(uint32_t value, uint32_t pc) {
     case TickSite::Countup:
         if (site->limit != 0 && v > site->limit)
             return value;
+
         return uint32_t(site->limit != 0 ? std::min(v + ticks - 1, site->limit) : v + ticks - 1);
     }
+
     return value;
 }
 
 extern "C" double MH3_EaseDivisor(double d) {
     const double s = GameStep::Scale();
+
     if (s == 1.0 || !(d > 1.0))
         return d;
+
     const double closed = 1.0 - std::pow(1.0 - 1.0 / d, s);
     return closed > 0.0 ? 1.0 / closed : HUGE_VAL;
 }

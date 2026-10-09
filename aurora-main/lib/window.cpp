@@ -48,6 +48,7 @@ float g_frameBufferScale = 0.f;
 bool g_frameBufferAspectFit = true;
 std::atomic_bool g_forceAspect169{false};
 bool g_presentSurfaceFill = false;
+
 // A fixed display surface the native target is sized for (0: the window's).
 int g_surfaceWidth = 0;
 int g_surfaceHeight = 0;
@@ -67,9 +68,11 @@ bool g_lastPaused = false;
 bool g_gotFocus = false;
 #if defined(_WIN32)
 WNDPROC g_prevWindowProc = nullptr;
+
 // Native window handle captured once when the hook is installed. The presenter checks the native
 // size several times per slot, which used to be an SDL lookup for a handle that never changes.
 HWND g_nativeWindowHandle = nullptr;
+
 // Packed native client size ((width << 32) | height) kept by the window procedure; zero means
 // unknown. Atomic because that procedure runs on the SDL thread while the presenter reads it.
 std::atomic<uint64_t> g_nativeClientSize{0};
@@ -80,12 +83,15 @@ constexpr uint64_t pack_native_size(uint32_t width, uint32_t height) noexcept {
 
 LRESULT CALLBACK aurora_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
   bool sizeChanged = msg == WM_SIZE;
+
   if (msg == WM_WINDOWPOSCHANGED) {
     const auto* pos = reinterpret_cast<const WINDOWPOS*>(lparam);
     sizeChanged = pos != nullptr && (pos->flags & SWP_NOSIZE) == 0;
   }
+
   if (sizeChanged) {
     g_nativeResizePending.store(true, std::memory_order_release);
+
     if (msg == WM_SIZE) {
       // WM_SIZE carries the new client size directly.
       g_nativeClientSize.store(pack_native_size(static_cast<uint32_t>(LOWORD(lparam)),
@@ -97,18 +103,22 @@ LRESULT CALLBACK aurora_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
       g_nativeClientSize.store(0, std::memory_order_release);
     }
   }
+
   if (g_prevWindowProc == nullptr) {
     return DefWindowProc(hwnd, msg, wparam, lparam);
   }
+
   return CallWindowProc(g_prevWindowProc, hwnd, msg, wparam, lparam);
 }
 
 void install_window_proc_hook() noexcept {
   const auto props = SDL_GetWindowProperties(g_window);
   auto* hwnd = static_cast<HWND>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+
   if (hwnd == nullptr) {
     return;
   }
+
   g_nativeWindowHandle = hwnd;
   g_nativeClientSize.store(0, std::memory_order_release);
   g_prevWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(hwnd, GWLP_WNDPROC,
@@ -121,11 +131,14 @@ void uninstall_window_proc_hook() noexcept {
     g_nativeClientSize.store(0, std::memory_order_release);
     return;
   }
+
   const auto props = SDL_GetWindowProperties(g_window);
   auto* hwnd = static_cast<HWND>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+
   if (hwnd != nullptr) {
     SetWindowLongPtr(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_prevWindowProc));
   }
+
   g_prevWindowProc = nullptr;
   g_nativeWindowHandle = nullptr;
   g_nativeClientSize.store(0, std::memory_order_release);
@@ -137,19 +150,24 @@ void uninstall_window_proc_hook() noexcept {
 bool query_native_client_size(uint32_t& width, uint32_t& height) noexcept {
 #if defined(_WIN32)
   const uint64_t cached = g_nativeClientSize.load(std::memory_order_acquire);
+
   if (cached != 0) {
     width = static_cast<uint32_t>(cached >> 32);
     height = static_cast<uint32_t>(cached & 0xffffffffull);
     return true;
   }
+
   if (g_nativeWindowHandle != nullptr) {
     RECT client{};
+
     if (GetClientRect(g_nativeWindowHandle, &client) != 0) {
       width = static_cast<uint32_t>(std::max<LONG>(client.right - client.left, 0));
       height = static_cast<uint32_t>(std::max<LONG>(client.bottom - client.top, 0));
+
       if (width != 0 && height != 0) {
         g_nativeClientSize.store(pack_native_size(width, height), std::memory_order_release);
       }
+
       return true;
     }
   }
@@ -170,6 +188,7 @@ Vec2<int> scale_frame_buffer_to_aspect(int w, int h, float scale, float aspect) 
   if (w <= 0 || h <= 0) {
     return {std::max(w, 1), std::max(h, 1)};
   }
+
   const auto size = render_size_limits::scale_framebuffer_to_aspect(
       static_cast<uint32_t>(w), static_cast<uint32_t>(h), scale, aspect);
   return {static_cast<int>(size.width), static_cast<int>(size.height)};
@@ -183,15 +202,19 @@ void resize_swapchain() noexcept {
   // stays flagged for the next ordered frame boundary.
   g_nativeResizePending.exchange(false, std::memory_order_acq_rel);
   const auto size = get_window_size();
+
   if (size == g_windowSize) {
     return;
   }
+
   if (size.scale != g_windowSize.scale) {
     if (g_windowSize.scale > 0.f) {
       Log.info("Display scale changed to {}", size.scale);
     }
   }
+
   g_windowSize = size;
+
   if (g_renderer != nullptr) {
     SDL_SetRenderLogicalPresentation(g_renderer, static_cast<int>(size.native_fb_width),
                                      static_cast<int>(size.native_fb_height), SDL_LOGICAL_PRESENTATION_DISABLED);
@@ -206,6 +229,7 @@ void set_window_icon() noexcept {
   if (g_config.iconRGBA8 == nullptr) {
     return;
   }
+
   auto* iconSurface =
       SDL_CreateSurfaceFrom(static_cast<int>(g_config.iconWidth), static_cast<int>(g_config.iconHeight),
                             SDL_GetPixelFormatForMasks(32, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000),
@@ -233,14 +257,17 @@ bool SDLCALL lifecycle_event_watch(void*, SDL_Event* event) {
   default:
     break;
   }
+
   return true;
 }
 
 void sync_paused() {
   const bool paused = is_paused();
+
   if (g_lastPaused == paused) {
     return;
   }
+
   g_lastPaused = paused;
   g_events.push_back(AuroraEvent{
       .type = paused ? AURORA_PAUSED : AURORA_UNPAUSED,
@@ -267,6 +294,7 @@ void process_event(SDL_Event& event) {
       set_display_mode(get_fullscreen() ? AURORA_DISPLAY_MODE_WINDOWED : AURORA_DISPLAY_MODE_BORDERLESS);
       g_nativeResizePending.store(true, std::memory_order_release);
     }
+
     break;
   case SDL_EVENT_WINDOW_MOVED: {
     g_events.push_back(AuroraEvent{
@@ -305,6 +333,7 @@ void process_event(SDL_Event& event) {
           .controller = event.gdevice.which,
       });
     }
+
     break;
   }
   case SDL_EVENT_GAMEPAD_REMOVED: {
@@ -335,6 +364,7 @@ void process_event(SDL_Event& event) {
       // This event only wakes the window loop; the frame worker applies the pending surface
       // configuration at its next ordered frame boundary.
     }
+
     break;
   }
 
@@ -349,8 +379,10 @@ void process_event(SDL_Event& event) {
 const AuroraEvent* poll_events() {
   g_events.clear();
   SDL_Event event;
+
   // Clear out the previous scroll values to prevent ghost input
   input::set_mouse_scroll(0, 0);
+
   if (is_paused()) {
     if (SDL_WaitEvent(&event)) {
       process_event(event);
@@ -361,6 +393,7 @@ const AuroraEvent* poll_events() {
   while (SDL_PollEvent(&event)) {
     process_event(event);
   }
+
   g_events.push_back(AuroraEvent{
       .type = AURORA_NONE,
   });
@@ -373,6 +406,7 @@ bool create_window(AuroraBackend backend) {
   flags |= SDL_WINDOW_FULLSCREEN;
 #else
   flags |= SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
+
   if (g_config.startFullscreen) {
     flags |= SDL_WINDOW_FULLSCREEN;
   }
@@ -394,13 +428,16 @@ bool create_window(AuroraBackend backend) {
 #endif
   auto width = static_cast<Sint32>(g_config.windowWidth);
   auto height = static_cast<Sint32>(g_config.windowHeight);
+
   if (width == 0 || height == 0) {
     width = 1280;
     height = 960;
   }
+
   if (width < 640) {
     width = 640;
   }
+
   if (height < 480) {
     height = 480;
   }
@@ -427,10 +464,12 @@ bool create_window(AuroraBackend backend) {
   TRY(SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, flags), "Failed to set {}: {}",
       SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, SDL_GetError());
   g_window = SDL_CreateWindowWithProperties(props);
+
   if (g_window == nullptr) {
     Log.error("Failed to create window: {}", SDL_GetError());
     return false;
   }
+
   SDL_SetWindowMinimumSize(g_window, 640, 480);
   g_displayMode.store(g_config.startFullscreen ? AURORA_DISPLAY_MODE_BORDERLESS : AURORA_DISPLAY_MODE_WINDOWED,
                       std::memory_order_release);
@@ -445,6 +484,7 @@ bool create_renderer() {
   if (g_window == nullptr) {
     return false;
   }
+
   const auto props = SDL_CreateProperties();
   TRY(SDL_SetPointerProperty(props, SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, g_window), "Failed to set {}: {}",
       SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, SDL_GetError());
@@ -452,10 +492,12 @@ bool create_renderer() {
   TRY(SDL_SetNumberProperty(props, SDL_PROP_RENDERER_CREATE_PRESENT_VSYNC_NUMBER, SDL_RENDERER_VSYNC_DISABLED),
       "Failed to set {}: {}", SDL_PROP_RENDERER_CREATE_PRESENT_VSYNC_NUMBER, SDL_GetError());
   g_renderer = SDL_CreateRendererWithProperties(props);
+
   if (g_renderer == nullptr) {
     Log.error("Failed to create renderer: {}", SDL_GetError());
     return false;
   }
+
   return true;
 }
 
@@ -467,6 +509,7 @@ void destroy_window() {
     SDL_DestroyRenderer(g_renderer);
     g_renderer = nullptr;
   }
+
   if (g_window != nullptr) {
     SDL_DestroyWindow(g_window);
     g_window = nullptr;
@@ -495,6 +538,7 @@ bool initialize() {
       SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE_RUMBLE_BRAKE, SDL_GetError());
 
   TRY(SDL_DisableScreenSaver(), "Error disabling screensaver: {}", SDL_GetError());
+
   if (g_config.allowJoystickBackgroundEvents) {
     TRY(SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1"), "Error setting {}: {}",
         SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, SDL_GetError());
@@ -531,6 +575,7 @@ AuroraWindowSize get_window_size() {
   int fb_w = surface_w;
   int fb_h = surface_h;
   const auto [baseW, baseH] = vi::configured_fb_size();
+
   if (g_forceAspect169.load(std::memory_order_acquire) && surface_w > 0 && surface_h > 0) {
     if (g_frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
       const auto [scaledW, scaledH] =
@@ -546,6 +591,7 @@ AuroraWindowSize get_window_size() {
     }
   } else if (g_frameBufferAspectFit && baseW > 0 && baseH > 0) {
     float renderScale = g_frameBufferScale > 0.f ? g_frameBufferScale : 1.f;
+
     if (g_frameBufferScale <= 0.f) {
       renderScale = std::min(static_cast<float>(surface_w) / static_cast<float>(baseW),
                              static_cast<float>(surface_h) / static_cast<float>(baseH));
@@ -553,6 +599,7 @@ AuroraWindowSize get_window_size() {
         renderScale = 1.f;
       }
     }
+
     fb_w = std::max(1, static_cast<int>(std::lround(static_cast<float>(baseW) * renderScale)));
     fb_h = std::max(1, static_cast<int>(std::lround(static_cast<float>(baseH) * renderScale)));
   } else if (g_frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
@@ -583,15 +630,19 @@ bool is_paused() noexcept {
   if (!is_presentable()) {
     return true;
   }
+
   const auto flags = SDL_GetWindowFlags(g_window);
+
   if ((flags & SDL_WINDOW_HIDDEN) != 0u) {
     return true;
   }
+
   // Wait until the window has received focus before respecting pauseOnFocusLost
   if (!g_gotFocus) {
     g_gotFocus = (flags & SDL_WINDOW_INPUT_FOCUS) != 0u;
     return false;
   }
+
   return g_config.pauseOnFocusLost && ((flags & SDL_WINDOW_INPUT_FOCUS) == 0u || (flags & SDL_WINDOW_MINIMIZED) != 0u);
 }
 
@@ -616,11 +667,14 @@ bool native_window_size_matches(uint32_t width, uint32_t height) noexcept {
   if (g_window == nullptr || width == 0 || height == 0) {
     return true;
   }
+
   uint32_t nativeWidth = 0;
   uint32_t nativeHeight = 0;
+
   if (query_native_client_size(nativeWidth, nativeHeight)) {
     return nativeWidth == width && nativeHeight == height;
   }
+
   const auto size = get_window_size();
   return size.native_fb_width == width && size.native_fb_height == height;
 }
@@ -658,11 +712,14 @@ void set_display_mode(AuroraDisplayMode mode) {
   if (g_window == nullptr) {
     return;
   }
+
   if (mode < AURORA_DISPLAY_MODE_WINDOWED || mode > AURORA_DISPLAY_MODE_EXCLUSIVE) {
     Log.warn("Ignoring invalid display mode {}", static_cast<int>(mode));
     return;
   }
+
   const AuroraDisplayMode currentMode = g_displayMode.load(std::memory_order_acquire);
+
   // Exclusive mode is re-applied even when already active: the desired refresh
   // rate tracks the frame interpolation target, which can change at runtime.
   if (mode == currentMode && mode != AURORA_DISPLAY_MODE_EXCLUSIVE) {
@@ -670,8 +727,10 @@ void set_display_mode(AuroraDisplayMode mode) {
   }
 
   bool success = true;
+
   if (mode == AURORA_DISPLAY_MODE_WINDOWED) {
     success = SDL_SetWindowFullscreen(g_window, false);
+
     if (success) {
       success = SDL_SetWindowFullscreenMode(g_window, nullptr);
     }
@@ -679,9 +738,11 @@ void set_display_mode(AuroraDisplayMode mode) {
     if (SDL_GetWindowFullscreenMode(g_window) != nullptr) {
       success = SDL_SetWindowFullscreen(g_window, false);
     }
+
     if (success) {
       success = SDL_SetWindowFullscreenMode(g_window, nullptr);
     }
+
     if (success) {
       success = SDL_SetWindowFullscreen(g_window, true);
     }
@@ -691,25 +752,32 @@ void set_display_mode(AuroraDisplayMode mode) {
     const uint32_t interpolationFps = aurora_get_frame_interpolation_fps();
     const float targetHz = interpolationFps > 60 ? static_cast<float>(interpolationFps) : 60.0f;
     SDL_DisplayMode closest{};
+
     if (desktop == nullptr ||
         !SDL_GetClosestFullscreenDisplayMode(display, desktop->w, desktop->h, targetHz, true, &closest)) {
       Log.warn("No exclusive fullscreen mode near {:.0f} Hz is available: {}", targetHz, SDL_GetError());
       return;
     }
+
     const SDL_DisplayMode* active = SDL_GetWindowFullscreenMode(g_window);
+
     if (mode == currentMode && active != nullptr && active->w == closest.w && active->h == closest.h &&
         active->refresh_rate == closest.refresh_rate) {
       return;
     }
+
     if (get_fullscreen() && mode != currentMode) {
       success = SDL_SetWindowFullscreen(g_window, false);
     }
+
     if (success) {
       success = SDL_SetWindowFullscreenMode(g_window, &closest);
     }
+
     if (success) {
       success = SDL_SetWindowFullscreen(g_window, true);
     }
+
     if (success) {
       Log.info("Exclusive fullscreen requested at {}x{} {:.3f} Hz", closest.w, closest.h, closest.refresh_rate);
     }
@@ -719,6 +787,7 @@ void set_display_mode(AuroraDisplayMode mode) {
     Log.warn("Failed to change display mode: {}", SDL_GetError());
     return;
   }
+
   g_displayMode.store(mode, std::memory_order_release);
   g_nativeResizePending.store(true, std::memory_order_release);
   TRY_WARN(push_custom_event(CustomEvent::FutureResize), "Failed to queue fullscreen resize event: {}",
@@ -765,9 +834,11 @@ void set_frame_buffer_scale(float scale) {
   if (scale < 0.f) {
     scale = 0.f;
   }
+
   if (g_frameBufferScale == scale) {
     return;
   }
+
   g_frameBufferScale = scale;
   request_frame_buffer_resize();
 }
@@ -785,6 +856,7 @@ void set_force_aspect_16_9(bool force) {
   if (g_forceAspect169.load(std::memory_order_relaxed) == force) {
     return;
   }
+
   g_forceAspect169.store(force, std::memory_order_release);
   request_frame_buffer_resize();
 }
@@ -797,6 +869,7 @@ void set_native_surface_size(uint32_t width, uint32_t height) {
   if (g_surfaceWidth == static_cast<int>(width) && g_surfaceHeight == static_cast<int>(height)) {
     return;
   }
+
   g_surfaceWidth = static_cast<int>(width);
   g_surfaceHeight = static_cast<int>(height);
   request_frame_buffer_resize();
@@ -807,9 +880,11 @@ void lock_present_aspect_ratio(int width, int height) {
     unlock_present_aspect_ratio();
     return;
   }
+
   if (g_presentAspectWidth == width && g_presentAspectHeight == height) {
     return;
   }
+
   g_presentAspectWidth = width;
   g_presentAspectHeight = height;
 }
@@ -824,30 +899,37 @@ bool get_present_aspect_ratio(float& aspect) noexcept {
     aspect = 16.f / 9.f;
     return true;
   }
+
   if (g_presentSurfaceFill && g_surfaceWidth > 0 && g_surfaceHeight > 0) {
     aspect = static_cast<float>(g_surfaceWidth) / static_cast<float>(g_surfaceHeight);
     return true;
   }
+
   if (g_presentSurfaceFill && g_window != nullptr) {
     // Queried once per presentation snapshot; use the cached native client size
     // instead of re-entering SDL for a value the window procedure already knows.
     uint32_t nativeWidth = 0;
     uint32_t nativeHeight = 0;
+
     if (query_native_client_size(nativeWidth, nativeHeight) && nativeWidth > 0 && nativeHeight > 0) {
       aspect = static_cast<float>(nativeWidth) / static_cast<float>(nativeHeight);
       return true;
     }
+
     int width = 0;
     int height = 0;
+
     if (SDL_GetWindowSizeInPixels(g_window, &width, &height) && width > 0 && height > 0) {
       aspect = static_cast<float>(width) / static_cast<float>(height);
       return true;
     }
   }
+
   if (g_presentAspectWidth <= 0 || g_presentAspectHeight <= 0) {
     aspect = 0.f;
     return false;
   }
+
   aspect = (static_cast<float>(g_presentAspectWidth) / static_cast<float>(g_presentAspectHeight)) *
            vi::present_aspect_correction();
   return aspect > 0.f;

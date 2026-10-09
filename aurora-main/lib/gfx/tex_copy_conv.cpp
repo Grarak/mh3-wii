@@ -33,8 +33,10 @@ bool needs_conversion(const GXTexFmt fmt) {
 
 void initialize() {
   g_blitProgram = create_program(shaders::Blit);
+
   for (const auto& conversion : shaders::Conversions) {
     g_programs[conversion.fmt] = create_program(conversion);
+
     if (to_gl_format(conversion.fmt) != gl::Format::RGBA8) {
       Log.fatal("Output format mismatch for {}", conversion.fmt);
     }
@@ -48,9 +50,11 @@ void shutdown() {
 
 static void execute(const ConvRequest& req, gl::Program& program) {
   const GLuint prog = program.get();
+
   if (prog == 0 || !req.src || !req.dst || !req.dst->texture) {
     return;
   }
+
   const auto& dst = *req.dst;
   gl::bind_framebuffer(dst.texture->gl(), 0);
   gl::set_scissor_enabled(false);
@@ -64,9 +68,11 @@ static void execute(const ConvRequest& req, gl::Program& program) {
 
 void run(const ConvRequest& req) {
   const auto it = g_programs.find(req.fmt);
+
   if (it == g_programs.end()) {
     Log.fatal("No copy conversion program for format {}", static_cast<int>(req.fmt));
   }
+
   execute(req, *it->second);
 }
 

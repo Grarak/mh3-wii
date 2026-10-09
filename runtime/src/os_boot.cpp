@@ -30,6 +30,7 @@ extern "C" void MH3_OSInterruptInit(CpuContext*) {
     Memory::Write32(0x80797828, table); // r13 - 0x3AB8
     for (uint32_t i = 0; i < 32; ++i)
         Memory::Write32(table + i * 4, 0);
+
     Memory::Write32(0x800000C4, 0xFFFFFFF0);
     Memory::Write32(0x800000C8, 0);
     Memory::Write32(0x80003010, 0x804D1A70); // exception 4: __OSDispatchInterrupt
@@ -51,9 +52,12 @@ REGISTER_NATIVE_FUNCTION(0x804D1460, MH3_SetInterruptMask);
 extern "C" void MH3_OSInitMemoryProtection(CpuContext* ctx) {
     if (Memory::Read32(0x80797830))
         return;
+
     Memory::Write32(0x800000C4, Memory::Read32(0x800000C4) | 0xF0000000);
+
     for (uint32_t i = 0; i < 5; ++i)
         Memory::Write32(0x80003040 + i * 4, 0x804D1E30);
+
     ctx->gpr[3] = 0x8061DCC0;
     InvokeIndirectCpu(0x804D2870, ctx); // OSRegisterShutdownFunction
     Memory::Write32(0x800000C4, Memory::Read32(0x800000C4) & ~0x08000000u);

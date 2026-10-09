@@ -18,11 +18,13 @@ std::vector<u8> draw(GXPrimitive primitive, u16 count, GXVtxFmt format = GX_VTXF
 TEST_F(GXFifoTest, MaximumQuadCountTerminatesWithoutOutOfRangeIndices) {
   g_gxState.lastVtxFmt = GX_VTXFMT0;
   g_gxState.lastVtxSize = 1;
+
   for (const u16 count : {65532, 65533, 65534, 65535}) {
     g_gxState.stateDirty = true;
     decode_fifo(draw(GX_QUADS, count));
     const auto& indices = aurora::gfx::testing::last_pushed_indices();
     ASSERT_EQ(indices.size(), (count / 4) * 6 + (count % 4 == 3 ? 3 : 0));
+
     for (const auto index : indices) ASSERT_LT(index, count);
   }
 }
@@ -64,17 +66,21 @@ TEST_F(GXFifoTest, VertexCacheInvalidationBreaksDrawMerging) {
 TEST_F(GXFifoTest, EqualStrideVertexFormatChangeBreaksDrawMerging) {
   aurora::gfx::testing::use_real_vertex_format_helpers(true);
   g_gxState.vtxDesc[GX_VA_POS] = GX_DIRECT;
+
   for (const auto format : {GX_VTXFMT0, GX_VTXFMT1}) {
     g_gxState.vtxFmts[format].attrs[GX_VA_POS].cnt = GX_POS_XY;
     g_gxState.vtxFmts[format].attrs[GX_VA_POS].type = GX_U8;
   }
+
   g_gxState.vtxFmts[GX_VTXFMT1].attrs[GX_VA_POS].frac = 1;
   aurora::gfx::testing::use_draw_command_tracking(true);
+
   for (const auto format : {GX_VTXFMT0, GX_VTXFMT1}) {
     auto bytes = draw(GX_TRIANGLES, 3, format);
     bytes.resize(9);
     decode_fifo(bytes);
   }
+
   EXPECT_EQ(aurora::gfx::g_mergedDrawCallCount, 0u);
 }
 
@@ -112,8 +118,10 @@ TEST(StagingMapping, AsyncCompletionWakesWaiters) {
     state.complete(generation, BufferMapState::Mapped);
   });
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+
   while (state.state() == BufferMapState::Mapping && std::chrono::steady_clock::now() < deadline)
     state.wait_for_progress();
+
   callback.join();
   EXPECT_EQ(state.state(), BufferMapState::Mapped);
 }
@@ -147,6 +155,7 @@ TEST(FrameInterpolationContract, IdenticalMeshesInDifferentViewportsDoNotShareHi
         .positionOffset = positionOffset, .normalOffset = normalOffset, .currentMatrix = 0,
         .indexedMatrices = true});
   };
+
   gx::set_frame_interpolation_fps(0);
   gx::begin_frame_interpolation();
   gx::set_frame_interpolation_fps(120);
@@ -163,11 +172,13 @@ TEST(FrameInterpolationContract, IdenticalMeshesInDifferentViewportsDoNotShareHi
   const auto expected = current;
   gx::finalize_frame_interpolation();
   EXPECT_EQ(current, expected);
+
   if (ranges[0].size) {
     const auto& duplicate = gfx::testing::uniform_allocation(ranges[0].offset);
     ASSERT_EQ(duplicate.size(), expected.size());
     EXPECT_EQ(std::memcmp(duplicate.data(), expected.data(), expected.size()), 0);
   }
+
   gx::g_gxState.logicalViewport = savedViewport;
   gx::set_frame_interpolation_fps(0);
   gx::begin_frame_interpolation();

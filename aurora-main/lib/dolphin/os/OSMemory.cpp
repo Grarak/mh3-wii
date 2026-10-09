@@ -123,6 +123,7 @@ static void* AllocMEM1(u32 size) {
     reinterpret_cast<uintptr_t>(mem1Address) + size);
 
   void* result = VirtualAlloc(mem1Address, size, MEM_COMMIT, PAGE_READWRITE);
+
   if (result == nullptr) {
     DWORD err = GetLastError();
     fmt::memory_buffer msg;

@@ -92,6 +92,7 @@ const char* KindLabel(FunctionKind kind) {
     case FunctionKind::Native:
         return "native";
     }
+
     return "unknown";
 }
 
@@ -104,6 +105,7 @@ uint32_t DefaultPriorityForKind(FunctionKind kind) {
     case FunctionKind::Native:
         return kNativeFunctionPriority;
     }
+
     return 0;
 }
 
@@ -120,18 +122,21 @@ uint32_t KindTieBreaker(FunctionKind kind) {
     case FunctionKind::Native:
         return 2;
     }
+
     return 0;
 }
 
 bool IsBetterCandidate(const TranslatedFunctionInfo& candidate, const TranslatedFunctionInfo& current) {
     const uint32_t candidatePriority = EffectivePriority(candidate);
     const uint32_t currentPriority = EffectivePriority(current);
+
     if (candidatePriority != currentPriority) {
         return candidatePriority > currentPriority;
     }
 
     const uint32_t candidateKindRank = KindTieBreaker(candidate.kind);
     const uint32_t currentKindRank = KindTieBreaker(current.kind);
+
     if (candidateKindRank != currentKindRank) {
         return candidateKindRank > currentKindRank;
     }
@@ -161,9 +166,11 @@ void RebuildIndicesLocked() {
         const auto& entry = entries[i];
         addressEntries[entry.address].push_back(i);
         auto addressIt = addrIndex.find(entry.address);
+
         if (addressIt == addrIndex.end() || IsBetterCandidate(entry, entries[addressIt->second])) {
             addrIndex[entry.address] = i;
         }
+
         if (entry.entryPoint) {
             hostIndex.push_back({reinterpret_cast<uintptr_t>(entry.entryPoint), i});
         }
@@ -173,14 +180,18 @@ void RebuildIndicesLocked() {
 
     const bool translatedWinnersAreGenerated = GeneratedIndirectDispatchTable() != nullptr;
     rawDispatchEntries.reserve(translatedWinnersAreGenerated ? 256u : addrIndex.size());
+
     for (const auto& [address, index] : addrIndex) {
         const auto& entry = entries[index];
+
         if (!entry.rawCpuInvoker || !entry.mustRemainDynamicallyDispatchable) {
             continue;
         }
+
         if (translatedWinnersAreGenerated && entry.kind != FunctionKind::Native) {
             continue;
         }
+
         rawDispatchEntries.push_back(RawDispatchRecord{
             .address = address,
             .entry = entry.rawCpuInvoker,
@@ -188,35 +199,44 @@ void RebuildIndicesLocked() {
             .preserveNonvolatileGprs = ShouldPreserveNonvolatileGprsForRawCpuCall(&entry),
         });
     }
+
     std::sort(rawDispatchEntries.begin(), rawDispatchEntries.end(), [](const RawDispatchRecord& a, const RawDispatchRecord& b) { return a.address < b.address; });
 }
 
 std::string ValidateGeneratedIndirectDispatchLocked() {
     const auto* table = GeneratedIndirectDispatchTable();
+
     if (!table) {
         return {};
     }
+
     if (!table->profileName || !table->segments || !table->entries || table->entryCount == 0) {
         return "Invalid generated indirect dispatch table";
     }
 
     uint32_t previousAddress = 0;
+
     for (size_t i = 0; i < table->entryCount; ++i) {
         const auto& record = table->entries[i];
+
         if ((record.address & 3u) != 0 || !record.entry || (i != 0 && record.address <= previousAddress) || FindStaticIndirectDispatchEntry(table, record.address) != &record) {
             std::ostringstream message;
             message << "Malformed generated indirect dispatch entry " << i << " for profile '" << table->profileName << "'";
             return message.str();
         }
+
         previousAddress = record.address;
 
         const auto winner = AddressIndex().find(record.address);
+
         if (winner == AddressIndex().end()) {
             std::ostringstream message;
             message << "Generated indirect dispatch target 0x" << std::hex << record.address << " is not registered for profile '" << table->profileName << "'";
             return message.str();
         }
+
         const auto& info = Registry()[winner->second];
+
         if (info.kind == FunctionKind::Native || info.rawCpuInvoker != record.entry || NonvolatileFprGuardMaskFor(&info) != record.nonvolatileFprWriteMask || record.preserveNonvolatileGprs) {
             std::ostringstream message;
             message << "Stale generated indirect dispatch winner at 0x" << std::hex << record.address << " for profile '" << table->profileName << "'";
@@ -226,30 +246,37 @@ std::string ValidateGeneratedIndirectDispatchLocked() {
 
     for (const auto& [address, index] : AddressIndex()) {
         const auto& info = Registry()[index];
+
         if ((info.kind == FunctionKind::BaseTranslated || info.kind == FunctionKind::ModTranslated) && info.rawCpuInvoker && !FindStaticIndirectDispatchEntry(table, address)) {
             std::ostringstream message;
             message << "Generated indirect dispatch profile '" << table->profileName << "' omits translated winner 0x" << std::hex << address;
             return message.str();
         }
     }
+
     return {};
 }
 } // namespace
 
 void RegisterStaticIndirectDispatchTable(const StaticIndirectDispatchTable* table) {
     std::lock_guard<std::mutex> lock(RegistryMutex());
+
     if (RegistryFrozen().load(std::memory_order_acquire)) {
         RT_LOG(RT_TAG_RUNTIME) << "ERROR: Generated indirect dispatch table registered after finalization" << std::endl;
         ShowRuntimeFatalPopup("translated dispatch initialization failed", "A generated indirect-dispatch table was registered after the function registry was finalized.");
         std::abort();
     }
+
     auto*& registered = GeneratedIndirectDispatchTable();
+
     if (registered && registered != table) {
         RT_LOG(RT_TAG_RUNTIME) << "ERROR: Multiple generated indirect dispatch profiles were linked" << std::endl;
         ShowRuntimeFatalPopup("translated dispatch initialization failed", "Multiple generated indirect-dispatch profiles were linked into the same product.");
         std::abort();
     }
+
     registered = table;
+
     // Mirror into the header-visible atomic under the same lock, so the
     // inlined miss path and this owning static can never disagree.
     g_publishedStaticIndirectDispatchTable.store(table, std::memory_order_release);
@@ -274,11 +301,13 @@ void RegisterBulkTranslatedFunctions(const BulkTranslatedFunctionRecord* records
 
 void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
     std::lock_guard<std::mutex> lock(RegistryMutex());
+
     if (RegistryFrozen().load(std::memory_order_acquire)) {
         RT_LOG(RT_TAG_RUNTIME) << "ERROR: Attempted to register function after registry was finalized: 0x" << std::hex << info.address << " '" << info.name << "'" << std::dec << std::endl;
         ShowRuntimeFatalPopup("translated function registration failed", "A translated function was registered after guest execution had already been finalized.");
         std::abort();
     }
+
     info.priority = EffectivePriority(info);
 
     auto& entries = Registry();
@@ -286,9 +315,11 @@ void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
     auto& addressEntries = AddressEntries();
 
     auto sameAddressIt = addressEntries.find(info.address);
+
     if (sameAddressIt != addressEntries.end()) {
         for (const size_t existingIndex : sameAddressIt->second) {
             const auto& existing = entries[existingIndex];
+
             if (IsSameRegistration(existing, info)) {
                 RT_LOG(RT_TAG_RUNTIME) << "Duplicate " << KindLabel(info.kind) << " registration for " << info.name << " (0x" << std::hex << info.address << ") ignored" << std::dec << std::endl;
                 return;
@@ -300,14 +331,17 @@ void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
     const size_t index = entries.size() - 1;
     addressEntries[entries[index].address].push_back(index);
     auto bestAddressIt = addrIndex.find(entries[index].address);
+
     if (bestAddressIt == addrIndex.end() || IsBetterCandidate(entries[index], entries[bestAddressIt->second])) {
         if (bestAddressIt != addrIndex.end()) {
             // Expected on every mod entry - a Retro Rewind boot has thousands.
             // Counted here and reported once by Finalize instead of per address.
             ++PriorityOverrideCount();
         }
+
         addrIndex[entries[index].address] = index;
     }
+
     if (entries[index].entryPoint) {
         HostIndex().push_back({reinterpret_cast<uintptr_t>(entries[index].entryPoint), index});
     }
@@ -317,16 +351,20 @@ void TranslatedFunctionRegistry::Finalize() {
     if (const size_t overrides = PriorityOverrideCount(); overrides != 0) {
         RT_LOG(RT_TAG_RUNTIME) << overrides << " registration(s) took over an address by priority" << std::endl;
     }
+
     std::string validationError;
     {
         std::lock_guard<std::mutex> lock(RegistryMutex());
+
         // Publication is one-way: cached pointers into the rebuilt vectors
         // remain valid for the lifetime of the process.
         if (RegistryFrozen().load(std::memory_order_acquire)) {
             return;
         }
+
         RebuildIndicesLocked();
         validationError = ValidateGeneratedIndirectDispatchLocked();
+
         if (validationError.empty()) {
             // Duplicate-registration tracking is initialization-only. AddressIndex
             // owns every published winner after this point, and Register rejects
@@ -339,6 +377,7 @@ void TranslatedFunctionRegistry::Finalize() {
             lookupPublished_.store(true, std::memory_order_release);
         }
     }
+
     if (!validationError.empty()) {
         throw std::runtime_error("[" RT_TAG_RUNTIME "] " + validationError);
     }
@@ -352,14 +391,17 @@ const TranslatedFunctionInfo* TranslatedFunctionRegistry::FindByAddressPtrSlow(u
 
     std::lock_guard<std::mutex> lock(RegistryMutex());
     auto it = AddressIndex().find(address);
+
     if (it != AddressIndex().end()) {
         return &Registry()[it->second];
     }
+
     for (auto& entry : Registry()) {
         if (entry.address == address) {
             return &entry;
         }
     }
+
     return nullptr;
 }
 
@@ -367,9 +409,11 @@ const RawDispatchRecord* TranslatedFunctionRegistry::FindRawByAddressPtrSlow(uin
     if (!RegistryFrozen().load(std::memory_order_acquire)) {
         return nullptr;
     }
+
     if (const auto* generated = FindStaticIndirectDispatchEntry(GeneratedIndirectDispatchTable(), address)) {
         return generated;
     }
+
     const auto& entries = DynamicRawDispatchEntries();
     const auto it = std::lower_bound(entries.begin(), entries.end(), address, [](const RawDispatchRecord& entry, uint32_t target) { return entry.address < target; });
     return it != entries.end() && it->address == address ? &*it : nullptr;
@@ -377,6 +421,7 @@ const RawDispatchRecord* TranslatedFunctionRegistry::FindRawByAddressPtrSlow(uin
 
 std::optional<TranslatedFunctionInfo> TranslatedFunctionRegistry::FindByHostAddress(uintptr_t hostAddr) {
     const bool frozen = RegistryFrozen().load(std::memory_order_acquire);
+
     if (!frozen) {
         std::lock_guard<std::mutex> lock(RegistryMutex());
         RebuildIndicesLocked();
@@ -384,6 +429,7 @@ std::optional<TranslatedFunctionInfo> TranslatedFunctionRegistry::FindByHostAddr
 
     const auto& entries = Registry();
     const auto& sorted = HostIndex();
+
     if (sorted.empty()) {
         return std::nullopt;
     }
@@ -393,11 +439,13 @@ std::optional<TranslatedFunctionInfo> TranslatedFunctionRegistry::FindByHostAddr
     if (it == sorted.begin()) {
         return std::nullopt;
     }
+
     --it;
 
     uintptr_t funcStart = it->addr;
     uintptr_t funcEnd;
     auto nextIt = it + 1;
+
     if (nextIt != sorted.end()) {
         funcEnd = nextIt->addr;
     } else {
@@ -407,6 +455,7 @@ std::optional<TranslatedFunctionInfo> TranslatedFunctionRegistry::FindByHostAddr
     if (hostAddr >= funcStart && hostAddr < funcEnd) {
         return entries[it->index];
     }
+
     return std::nullopt;
 }
 
@@ -418,19 +467,23 @@ std::optional<TranslatedFunctionInfo> TranslatedFunctionRegistry::FindNearestByA
             if (address < info.address) {
                 continue;
             }
+
             const uint32_t delta = address - info.address;
+
             if (delta < bestDelta) {
                 bestDelta = delta;
                 best = info;
             }
         }
     };
+
     if (RegistryFrozen().load(std::memory_order_acquire)) {
         scan();
     } else {
         std::lock_guard<std::mutex> lock(RegistryMutex());
         scan();
     }
+
     return best;
 }
 
@@ -451,6 +504,7 @@ void InitializePersistentCpuContext() {
     if (g_persistentCpu.gpr[2] == 0) {
         g_persistentCpu.gpr[2] = RuntimeConfig::SDA2_BASE;
     }
+
     if (g_persistentCpu.gpr[13] == 0) {
         g_persistentCpu.gpr[13] = RuntimeConfig::SDA1_BASE;
     }

@@ -68,17 +68,21 @@ struct Identity {
 
 inline std::optional<Identity> LoadIdentityFromKeysBin(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
+
     if (!file) {
         return std::nullopt;
     }
 
     const std::streamoff fileSize = file.tellg();
+
     if (fileSize < 0x400) {
         return std::nullopt;
     }
+
     file.seekg(0, std::ios::beg);
     std::array<uint8_t, 0x400> dump{};
     file.read(reinterpret_cast<char*>(dump.data()), static_cast<std::streamsize>(dump.size()));
+
     if (!file) {
         return std::nullopt;
     }
@@ -93,9 +97,11 @@ inline std::optional<Identity> LoadIdentityFromKeysBin(const std::filesystem::pa
     identity.fromNand = true;
 
     const bool privateKeyEmpty = std::all_of(identity.privateKey.begin(), identity.privateKey.end(), [](uint8_t b) { return b == 0; });
+
     if (identity.deviceId == 0 || identity.caId == 0 || identity.msId == 0 || identity.ngKeyId == 0 || privateKeyEmpty) {
         return std::nullopt;
     }
+
     return identity;
 }
 
@@ -103,6 +109,7 @@ inline std::optional<Identity> LoadIdentityFromNand(const std::filesystem::path&
     if (nandBase.empty()) {
         return std::nullopt;
     }
+
     return LoadIdentityFromKeysBin(nandBase / "keys.bin");
 }
 
@@ -111,6 +118,7 @@ inline const Identity& CurrentIdentity() {
         if (auto loaded = LoadIdentityFromNand(RuntimeNandPath::DiscoverNandRootPath())) {
             return *loaded;
         }
+
         return Identity{};
     }();
     return identity;
@@ -128,6 +136,7 @@ using CryptoEcdsa = CryptoPP::ECDSA<CryptoPP::EC2N, CryptoPP::SHA1>;
 inline CryptoEcdsa::PrivateKey MakePrivateKey(const uint8_t* key) {
     CryptoPP::DL_GroupParameters_EC<CryptoPP::EC2N> parameters(CryptoPP::ASN1::sect233r1());
     const CryptoPP::Integer exponent(key, 30);
+
     if (exponent <= CryptoPP::Integer::Zero() || exponent >= parameters.GetSubgroupOrder()) {
         throw std::invalid_argument("Wii ES private key is outside the sect233r1 subgroup");
     }
@@ -140,6 +149,7 @@ inline CryptoEcdsa::PrivateKey MakePrivateKey(const uint8_t* key) {
 inline EcSignature SignMessage(const uint8_t* key, const uint8_t* data, size_t size) {
     const CryptoEcdsa::PrivateKey privateKey = MakePrivateKey(key);
     const CryptoEcdsa::Signer signer(privateKey);
+
     if (signer.SignatureLength() != EcSignature{}.size()) {
         throw std::runtime_error("Crypto++ returned an unexpected sect233r1 signature size");
     }
@@ -147,9 +157,11 @@ inline EcSignature SignMessage(const uint8_t* key, const uint8_t* data, size_t s
     static CryptoPP::AutoSeededRandomPool random;
     EcSignature signature{};
     const size_t written = signer.SignMessage(random, data, size, signature.data());
+
     if (written != signature.size()) {
         throw std::runtime_error("Crypto++ produced a truncated Wii ES signature");
     }
+
     return signature;
 }
 
@@ -172,10 +184,12 @@ inline void WriteString(uint8_t* dst, size_t dstSize, const std::string& text) {
 inline std::string Hex8(uint32_t value) {
     static constexpr char kHex[] = "0123456789abcdef";
     std::string out(8, '0');
+
     for (int i = 7; i >= 0; --i) {
         out[static_cast<size_t>(i)] = kHex[value & 0xFu];
         value >>= 4;
     }
+
     return out;
 }
 

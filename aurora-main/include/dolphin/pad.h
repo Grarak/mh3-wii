@@ -99,10 +99,12 @@ typedef struct PADStatus {
     u8 triggerLeft;
     u8 triggerL;
   };
+
   union {
     u8 triggerRight;
     u8 triggerR;
   };
+
   u8 analogA;
   u8 analogB;
   s8 err;
@@ -179,6 +181,7 @@ typedef struct PADButtonMapping {
 constexpr u32 PADEncodeAxisButton(u32 axis, bool negative, u32 threshold = 50) {
   return 0x10000u | axis | (negative ? 0x80u : 0u) | (threshold << 8);
 }
+
 constexpr bool PADIsAxisButton(u32 binding) { return (binding & 0xffff0000u) == 0x10000u; }
 constexpr u32 PADAxisButtonThreshold(u32 binding) { return (binding >> 8) & 0xffu; }
 constexpr u32 PADAxisButtonAxis(u32 binding) { return binding & 0x7fu; }
@@ -283,6 +286,7 @@ typedef enum {
   PAD_SENSOR_ACCEL_RIGHT,
   PAD_SENSOR_GYRO_RIGHT,
 } PADSensorType;
+
 BOOL PADSetSensorEnabled(u32 port, PADSensorType sensor, BOOL enabled);
 
 BOOL PADHasSensor(u32 port, PADSensorType sensor);

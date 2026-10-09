@@ -30,6 +30,7 @@ static gl::Program& program_for_variant(Variant variant) {
   case Variant::FromFloat4:
     return *g_fromFloat4;
   }
+
   FATAL("invalid palette conv variant {}", static_cast<int>(variant));
 }
 
@@ -47,9 +48,11 @@ void shutdown() {
 
 void run(const ConvRequest& req) {
   const GLuint prog = program_for_variant(req.variant).get();
+
   if (prog == 0 || !req.src || !req.dst || !req.tlut) {
     return;
   }
+
   gl::bind_framebuffer(req.dst->texture->gl(), 0);
   gl::set_scissor_enabled(false);
   gl::set_viewport(0, 0, static_cast<int32_t>(req.dst->size.width), static_cast<int32_t>(req.dst->size.height), 0.f, 1.f);

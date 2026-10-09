@@ -8,34 +8,47 @@
 void ServiceOsAlarms(CpuContext* cpu) {
     static bool servicing = false;
     static unsigned delivered = 0;
+
     if (servicing)
         return;
+
     const auto saved = *cpu;
     const auto queue = saved.gpr[13] - 0x3B10;
     servicing = true;
+
     try {
         for (unsigned count = 0; count < 64; ++count) {
             const auto alarm = Memory::Read32(queue);
+
             if (!alarm)
                 break;
+
             if (!Memory::Contains(alarm, 0x30))
                 throw std::runtime_error("Invalid OS alarm queue entry");
+
             InvokeIndirectCpu(0x804D5400, cpu); // __OSGetSystemTime, same clock as InsertAlarm
             const uint64_t now = (uint64_t(cpu->gpr[3]) << 32) | cpu->gpr[4];
             const uint64_t due = Memory::Read64(alarm + 8);
             *cpu = saved;
+
             if (static_cast<int64_t>(now) < static_cast<int64_t>(due))
                 break;
+
             const auto next = Memory::Read32(alarm + 0x14);
             const auto callback = Memory::Read32(alarm);
+
             if (!callback)
                 throw std::runtime_error("Queued OS alarm has no callback");
+
             Memory::Write32(queue, next);
+
             if (next)
                 Memory::Write32(next + 0x10, 0);
             else
                 Memory::Write32(queue + 4, 0);
+
             Memory::Write32(alarm, 0);
+
             if (static_cast<int64_t>(Memory::Read64(alarm + 0x18)) > 0) {
                 cpu->gpr[3] = alarm;
                 cpu->gpr[5] = cpu->gpr[6] = 0;
@@ -43,6 +56,7 @@ void ServiceOsAlarms(CpuContext* cpu) {
                 InvokeIndirectCpu(0x804CBB30, cpu); // InsertAlarm chooses the next future period
                 *cpu = saved;
             }
+
             const auto oldContext = Memory::Read32(0x800000D4);
             const auto oldPhysical = Memory::Read32(0x800000C0);
             const auto scheduler = saved.gpr[13] - 14992;
@@ -60,6 +74,7 @@ void ServiceOsAlarms(CpuContext* cpu) {
                 Memory::Write32(0x800000C0, oldPhysical);
                 *cpu = saved;
             };
+
             try {
                 cpu->gpr[1] = stack;
                 cpu->msr &= ~0x8000u;
@@ -70,7 +85,9 @@ void ServiceOsAlarms(CpuContext* cpu) {
                 restore();
                 throw;
             }
+
             restore();
+
             if (++delivered <= 3)
                 std::fprintf(stderr, "MH3 OS alarm: callback %08x delivered\n", callback);
         }
@@ -79,6 +96,7 @@ void ServiceOsAlarms(CpuContext* cpu) {
         servicing = false;
         throw;
     }
+
     *cpu = saved;
     servicing = false;
 }

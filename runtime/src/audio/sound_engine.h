@@ -42,8 +42,10 @@ constexpr uint32_t kPending = kCommands + 0x4C;
 constexpr uint32_t kMixConfig = 0x80699210;      // +0xBEC: the MIX channel mode of every voice
 constexpr uint32_t kMasterVolume = 0x80796EC4;   // s16, 0..127
 constexpr uint32_t kLevelTable = 0x805985E0;     // s32[128]: level 0..127 -> dB x 10
+
 // Stream buffers: each channel's region is three chunks.
 constexpr uint32_t kStreamChannelBytes = 0x80796ED4, kStreamChunkBytes = 0x80796ED8, kStreamEndMargin = 0x80796EDC;
+
 // Stream gain per category (set_str_*_main_vol): selector byte [idx], two
 // gains with their previous values.
 constexpr uint32_t kStreamGainSelect = 0x80796E70;
@@ -62,7 +64,9 @@ enum : uint32_t {
     kObjType = 0x19,  // u8
     kObjRecord = 0x1C,
 };
+
 enum : uint8_t { kTypeSe = 1, kTypeStream = 2 };
+
 // Object flags.
 enum : uint32_t {
     kTicking = 1u << 0,       // the manager ticks it
@@ -79,6 +83,7 @@ enum : uint32_t {
     kNeedsBuffer = 1u << 24,
     kDvdPaused = 1u << 25,
 };
+
 // Manager: global request flags (+4), cleared when served.
 enum : uint32_t { kMgrRequests = 4 };
 enum : uint32_t { kStopAll = 1, kPauseAll = 2, kResumeAll = 4 };
@@ -93,26 +98,33 @@ enum : uint32_t {
     kEnvRelease = 0x38,
     kEnvState = 0x3A,    // u8
 };
+
 enum : uint8_t { kEnvStart = 0, kEnvAttacking = 1, kEnvDecaying = 2, kEnvSliding = 3, kEnvHolding = 4, kEnvReleasing = 5 };
 
 inline uint32_t Record(uint32_t object) {
     return object + kObjRecord;
 }
+
 inline bool Has(uint32_t object, uint32_t bits) {
     return (FlatRead32(object + kObjFlags) & bits) != 0;
 }
+
 inline void Set(uint32_t object, uint32_t bits) {
     FlatWrite32(object + kObjFlags, FlatRead32(object + kObjFlags) | bits);
 }
+
 inline void Clear(uint32_t object, uint32_t bits) {
     FlatWrite32(object + kObjFlags, FlatRead32(object + kObjFlags) & ~bits);
 }
+
 inline int16_t S16(uint32_t address) {
     return int16_t(FlatRead16(address));
 }
+
 inline int32_t Level(int32_t level) {
     return int32_t(FlatRead32(kLevelTable + uint32_t(level) * 4));
 }
+
 inline uint32_t MixMode() {
     return FlatRead32(kMixConfig + 0xBEC);
 }
@@ -125,11 +137,13 @@ inline void InsertAfter(uint32_t at, uint32_t node) {
     FlatWrite32(node + kPrev, at);
     FlatWrite32(at + kNext, node);
 }
+
 inline void Unlink(uint32_t node) {
     const uint32_t prev = FlatRead32(node + kPrev);
     FlatWrite32(prev + kNext, FlatRead32(node + kNext));
     FlatWrite32(FlatRead32(prev + kNext) + kPrev, prev);
 }
+
 // Moves `node` to the front of `list`; returns the node that followed it.
 inline uint32_t MoveTo(uint32_t list, uint32_t node) {
     const uint32_t next = FlatRead32(node + kNext);
@@ -144,11 +158,13 @@ inline uint32_t MoveTo(uint32_t list, uint32_t node) {
 // originals, so a named port is reached from original callers (the ports
 // call each other directly, which the checks would not see).
 void Entry(CpuContext* cpu, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));
+
 // Entry for a port that only returns r3 (PortCheck::RunPure).
 void EntryPure(CpuContext* cpu, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));
 
 // 0x800EDAEC: returns a sound object to the pool; returns the next active one.
 uint32_t FreeObject(uint32_t object);
+
 // 0x800E9720: one envelope step; may start or stop the object.
 void Envelope(CpuContext* cpu, uint32_t manager, uint32_t object, uint32_t envelope);
 

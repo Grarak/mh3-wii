@@ -18,9 +18,11 @@ namespace RuntimeNandPath {
 
 inline std::optional<std::filesystem::path> ExistingDirectory(const std::filesystem::path& path) {
     std::error_code ec;
+
     if (!path.empty() && std::filesystem::is_directory(path, ec) && !ec) {
         return path;
     }
+
     return std::nullopt;
 }
 
@@ -30,13 +32,17 @@ inline std::optional<std::filesystem::path> ExistingDirectory(const std::filesys
     } else {
         RT_LOGF(RT_TAG_NAND, "ERROR: %s: %s\n", message, RuntimeConfigFile::PathToUtf8(path).c_str());
     }
+
     RT_LOGF(RT_TAG_NAND, "Set [paths] nand_root in Config.toml.\n");
     std::string details = message ? message : "The configured NAND could not be initialized.";
+
     if (!path.empty()) {
         details += "\n\nPath: ";
         details += RuntimeConfigFile::PathToUtf8(path);
     }
+
     details += "\n\nSet [paths] nand_root in Config.toml and try again.";
+
     // Same fatal idiom as the DVD and OS paths: crash artifacts first so the run
     // folder always has them, then a non-zero exit code, the popup, and the
     // "already reported" latch so the atexit handler does not stack a second
@@ -59,6 +65,7 @@ inline std::filesystem::path ManagedNandRootPath() {
 inline std::optional<std::filesystem::path> BootstrapPayloadPath() {
     if (auto executableDirectory = RuntimeConfigFile::ExecutableDirectory()) {
         const auto adjacent = *executableDirectory / "wii_bootstrap";
+
         if (ExistingDirectory(adjacent / "shared2" / "wc24")) {
             return adjacent;
         }
@@ -67,29 +74,37 @@ inline std::optional<std::filesystem::path> BootstrapPayloadPath() {
     // This makes developer-tree launches work without changing their release layout.
     for (auto base = std::filesystem::current_path(); !base.empty();) {
         const auto candidate = base / "runtime" / "assets" / "wii";
+
         if (ExistingDirectory(candidate / "shared2" / "wc24")) {
             return candidate;
         }
+
         const auto parent = base.parent_path();
+
         if (parent == base) {
             break;
         }
+
         base = parent;
     }
+
     return std::nullopt;
 }
 
 inline bool CopyBootstrapFile(const std::filesystem::path& sourceRoot, const std::filesystem::path& destinationRoot, const std::filesystem::path& relativePath, std::error_code& ec) {
     const auto source = sourceRoot / relativePath;
     const auto destination = destinationRoot / relativePath;
+
     if (std::filesystem::exists(destination, ec)) {
         return !ec;
     }
 
     std::filesystem::create_directories(destination.parent_path(), ec);
+
     if (ec) {
         return false;
     }
+
     std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, ec);
     return !ec;
 }
@@ -103,18 +118,23 @@ constexpr std::string_view kBootstrapFiles[] = {
 // Add first-run WC24 files only when the NAND has none yet.
 inline bool SeedMissingBootstrapFiles(const std::filesystem::path& root) {
     const auto payload = BootstrapPayloadPath();
+
     if (!payload) {
         return false;
     }
+
     std::error_code ec;
+
     for (const std::string_view file : kBootstrapFiles) {
         const std::filesystem::path relativePath{std::string(file)};
         ec.clear();
+
         if (!CopyBootstrapFile(*payload, root, relativePath, ec)) {
             RT_LOG(RT_TAG_NAND) << "could not create " << RuntimeConfigFile::PathToUtf8(root / relativePath) << std::endl;
             return false;
         }
     }
+
     return true;
 }
 
@@ -122,6 +142,7 @@ inline std::filesystem::path CreateManagedNandRoot() {
     const std::filesystem::path root = ManagedNandRootPath();
     std::error_code ec;
     std::filesystem::create_directories(root, ec);
+
     if (ec || !std::filesystem::is_directory(root, ec)) {
         FailNandRoot("Unable to create managed NAND root", root);
     }
@@ -132,13 +153,17 @@ inline std::filesystem::path CreateManagedNandRoot() {
 
     const auto marker = root / ".mkw_recompiled_managed_nand";
     ec.clear();
+
     if (!std::filesystem::exists(marker, ec)) {
         std::ofstream markerFile(marker, std::ios::trunc);
+
         if (!markerFile) {
             FailNandRoot("Managed NAND root is not writable", root);
         }
+
         markerFile << "version=1\n";
         markerFile.close();
+
         if (!markerFile) {
             FailNandRoot("Unable to finish managed NAND initialization", root);
         }
@@ -150,17 +175,22 @@ inline std::filesystem::path CreateManagedNandRoot() {
 
 inline std::filesystem::path ResolveNandRootPath() {
     const std::string configPath = RuntimeConfigFile::NandRoot();
+
     if (!configPath.empty()) {
         const auto path = ResolveConfiguredPath(configPath);
+
         if (auto existing = ExistingDirectory(path)) {
             // Seed only a new configured NAND so existing frontend data stays unchanged.
             if (!SeedMissingBootstrapFiles(*existing)) {
                 RT_LOG(RT_TAG_NAND) << "first-run WC24 seeding failed for the configured NAND root" << std::endl;
             }
+
             return *existing;
         }
+
         FailNandRoot("Configured NAND root is not an existing directory", path);
     }
+
     return CreateManagedNandRoot();
 }
 
@@ -168,9 +198,11 @@ inline std::filesystem::path DiscoverNandRootPath() {
     static const auto root = [] {
         const auto resolved = ResolveNandRootPath();
         std::string error;
+
         if (!RuntimeNandSettings::Ensure(resolved, error)) {
             FailNandRoot(error.c_str(), RuntimeNandSettings::FilePath(resolved));
         }
+
         return resolved;
     }();
     return root;

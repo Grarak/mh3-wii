@@ -44,6 +44,7 @@ std::atomic_uint64_t s_diagFramesLowMatch{0};
 std::atomic_uint64_t s_diagFramesReplayUnsafe{0};
 std::atomic_uint64_t s_diagSlotReductions{0};
 std::atomic_uint64_t s_diagLateSealDrops{0};
+
 // Persistent worker pool for the per-sample interpolation tasks. libc++ has no
 // parallel execution policies, so without it the seal loop runs serially. Leaked.
 class InterpolationWorkerPool {
@@ -60,12 +61,15 @@ public:
     if (count == 0) {
       return;
     }
+
     if (m_workers.empty()) {
       for (size_t i = 0; i < count; ++i) {
         fn(i);
       }
+
       return;
     }
+
     {
       // Job state and the generation bump publish under one lock, so a late worker
       // can never observe a half-written job.
@@ -76,14 +80,17 @@ public:
       m_remaining.store(count, std::memory_order_relaxed);
       ++m_generation;
     }
+
     m_wake.notify_all();
     consume();
+
     // Wait for stragglers to leave consume() entirely, not just finish their chunks,
     // so the next dispatch can safely reset the shared counters.
     while (m_remaining.load(std::memory_order_acquire) != 0 ||
            m_active.load(std::memory_order_acquire) != 0) {
       std::this_thread::yield();
     }
+
     m_invoke = nullptr;
   }
 
@@ -97,10 +104,12 @@ private:
     constexpr unsigned helpers = 0;
 #else
     const unsigned hardware = std::thread::hardware_concurrency();
+
     // The caller helps too. Cap short memcpy+math tasks to limit overhead.
     const unsigned helpers = hardware > 2 ? std::min(hardware - 1, 6u) : 0;
 #endif
     m_workers.reserve(helpers);
+
     for (unsigned i = 0; i < helpers; ++i) {
       m_workers.emplace_back([this] { worker_loop(); });
     }
@@ -108,15 +117,20 @@ private:
 
   void consume() {
     const size_t count = m_count.load(std::memory_order_relaxed);
+
     while (true) {
       const size_t begin = m_next.fetch_add(kChunk, std::memory_order_relaxed);
+
       if (begin >= count) {
         return;
       }
+
       const size_t end = std::min(begin + kChunk, count);
+
       for (size_t index = begin; index < end; ++index) {
         m_invoke(index);
       }
+
       m_remaining.fetch_sub(end - begin, std::memory_order_release);
     }
   }
@@ -124,15 +138,18 @@ private:
   void worker_loop() {
     aurora::pin_current_thread(aurora::ThreadRole::Worker);
     uint64_t seenGeneration = 0;
+
     while (true) {
       {
         std::unique_lock lock(m_mutex);
         m_wake.wait(lock, [&] { return m_generation != seenGeneration; });
         seenGeneration = m_generation;
+
         // Counted under the mutex: when the dispatcher sees m_active == 0 every worker is
         // parked or has not read the current generation, so a counter reset is safe.
         m_active.fetch_add(1, std::memory_order_relaxed);
       }
+
       consume();
       m_active.fetch_sub(1, std::memory_order_release);
     }
@@ -148,6 +165,7 @@ private:
   std::atomic_size_t m_remaining{0};
   std::atomic_size_t m_active{0};
 };
+
 struct FrameTransformSnapshot {
   Mat4x4<float> projection{};
   HashType viewportIdentity = 0;
@@ -157,16 +175,19 @@ struct FrameTransformSnapshot {
   struct IndexedMatrices {
     std::array<Mat3x4<float>, MaxPnMtx> position{};
     std::array<Mat3x4<float>, MaxPnMtx> normal{};
+
     // Content hash of each used slot's position/normal pair. A mesh split across draws
     // repeats bone matrices byte for byte, so the seal can pair slots across draws.
     std::array<HashType, MaxPnMtx> slotHash{};
   };
+
   std::unique_ptr<IndexedMatrices> indexedMatrices;
 };
 
 struct FrameTransformEntry {
   FrameInterpolationDrawIdentity identity;
   FrameTransformSnapshot transform;
+
   // Constant-velocity prediction of a non-indexed transform, so repeated meshes match
   // on where they will be. Not for indexed draws: PNMTXIDX slot identity pairs those.
   Mat3x4<float> predictedPosition{};
@@ -210,6 +231,7 @@ std::unique_ptr<FrameTransformSnapshot::IndexedMatrices> acquire_indexed_matrice
   if (s_indexedMatricesPool.empty()) {
     return std::make_unique<FrameTransformSnapshot::IndexedMatrices>();
   }
+
   auto block = std::move(s_indexedMatricesPool.back());
   s_indexedMatricesPool.pop_back();
   return block;
@@ -222,6 +244,7 @@ void recycle_transform_entries(std::vector<FrameTransformEntry>& entries) noexce
       s_indexedMatricesPool.push_back(std::move(entry.transform.indexedMatrices));
     }
   }
+
   entries.clear();
 }
 
@@ -249,11 +272,14 @@ void clear_index_map_keep_nodes(std::unordered_map<HashType, std::vector<size_t>
     map.clear();
     return;
   }
+
   for (auto& entry : map) {
     entry.second.clear();
   }
 }
+
 uint32_t s_perspectiveCandidates = 0;
+
 // Candidates that also existed last frame. Freshly spawned effects have no partner
 // by definition, so counting them measured spawn churn instead of matcher health.
 uint32_t s_perspectiveMatchable = 0;
@@ -282,9 +308,11 @@ constexpr uint32_t kPacingRestorePercent = 25;
 
 uint32_t maximum_interpolation_samples() noexcept {
   const uint32_t targetFps = frame_interpolation_fps();
+
   if (targetFps == 0) {
     return 0;
   }
+
   return std::min(targetFps / 60 - 1, MaxInterpolatedFrames);
 }
 
@@ -317,6 +345,7 @@ std::array<float, 3> cross3(const std::array<float, 3>& a, const std::array<floa
 Quaternion quaternion_from_rotation(const std::array<std::array<float, 3>, 3>& m) noexcept {
   Quaternion q;
   const float trace = m[0][0] + m[1][1] + m[2][2];
+
   if (trace > 0.0f) {
     const float s = std::sqrt(trace + 1.0f) * 2.0f;
     q.w = 0.25f * s;
@@ -342,6 +371,7 @@ Quaternion quaternion_from_rotation(const std::array<std::array<float, 3>, 3>& m
     q.y = (m[1][2] + m[2][1]) / s;
     q.z = 0.25f * s;
   }
+
   return q;
 }
 
@@ -349,22 +379,27 @@ bool decompose_affine(const Mat3x4<float>& matrix, std::array<std::array<float, 
                       std::array<float, 3>& scale, std::array<float, 3>& translation,
                       Quaternion& quaternion) noexcept {
   const std::array<Vec4<float>, 3> rows{matrix.m0, matrix.m1, matrix.m2};
+
   // V*T*R*S puts non-uniform model scale on the columns, so scale must be read off the
   // columns; row extraction misreads R*S as shear whenever the rotation tilts an axis.
   for (size_t row = 0; row < 3; ++row) {
     translation[row] = rows[row].w();
+
     if (!std::isfinite(translation[row])) {
       return false;
     }
   }
+
   for (size_t column = 0; column < 3; ++column) {
     const float x = rows[0][column];
     const float y = rows[1][column];
     const float z = rows[2][column];
     scale[column] = std::sqrt(x * x + y * y + z * z);
+
     if (!std::isfinite(scale[column]) || scale[column] < kMinimumScale) {
       return false;
     }
+
     rotation[0][column] = x / scale[column];
     rotation[1][column] = y / scale[column];
     rotation[2][column] = z / scale[column];
@@ -373,6 +408,7 @@ bool decompose_affine(const Mat3x4<float>& matrix, std::array<std::array<float, 
   const auto rotationColumn = [&rotation](size_t column) noexcept {
     return std::array<float, 3>{rotation[0][column], rotation[1][column], rotation[2][column]};
   };
+
   if (std::abs(dot3(rotationColumn(0), rotationColumn(1))) > 0.05f ||
       std::abs(dot3(rotationColumn(0), rotationColumn(2))) > 0.05f ||
       std::abs(dot3(rotationColumn(1), rotationColumn(2))) > 0.05f) {
@@ -380,11 +416,14 @@ bool decompose_affine(const Mat3x4<float>& matrix, std::array<std::array<float, 
   }
 
   const float determinant = dot3(rotation[0], cross3(rotation[1], rotation[2]));
+
   if (!std::isfinite(determinant) || std::abs(std::abs(determinant) - 1.0f) > 0.1f) {
     return false;
   }
+
   if (determinant < 0.0f) {
     scale[0] = -scale[0];
+
     for (size_t row = 0; row < 3; ++row) {
       rotation[row][0] = -rotation[row][0];
     }
@@ -429,6 +468,7 @@ struct PreparedAffinePair {
 struct PreparedTransformInterpolation {
   size_t nonIndexedPairOffset = kNoPreparedPair;
   std::array<size_t, MaxPnMtx> indexedPairOffsets{};
+
   // Previous-frame entry the projection interpolates from. For a draw that borrowed
   // its matrices from a sibling, that is the sibling's partner.
   size_t previousProjectionEntry = kNoPreparedPair;
@@ -442,6 +482,7 @@ struct PreparedTransformInterpolation {
 PreparedAffinePair prepare_affine_pair(const Mat3x4<float>& previous,
                                        const Mat3x4<float>& current) noexcept {
   PreparedAffinePair pair{.previous = previous, .current = current};
+
   if (std::memcmp(&previous, &current, sizeof(current)) == 0) {
     pair.identical = true;
     pair.valid = true;
@@ -450,6 +491,7 @@ PreparedAffinePair prepare_affine_pair(const Mat3x4<float>& previous,
 
   std::array<std::array<float, 3>, 3> previousRotation{};
   std::array<std::array<float, 3>, 3> currentRotation{};
+
   if (!decompose_affine(previous, previousRotation, pair.previousScale,
                         pair.previousTranslation, pair.previousQuaternion) ||
       !decompose_affine(current, currentRotation, pair.currentScale,
@@ -458,10 +500,12 @@ PreparedAffinePair prepare_affine_pair(const Mat3x4<float>& previous,
   }
 
   float translationDeltaSquared = 0.0f;
+
   for (size_t i = 0; i < 3; ++i) {
     const float delta = pair.currentTranslation[i] - pair.previousTranslation[i];
     translationDeltaSquared += delta * delta;
   }
+
   if (!std::isfinite(translationDeltaSquared) ||
       translationDeltaSquared > kMaximumTranslationPerFrame * kMaximumTranslationPerFrame) {
     return pair;
@@ -478,9 +522,11 @@ PreparedAffinePair prepare_affine_pair(const Mat3x4<float>& previous,
     pair.currentQuaternion.w = -pair.currentQuaternion.w;
     quaternionDot = -quaternionDot;
   }
+
   if (!std::isfinite(quaternionDot) || quaternionDot < kMinimumQuaternionDot) {
     return pair;
   }
+
   pair.valid = true;
   return pair;
 }
@@ -494,6 +540,7 @@ PreparedAffinePair prepare_indexed_pair(const Mat3x4<float>& previous,
       .current = current,
       .linear = true,
   };
+
   if (std::memcmp(&previous, &current, sizeof(current)) == 0) {
     pair.identical = true;
     pair.valid = true;
@@ -502,6 +549,7 @@ PreparedAffinePair prepare_indexed_pair(const Mat3x4<float>& previous,
 
   const std::array<Vec4<float>, 3> previousRows{previous.m0, previous.m1, previous.m2};
   const std::array<Vec4<float>, 3> currentRows{current.m0, current.m1, current.m2};
+
   for (size_t row = 0; row < 3; ++row) {
     for (size_t column = 0; column < 4; ++column) {
       if (!std::isfinite(previousRows[row][column]) ||
@@ -515,10 +563,12 @@ PreparedAffinePair prepare_indexed_pair(const Mat3x4<float>& previous,
   const float dy = current.m1.w() - previous.m1.w();
   const float dz = current.m2.w() - previous.m2.w();
   const float translationDeltaSquared = dx * dx + dy * dy + dz * dz;
+
   if (!(translationDeltaSquared <=
         kMaximumTranslationPerFrame * kMaximumTranslationPerFrame)) {
     return pair;
   }
+
   pair.valid = true;
   return pair;
 }
@@ -536,6 +586,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
     const std::array<const Vec4<float>*, 3> currentRows{
         &pair.current.m0, &pair.current.m1, &pair.current.m2};
     const std::array<Vec4<float>*, 3> outputRows{&output.m0, &output.m1, &output.m2};
+
     for (size_t row = 0; row < 3; ++row) {
       for (size_t column = 0; column < 4; ++column) {
         const float before = (*previousRows[row])[column];
@@ -543,6 +594,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
             before + ((*currentRows[row])[column] - before) * weight;
       }
     }
+
     return true;
   }
 
@@ -556,6 +608,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
       pair.previousQuaternion.z * previousWeight + pair.currentQuaternion.z * currentWeight,
       pair.previousQuaternion.w * previousWeight + pair.currentQuaternion.w * currentWeight,
   };
+
   const float quaternionLength = std::sqrt(interpolated.x * interpolated.x +
                                            interpolated.y * interpolated.y +
                                            interpolated.z * interpolated.z +
@@ -564,6 +617,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
     output = pair.current;
     return false;
   }
+
   interpolated.x /= quaternionLength;
   interpolated.y /= quaternionLength;
   interpolated.z /= quaternionLength;
@@ -572,6 +626,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
   const auto interpolatedRotation = rotation_from_quaternion(interpolated);
   std::array<float, 3> interpolatedScale{};
   std::array<float, 3> interpolatedTranslation{};
+
   for (size_t i = 0; i < 3; ++i) {
     interpolatedScale[i] = pair.previousScale[i] +
                            (pair.currentScale[i] - pair.previousScale[i]) * weight;
@@ -579,6 +634,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
         pair.previousTranslation[i] +
         (pair.currentTranslation[i] - pair.previousTranslation[i]) * weight;
   }
+
   // Column scale mirrors decompose_affine: the reconstruction is R*S, with
   // each scale component applied down its column.
   output = {
@@ -592,6 +648,7 @@ bool evaluate_affine_pair(const PreparedAffinePair& pair, float weight,
        interpolatedRotation[2][1] * interpolatedScale[1],
        interpolatedRotation[2][2] * interpolatedScale[2], interpolatedTranslation[2]},
   };
+
   return true;
 }
 
@@ -603,15 +660,18 @@ bool interpolate_affine_impl(const Mat3x4<float>& previous, const Mat3x4<float>&
 Mat4x4<float> interpolate_projection(const Mat4x4<float>& previous, const Mat4x4<float>& current,
                                      float weight) noexcept {
   Mat4x4<float> result = current;
+
   for (size_t row = 0; row < 4; ++row) {
     for (size_t column = 0; column < 4; ++column) {
       const float before = previous[row][column];
       const float after = current[row][column];
+
       if (std::isfinite(before) && std::isfinite(after)) {
         result[row][column] = before + (after - before) * weight;
       }
     }
   }
+
   return result;
 }
 } // namespace
@@ -640,20 +700,25 @@ float transform_match_distance_squared(const Mat3x4<float>& previous,
   double distance = 0.0;
   const std::array<Vec4<float>, 3> previousRows{previous.m0, previous.m1, previous.m2};
   const std::array<Vec4<float>, 3> currentRows{current.m0, current.m1, current.m2};
+
   for (size_t row = 0; row < 3; ++row) {
     for (size_t column = 0; column < 4; ++column) {
       const double before = previousRows[row][column];
       const double after = currentRows[row][column];
+
       if (!std::isfinite(before) || !std::isfinite(after)) {
         return std::numeric_limits<float>::infinity();
       }
+
       const double delta = after - before;
       distance += delta * delta;
     }
   }
+
   if (!std::isfinite(distance) || distance > std::numeric_limits<float>::max()) {
     return std::numeric_limits<float>::infinity();
   }
+
   return static_cast<float>(distance);
 }
 
@@ -676,12 +741,14 @@ Mat3x4<float> extrapolate_transform(const Mat3x4<float>& previous,
   const std::array<const Vec4<float>*, 3> previousRows{&previous.m0, &previous.m1, &previous.m2};
   const std::array<const Vec4<float>*, 3> currentRows{&current.m0, &current.m1, &current.m2};
   const std::array<Vec4<float>*, 3> predictedRows{&predicted.m0, &predicted.m1, &predicted.m2};
+
   for (size_t row = 0; row < 3; ++row) {
     for (size_t column = 0; column < 4; ++column) {
       (*predictedRows[row])[column] =
           2.0f * (*currentRows[row])[column] - (*previousRows[row])[column];
     }
   }
+
   return predicted;
 }
 } // namespace
@@ -689,9 +756,11 @@ Mat3x4<float> extrapolate_transform(const Mat3x4<float>& previous,
 float snapshot_match_distance_squared(const FrameTransformEntry& previousEntry,
                                       const FrameTransformSnapshot& current) noexcept {
   const FrameTransformSnapshot& previous = previousEntry.transform;
+
   if (static_cast<bool>(previous.indexedMatrices) != static_cast<bool>(current.indexedMatrices)) {
     return std::numeric_limits<float>::infinity();
   }
+
   if (!current.indexedMatrices) {
     // Match against the predicted position, falling back to the last known one for
     // entries with no motion history.
@@ -712,23 +781,28 @@ float snapshot_match_distance_squared(const FrameTransformEntry& previousEntry,
 
   double distance = 0.0;
   size_t matchedMatrices = 0;
+
   for (size_t currentIndex = 0; currentIndex < MaxPnMtx; ++currentIndex) {
     if ((current.usedMatrixMask & (1u << currentIndex)) == 0) {
       continue;
     }
+
     const float matrixDistance = transform_match_distance_squared(
         previous.indexedMatrices->position[currentIndex],
         current.indexedMatrices->position[currentIndex]);
     if (!std::isfinite(matrixDistance)) {
       return std::numeric_limits<float>::infinity();
     }
+
     distance += matrixDistance;
     ++matchedMatrices;
   }
+
   if (matchedMatrices == 0 || !std::isfinite(distance) ||
       distance > std::numeric_limits<float>::max()) {
     return std::numeric_limits<float>::infinity();
   }
+
   return static_cast<float>(distance / static_cast<double>(matchedMatrices));
 }
 
@@ -736,13 +810,16 @@ void set_frame_interpolation_fps(uint32_t targetFps) noexcept {
   if (targetFps != 120 && targetFps != 180 && targetFps != 240) {
     targetFps = 0;
   }
+
   detail::g_frameInterpolationFps.store(targetFps, std::memory_order_release);
+
   // Start at the configured quality; the controller only ever backs off from here.
   s_interpolationSampleTarget.store(targetFps == 0 ? 0u : std::min(targetFps / 60 - 1, MaxInterpolatedFrames),
                                     std::memory_order_release);
   s_dropInterpolationAtSeal.store(false, std::memory_order_release);
   s_pacingWindowFrames.store(0, std::memory_order_release);
   s_pacingWindowMisses.store(0, std::memory_order_release);
+
   // A reconfiguration starts a fresh diagnostic window.
   s_diagFramesSealed.store(0, std::memory_order_relaxed);
   s_diagFramesLowMatch.store(0, std::memory_order_relaxed);
@@ -753,6 +830,7 @@ void set_frame_interpolation_fps(uint32_t targetFps) noexcept {
 
 void report_producer_paced(bool paced) noexcept {
   const uint32_t maximumSamples = maximum_interpolation_samples();
+
   if (maximumSamples == 0) {
     s_dropInterpolationAtSeal.store(false, std::memory_order_release);
     s_pacingWindowFrames.store(0, std::memory_order_release);
@@ -773,6 +851,7 @@ void report_producer_paced(bool paced) noexcept {
     s_pacingWindowMisses.store(misses, std::memory_order_release);
     return;
   }
+
   // Window complete: adjust the target one step at most, then start over. At
   // one decision per window this cannot spam the log or flap within a second.
   uint32_t target =
@@ -791,6 +870,7 @@ void report_producer_paced(bool paced) noexcept {
                target, misses, frames);
     }
   }
+
   s_interpolationSampleTarget.store(target, std::memory_order_release);
   s_pacingWindowFrames.store(0, std::memory_order_release);
   s_pacingWindowMisses.store(0, std::memory_order_release);
@@ -798,10 +878,12 @@ void report_producer_paced(bool paced) noexcept {
 
 void begin_frame_interpolation() noexcept {
   const uint32_t targetFps = frame_interpolation_fps();
+
   if (targetFps != s_previousInterpolationFps) {
     recycle_transform_entries(s_previousFrameTransforms);
     s_previousInterpolationFps = targetFps;
   }
+
   // Latch the slot count for the frame starting here; see s_activeInterpolationSamples
   // for why it cannot move again until the seal.
   s_activeInterpolationSamples.store(
@@ -811,15 +893,18 @@ void begin_frame_interpolation() noexcept {
   // Normally empty (finalize swapped and recycled); an aborted frame can leave
   // entries behind, whose matrix blocks go back to the pool here.
   recycle_transform_entries(s_currentFrameTransforms);
+
   // Keep buckets, nodes and capacities across frames so a stable race scene does not
   // pay thousands of small allocations every frame.
   clear_index_map_keep_nodes(s_previousTransformIndices, s_previousFrameTransforms.size());
   clear_index_map_keep_nodes(s_previousStableTransformIndices, s_previousFrameTransforms.size());
+
   for (size_t i = 0; i < s_previousFrameTransforms.size(); ++i) {
     const auto& identity = s_previousFrameTransforms[i].identity;
     s_previousTransformIndices[identity.combined].push_back(i);
     s_previousStableTransformIndices[stable_identity(identity)].push_back(i);
   }
+
   clear_index_map_keep_nodes(s_currentTransformIndices, s_previousFrameTransforms.size());
   clear_index_map_keep_nodes(s_currentStableTransformIndices, s_previousFrameTransforms.size());
   s_pendingUniformInterpolations.clear();
@@ -840,12 +925,15 @@ void finalize_frame_interpolation() noexcept {
     retire_frame_transforms();
     return;
   }
+
   // Below this bound a direct all-pairs build is cheaper than setting up the
   // spatial grid; the produced edge set is identical either way.
   constexpr size_t kAllPairsEdgeLimit = 1024;
+
   // Bounds the all-pairs cost for indexed groups, which have no single translation to
   // bucket on. Non-indexed groups of any size use the grid instead.
   constexpr size_t kMaximumAssignmentEdges = 16384;
+
   // Hard bound for the grid path; only a swarm co-located within one cell reaches it,
   // which is the CPU-deformed shape the ordered fallback exists for.
   constexpr size_t kMaximumGridEdges = 65536;
@@ -876,20 +964,24 @@ void finalize_frame_interpolation() noexcept {
     const float x = m.m0.w();
     const float y = m.m1.w();
     const float z = m.m2.w();
+
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
       return kInvalidCell;
     }
+
     constexpr float kInverseCell = 1.0f / kMaximumTranslationPerFrame;
     constexpr int64_t kBias = int64_t{1} << 20;
     const int64_t cx = static_cast<int64_t>(std::floor(x * kInverseCell)) + kBias;
     const int64_t cy = static_cast<int64_t>(std::floor(y * kInverseCell)) + kBias;
     const int64_t cz = static_cast<int64_t>(std::floor(z * kInverseCell)) + kBias;
+
     // One cell of margin at each field edge so the +-1 neighbor arithmetic cannot borrow
     // into the next packed coordinate.
     if (cx < 1 || cy < 1 || cz < 1 || cx >= (kBias << 1) - 1 || cy >= (kBias << 1) - 1 ||
         cz >= (kBias << 1) - 1) {
       return kInvalidCell;
     }
+
     return (static_cast<uint64_t>(cx) << 42) | (static_cast<uint64_t>(cy) << 21) |
            static_cast<uint64_t>(cz);
   };
@@ -901,22 +993,28 @@ void finalize_frame_interpolation() noexcept {
       if (allCurrentIndices.empty()) {
         continue;
       }
+
       const auto previousIt = previousGroups.find(signature);
+
       if (previousIt == previousGroups.end() || previousIt->second.empty()) {
         continue;
       }
+
       groupCurrentIndices.clear();
       groupPreviousIndices.clear();
+
       for (const size_t index : allCurrentIndices) {
         if (!currentMatched[index]) {
           groupCurrentIndices.push_back(index);
         }
       }
+
       for (const size_t index : previousIt->second) {
         if (!previousMatched[index]) {
           groupPreviousIndices.push_back(index);
         }
       }
+
       if (groupCurrentIndices.empty() || groupPreviousIndices.empty()) {
         continue;
       }
@@ -935,13 +1033,16 @@ void finalize_frame_interpolation() noexcept {
       const auto appendEdge = [&](size_t previousIndex, size_t currentIndex) {
         const auto& previousEntry = s_previousFrameTransforms[previousIndex];
         const auto& currentSnapshot = s_currentFrameTransforms[currentIndex].transform;
+
         if (!previousEntry.transform.indexedMatrices && !currentSnapshot.indexedMatrices &&
             !(translation_delta_squared(previousEntry.transform.position,
                                         currentSnapshot.position) <=
               kMaximumTranslationPerFrame * kMaximumTranslationPerFrame)) {
           return;
         }
+
         const float distance = snapshot_match_distance_squared(previousEntry, currentSnapshot);
+
         if (std::isfinite(distance)) {
           edges.push_back({
               .distance = distance,
@@ -957,12 +1058,15 @@ void finalize_frame_interpolation() noexcept {
         if (!allowOrderedFallback) {
           return;
         }
+
         const size_t pairCount = std::min(groupPreviousIndices.size(), groupCurrentIndices.size());
+
         for (size_t i = 0; i < pairCount; ++i) {
           // Submission order shifts when the transparent sort reorders or culling drops an
           // instance; leave over-gate pairs unmatched so they snap instead of sweeping.
           const auto& previousEntry = s_previousFrameTransforms[groupPreviousIndices[i]];
           const auto& currentEntry = s_currentFrameTransforms[groupCurrentIndices[i]];
+
           if (!previousEntry.transform.indexedMatrices &&
               !currentEntry.transform.indexedMatrices &&
               !(translation_delta_squared(previousEntry.transform.position,
@@ -970,6 +1074,7 @@ void finalize_frame_interpolation() noexcept {
                 kMaximumTranslationPerFrame * kMaximumTranslationPerFrame)) {
             continue;
           }
+
           currentToPrevious[groupCurrentIndices[i]] = groupPreviousIndices[i];
           previousMatched[groupPreviousIndices[i]] = 1;
           currentMatched[groupCurrentIndices[i]] = 1;
@@ -978,6 +1083,7 @@ void finalize_frame_interpolation() noexcept {
 
       edges.clear();
       const size_t allPairsEdges = groupPreviousIndices.size() * groupCurrentIndices.size();
+
       if (allPairsEdges <= kAllPairsEdgeLimit) {
         for (const size_t currentIndex : groupCurrentIndices) {
           for (const size_t previousIndex : groupPreviousIndices) {
@@ -988,12 +1094,14 @@ void finalize_frame_interpolation() noexcept {
         // Grid buckets need one translation per entry, which mixed or skinned groups lack,
         // so those stay on the bounded all-pairs path.
         bool gridable = true;
+
         for (const size_t index : groupCurrentIndices) {
           if (s_currentFrameTransforms[index].transform.indexedMatrices) {
             gridable = false;
             break;
           }
         }
+
         if (gridable) {
           for (const size_t index : groupPreviousIndices) {
             if (s_previousFrameTransforms[index].transform.indexedMatrices) {
@@ -1002,11 +1110,13 @@ void finalize_frame_interpolation() noexcept {
             }
           }
         }
+
         if (!gridable) {
           if (groupPreviousIndices.size() > kMaximumAssignmentEdges / groupCurrentIndices.size()) {
             orderedFallback();
             continue;
           }
+
           for (const size_t currentIndex : groupCurrentIndices) {
             for (const size_t previousIndex : groupPreviousIndices) {
               appendEdge(previousIndex, currentIndex);
@@ -1016,24 +1126,31 @@ void finalize_frame_interpolation() noexcept {
           // Previous entries are matched against their predicted position, so bucket them by
           // that same reference (see snapshot_match_distance_squared).
           gridCells.clear();
+
           for (const size_t previousIndex : groupPreviousIndices) {
             const auto& previousEntry = s_previousFrameTransforms[previousIndex];
             const Mat3x4<float>& reference = previousEntry.hasPrediction
                                                  ? previousEntry.predictedPosition
                                                  : previousEntry.transform.position;
             const uint64_t cell = translation_cell(reference);
+
             if (cell == kInvalidCell) {
               continue;
             }
+
             gridCells[cell].push_back(static_cast<uint32_t>(previousIndex));
           }
+
           bool overflowed = false;
+
           for (const size_t currentIndex : groupCurrentIndices) {
             const auto& position = s_currentFrameTransforms[currentIndex].transform.position;
             const uint64_t cell = translation_cell(position);
+
             if (cell == kInvalidCell) {
               continue;
             }
+
             for (int64_t dx = -1; dx <= 1 && !overflowed; ++dx) {
               for (int64_t dy = -1; dy <= 1 && !overflowed; ++dy) {
                 for (int64_t dz = -1; dz <= 1 && !overflowed; ++dz) {
@@ -1041,11 +1158,14 @@ void finalize_frame_interpolation() noexcept {
                                             (static_cast<uint64_t>(dy) << 21) +
                                             static_cast<uint64_t>(dz);
                   const auto cellIt = gridCells.find(neighbor);
+
                   if (cellIt == gridCells.end()) {
                     continue;
                   }
+
                   for (const uint32_t previousIndex : cellIt->second) {
                     appendEdge(previousIndex, currentIndex);
+
                     if (edges.size() > kMaximumGridEdges) {
                       overflowed = true;
                       break;
@@ -1054,10 +1174,12 @@ void finalize_frame_interpolation() noexcept {
                 }
               }
             }
+
             if (overflowed) {
               break;
             }
           }
+
           if (overflowed) {
             orderedFallback();
             continue;
@@ -1068,16 +1190,19 @@ void finalize_frame_interpolation() noexcept {
       std::sort(edges.begin(), edges.end(), [](const MatchEdge& lhs, const MatchEdge& rhs) {
         return lhs.distance < rhs.distance;
       });
+
       for (const auto& edge : edges) {
         if (previousMatched[edge.previous] || currentMatched[edge.current]) {
           continue;
         }
+
         currentToPrevious[edge.current] = edge.previous;
         previousMatched[edge.previous] = 1;
         currentMatched[edge.current] = 1;
       }
     }
   };
+
   matchGroups(s_currentTransformIndices, s_previousTransformIndices, false);
   matchGroups(s_currentStableTransformIndices, s_previousStableTransformIndices, true);
 
@@ -1098,12 +1223,15 @@ void finalize_frame_interpolation() noexcept {
     s_diagMatches.store(s_perspectiveMatches, std::memory_order_relaxed);
     s_diagEligible.store(eligible, std::memory_order_relaxed);
     s_diagReplaySafe.store(replaySafe, std::memory_order_relaxed);
+
     if (eligible) {
       s_diagFramesSealed.fetch_add(1, std::memory_order_relaxed);
+
       if (s_perspectiveMatchable != 0 &&
           s_perspectiveMatches * 100 < s_perspectiveMatchable * kLowMatchPercent) {
         s_diagFramesLowMatch.fetch_add(1, std::memory_order_relaxed);
       }
+
       if (!replaySafe) {
         s_diagFramesReplayUnsafe.fetch_add(1, std::memory_order_relaxed);
       }
@@ -1116,14 +1244,18 @@ void finalize_frame_interpolation() noexcept {
       kMaximumTranslationPerFrame * kMaximumTranslationPerFrame;
   for (size_t currentIndex = 0; currentIndex < currentToPrevious.size(); ++currentIndex) {
     const size_t previousIndex = currentToPrevious[currentIndex];
+
     if (previousIndex == SIZE_MAX) {
       continue;
     }
+
     auto& currentEntry = s_currentFrameTransforms[currentIndex];
     const auto& previousEntry = s_previousFrameTransforms[previousIndex];
+
     if (currentEntry.transform.indexedMatrices || previousEntry.transform.indexedMatrices) {
       continue;
     }
+
     // Seed the next frame's matching with a constant-velocity reference, but never from
     // a pair the interpolator would reject as a teleport (`<=` so NaN fails too).
     if (translation_delta_squared(previousEntry.transform.position,
@@ -1162,11 +1294,14 @@ void finalize_frame_interpolation() noexcept {
     static std::vector<uint32_t> paletteDraws;    // compact palette index -> draw
     paletteDrawIndex.assign(s_currentFrameTransforms.size(), -1);
     paletteDraws.clear();
+
     for (size_t drawIndex = 0; drawIndex < s_currentFrameTransforms.size(); ++drawIndex) {
       const auto& transform = s_currentFrameTransforms[drawIndex].transform;
+
       if (!transform.indexedMatrices || transform.usedMatrixMask == 0) {
         continue;
       }
+
       paletteDrawIndex[drawIndex] = static_cast<int32_t>(paletteDraws.size());
       paletteDraws.push_back(static_cast<uint32_t>(drawIndex));
     }
@@ -1176,10 +1311,12 @@ void finalize_frame_interpolation() noexcept {
       uint32_t palette = 0;
       uint32_t slot = 0;
     };
+
     struct ResolvedSlot {
       const Mat3x4<float>* position = nullptr;
       const Mat3x4<float>* normal = nullptr;
     };
+
     static std::vector<PaletteSlotKey> paletteSlotKeys;
     static std::vector<ResolvedSlot> resolvedSlots;
     static std::vector<size_t> resolvedProjectionEntry;
@@ -1189,31 +1326,38 @@ void finalize_frame_interpolation() noexcept {
 
     for (uint32_t palette = 0; palette < paletteDraws.size(); ++palette) {
       const auto& transform = s_currentFrameTransforms[paletteDraws[palette]].transform;
+
       for (uint32_t slot = 0; slot < MaxPnMtx; ++slot) {
         if ((transform.usedMatrixMask & (1u << slot)) == 0) {
           continue;
         }
+
         paletteSlotKeys.push_back({combine_identity(transform.indexedMatrices->slotHash[slot],
                                                    transform.viewportIdentity), palette, slot});
       }
     }
+
     std::sort(paletteSlotKeys.begin(), paletteSlotKeys.end(),
               [](const PaletteSlotKey& lhs, const PaletteSlotKey& rhs) {
                 if (lhs.hash != rhs.hash) {
                   return lhs.hash < rhs.hash;
                 }
+
                 if (lhs.palette != rhs.palette) {
                   return lhs.palette < rhs.palette;
                 }
+
                 return lhs.slot < rhs.slot;
               });
 
     for (size_t runStart = 0; runStart < paletteSlotKeys.size();) {
       size_t runEnd = runStart + 1;
+
       while (runEnd < paletteSlotKeys.size() &&
              paletteSlotKeys[runEnd].hash == paletteSlotKeys[runStart].hash) {
         ++runEnd;
       }
+
       // Where this matrix was last frame, per the draws that did match. Partners that
       // disagree mean no single previous pose, so the coupled unit duplicates.
       const Mat3x4<float>* sourcePosition = nullptr;
@@ -1221,21 +1365,27 @@ void finalize_frame_interpolation() noexcept {
       size_t sourceEntry = kNoPreparedPair;
       HashType sourceHash = 0;
       bool ambiguous = false;
+
       for (size_t keyIndex = runStart; keyIndex < runEnd && !ambiguous; ++keyIndex) {
         const uint32_t drawIndex = paletteDraws[paletteSlotKeys[keyIndex].palette];
         const size_t previousIndex = currentToPrevious[drawIndex];
+
         if (previousIndex >= s_previousFrameTransforms.size()) {
           continue;
         }
+
         const auto& current = s_currentFrameTransforms[drawIndex].transform;
         const auto& previous = s_previousFrameTransforms[previousIndex].transform;
+
         // A slot index is an absolute palette address, which is why it pairs matched draws
         // and why a changed layout invalidates every slot as a source.
         if (!previous.indexedMatrices || previous.usedMatrixMask != current.usedMatrixMask) {
           continue;
         }
+
         const uint32_t slot = paletteSlotKeys[keyIndex].slot;
         const HashType candidateHash = previous.indexedMatrices->slotHash[slot];
+
         if (sourcePosition == nullptr) {
           sourcePosition = &previous.indexedMatrices->position[slot];
           sourceNormal = &previous.indexedMatrices->normal[slot];
@@ -1245,10 +1395,12 @@ void finalize_frame_interpolation() noexcept {
           ambiguous = true;
         }
       }
+
       if (ambiguous || sourcePosition == nullptr) {
         runStart = runEnd;
         continue;
       }
+
       for (size_t keyIndex = runStart; keyIndex < runEnd; ++keyIndex) {
         const auto& key = paletteSlotKeys[keyIndex];
         resolvedSlots[static_cast<size_t>(key.palette) * MaxPnMtx + key.slot] = {sourcePosition,
@@ -1257,6 +1409,7 @@ void finalize_frame_interpolation() noexcept {
           resolvedProjectionEntry[key.palette] = sourceEntry;
         }
       }
+
       runStart = runEnd;
     }
 
@@ -1265,43 +1418,56 @@ void finalize_frame_interpolation() noexcept {
           preparedTransformState[task.currentTransformIndex] != 0) {
         continue;
       }
+
       preparedTransformState[task.currentTransformIndex] = 1;
 
       const auto& current = s_currentFrameTransforms[task.currentTransformIndex].transform;
       auto& prepared = preparedTransforms[task.currentTransformIndex];
+
       if (task.indexedMatrices) {
         const int32_t palette = paletteDrawIndex[task.currentTransformIndex];
+
         if (palette < 0) {
           continue;
         }
+
         prepared.previousProjectionEntry = resolvedProjectionEntry[palette];
+
         // A palette is one deformation unit: interpolating only the resolved slots cracks
         // the mesh, so any unresolved slot duplicates the whole current draw.
         bool allSlotsValid = true;
+
         for (size_t slot = 0; slot < MaxPnMtx; ++slot) {
           if ((current.usedMatrixMask & (1u << slot)) == 0) {
             continue;
           }
+
           const auto& resolved = resolvedSlots[static_cast<size_t>(palette) * MaxPnMtx + slot];
+
           if (resolved.position == nullptr) {
             allSlotsValid = false;
             break;
           }
+
           const size_t pairOffset =
               appendPreparedPair(*resolved.position, current.indexedMatrices->position[slot],
                                  *resolved.normal, current.indexedMatrices->normal[slot], true);
           prepared.indexedPairOffsets[slot] = pairOffset;
+
           if (!preparedPairs[pairOffset].valid || !preparedPairs[pairOffset + 1].valid) {
             allSlotsValid = false;
             break;
           }
         }
+
         prepared.indexedValid = allSlotsValid;
       } else {
         const size_t previousTransformIndex = currentToPrevious[task.currentTransformIndex];
+
         if (previousTransformIndex >= s_previousFrameTransforms.size()) {
           continue;
         }
+
         const auto& previous = s_previousFrameTransforms[previousTransformIndex].transform;
         prepared.previousProjectionEntry = previousTransformIndex;
         prepared.nonIndexedPairOffset = appendPreparedPair(
@@ -1317,15 +1483,19 @@ void finalize_frame_interpolation() noexcept {
       const auto& current = s_currentFrameTransforms[task.currentTransformIndex].transform;
       std::memcpy(task.uniformData, task.sourceUniformData, task.uniformSize);
       const auto& prepared = preparedTransforms[task.currentTransformIndex];
+
       if (task.indexedMatrices && !prepared.indexedValid) {
         return;
       }
+
       // The projection comes from whichever previous entry supplied the transforms, which
       // for a borrowed palette is a sibling's partner.
       const size_t previousTransformIndex = prepared.previousProjectionEntry;
+
       if (previousTransformIndex >= s_previousFrameTransforms.size()) {
         return;
       }
+
       const auto& previous = s_previousFrameTransforms[previousTransformIndex].transform;
       const float weight =
           static_cast<float>(task.numerator) / static_cast<float>(task.denominator);
@@ -1338,6 +1508,7 @@ void finalize_frame_interpolation() noexcept {
         if (pairOffset == kNoPreparedPair) {
           return;
         }
+
         Mat3x4<float> interpolatedPosition{};
         Mat3x4<float> interpolatedNormal{};
         evaluate_affine_pair(preparedPairs[pairOffset], weight, interpolatedPosition);
@@ -1347,23 +1518,28 @@ void finalize_frame_interpolation() noexcept {
         std::memcpy(task.uniformData + task.normalOffset + currentIndex * sizeof(Mat3x4<float>),
                     &interpolatedNormal, sizeof(interpolatedNormal));
       };
+
       if (task.indexedMatrices) {
         if (!current.indexedMatrices) {
           return;
         }
+
         for (size_t currentIndex = 0; currentIndex < MaxPnMtx; ++currentIndex) {
           if ((current.usedMatrixMask & (1u << currentIndex)) == 0) {
             continue;
           }
+
           interpolateMatrixSlot(currentIndex, prepared.indexedPairOffsets[currentIndex]);
         }
       } else {
         interpolateMatrixSlot(task.currentMatrix, prepared.nonIndexedPairOffset);
       }
     };
+
     // A handful of tasks costs more to schedule than to run. The pool stands in for
     // std::execution::par, which libc++ does not provide at all.
     constexpr size_t kMinimumParallelInterpolationTasks = 64;
+
     if (s_pendingUniformInterpolations.size() < kMinimumParallelInterpolationTasks) {
       std::for_each(s_pendingUniformInterpolations.begin(), s_pendingUniformInterpolations.end(),
                     interpolatePendingUniform);
@@ -1373,8 +1549,10 @@ void finalize_frame_interpolation() noexcept {
           [&](size_t index) { interpolatePendingUniform(s_pendingUniformInterpolations[index]); });
     }
   }
+
   s_hasInterpolatedFrame.store(eligible, std::memory_order_release);
   s_pendingUniformInterpolations.clear();
+
   // The index maps are emptied node-preservingly by the next
   // begin_frame_interpolation.
   retire_frame_transforms();
@@ -1405,6 +1583,7 @@ uint32_t interpolated_frame_count() noexcept {
   if (!has_interpolated_frame()) {
     return 0;
   }
+
   // The count latched when this frame began recording, not the configured maximum:
   // build_uniform staged exactly this many ranges for every draw.
   return s_activeInterpolationSamples.load(std::memory_order_acquire);
@@ -1418,6 +1597,7 @@ void drop_pending_frame_interpolation_uniforms() noexcept {
 
 void mark_frame_interpolation_replay_unsafe() noexcept {
   s_frameInterpolationReplaySafe.store(false, std::memory_order_release);
+
   // Marking the frame unsafe rotates the staging buffer mid-frame, and the seal then
   // duplicates slots instead of replaying, so drop the copies staged so far.
   drop_pending_frame_interpolation_uniforms();
@@ -1431,26 +1611,33 @@ void extend_interpolation_draw(uint16_t usedPnMtxMask) noexcept {
   if (s_currentFrameTransforms.empty()) {
     return;
   }
+
   auto& snapshot = s_currentFrameTransforms.back().transform;
+
   if (!snapshot.indexedMatrices) {
     // One-matrix draws all read the current matrix index, which a merge cannot
     // have changed either.
     return;
   }
+
   const uint16_t addedSlots = static_cast<uint16_t>(usedPnMtxMask & ~snapshot.usedMatrixMask);
+
   if (addedSlots == 0) {
     return;
   }
+
   for (size_t slot = 0; slot < MaxPnMtx; ++slot) {
     if ((addedSlots & (1u << slot)) == 0) {
       continue;
     }
+
     snapshot.indexedMatrices->position[slot] = g_gxState.pnMtx[slot].pos;
     snapshot.indexedMatrices->normal[slot] = g_gxState.pnMtx[slot].nrm;
     snapshot.indexedMatrices->slotHash[slot] =
         xxh3_hash_s(&g_gxState.pnMtx[slot].pos, sizeof(Mat3x4<float>),
                     xxh3_hash_s(&g_gxState.pnMtx[slot].nrm, sizeof(Mat3x4<float>)));
   }
+
   snapshot.usedMatrixMask |= addedSlots;
 }
 
@@ -1472,14 +1659,17 @@ std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
       .viewportIdentity = viewportIdentity,
       .usedMatrixMask = usedPnMtxMask,
   };
+
   if (uniformLayout.indexedMatrices) {
     snapshot.indexedMatrices = acquire_indexed_matrices();
+
     // Only the used slots are copied; consumers mask with usedMatrixMask, so the stale
     // pool contents of unused slots are never read.
     for (size_t i = 0; i < MaxPnMtx; ++i) {
       if ((usedPnMtxMask & (1u << i)) == 0) {
         continue;
       }
+
       snapshot.indexedMatrices->position[i] = g_gxState.pnMtx[i].pos;
       snapshot.indexedMatrices->normal[i] = g_gxState.pnMtx[i].nrm;
       snapshot.indexedMatrices->slotHash[i] =
@@ -1511,6 +1701,7 @@ std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
   if (hasPreviousPartner) {
     ++s_perspectiveMatchable;
   }
+
   // A skinned draw with no identity partner can still borrow sibling transforms at
   // seal time, so stage copies whenever the previous frame held any palette.
   const bool stageInterpolation =
@@ -1520,6 +1711,7 @@ std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
   // replaying, so staging copies for the resumed suffix would only waste space.
   if (frame_interpolation_replay_safe() && stageInterpolation) {
     const uint32_t sampleCount = s_activeInterpolationSamples.load(std::memory_order_acquire);
+
     for (uint32_t sample = 0; sample < sampleCount; ++sample) {
       auto [interpolatedBuffer, interpolatedRange] = gfx::map_uniform(uniformLayout.uniformSize);
       s_pendingUniformInterpolations.push_back({
@@ -1538,6 +1730,7 @@ std::array<gfx::Range, MaxInterpolatedFrames> record_interpolation_draw(
       interpolatedRanges[sample] = interpolatedRange;
     }
   }
+
   return interpolatedRanges;
 }
 } // namespace aurora::gx

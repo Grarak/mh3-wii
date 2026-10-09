@@ -11,6 +11,7 @@ struct NativeAudioDmaStatistics {
     uint32_t rateHz = 0, lengthBytes = 0;
     bool enabled = false;
 };
+
 // No clock sampling, MMIO access, callback, queue submission or debt advance.
 // rateHz is the last observed active AI rate; zero before the first such visit.
 // Counters/maxima are cumulative; current debt follows existing start/stop resets.

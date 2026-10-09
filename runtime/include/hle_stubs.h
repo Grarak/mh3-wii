@@ -12,6 +12,7 @@ void VI_HLE_ForceRetrace(CpuContext* ctx);
 void VI_HLE_PollRetrace(CpuContext* ctx);
 void VI_HLE_ProcessRetracesDeferred(int maxToProcess);
 void VI_HLE_WaitForNextRetracePoll();
+
 // Single owner of the Aurora frame presentation sequence (seal, optional pace
 // to the VI retrace boundary, pre-warm the next frame). paceToRetrace is true
 // for the GXCopyDisp producer path and false for retrace-context presents.
@@ -20,6 +21,7 @@ bool VI_HLE_IsAdvancingRetrace();
 void VI_HLE_SetXfbReady(uint32_t xfbAddr); // Called by GXCopyDisp to signal EFB→XFB copy
 void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros);
 void Audio_HLE_Poll(CpuContext* ctx);
+
 // Deferred twin of Audio_HLE_Poll for the long host waits that already service
 // retraces and alarms (the VI retrace pacing loop, the Aurora frame-worker wait
 // callback). Runs the AI DMA tick on an isolated register file the way

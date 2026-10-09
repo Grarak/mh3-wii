@@ -24,6 +24,7 @@ enum class EPermissions : uint8_t {
   Global = (1 << 5),
   Company = (1 << 6)
 };
+
 ENABLE_BITWISE_ENUM(EPermissions)
 
 enum class EImageFormat : uint8_t {

@@ -27,10 +27,12 @@ extern "C" {
 typedef struct mh3_shade_input {
     float offset[4], scale[4], select[4], swizzle[4];
 } mh3_shade_input;
+
 typedef struct mh3_shade_texgen {
     float main[12], post[12];
     int32_t mode[4];
 } mh3_shade_texgen;
+
 enum {
     MH3_SHADE_TEXGEN_POSITION = 0,
     MH3_SHADE_TEXGEN_NORMAL = 1,
@@ -50,13 +52,16 @@ enum {
     MH3_SHADE_CHANNEL_ALPHA_MATERIAL_VERTEX = 16,
     MH3_SHADE_CHANNEL_ALPHA_AMBIENT_VERTEX = 32
 };
+
 typedef struct mh3_shade_basic {
     mh3_shade_input color_input[4], alpha_input[4];
     float color_equation[4], alpha_equation[4]; /* bias, scale, sign */
 } mh3_shade_basic;
+
 typedef struct mh3_shade_modulate {
     float w0[4], w1[4], offset[4], kv[4], kc[4], d[4], s[4];
 } mh3_shade_modulate;
+
 /* One per-draw allocation holds two std140 blocks: Draw (vertex stage,
  * binding 0 / vertex BUFFER[0]) at offset 0 and Shade (fragment stage,
  * binding 3 / fragment BUFFER[0]) at MH3_SHADE_FRAGMENT_OFFSET, so vertex
@@ -70,6 +75,7 @@ typedef struct mh3_shade_vertex {
     int32_t channel[4]; /* x colour light mask, y alpha light mask, z bits, w functions */
     mh3_shade_texgen texgen[3];
 } mh3_shade_vertex;
+
 typedef struct mh3_shade_fragment {
     float texture_bias[4];
     float overlay[4];
@@ -79,11 +85,13 @@ typedef struct mh3_shade_fragment {
         mh3_shade_modulate modulate;
     } shading;
 } mh3_shade_fragment;
+
 typedef struct mh3_shade_draw {
     mh3_shade_vertex vertex;
     float reserved[8];
     mh3_shade_fragment fragment;
 } mh3_shade_draw;
+
 enum {
     MH3_SHADE_BASIC,
     MH3_SHADE_MODULATE
@@ -99,6 +107,7 @@ typedef struct mh3_shade_scene {
     mh3_shader_light lights[8];
     float fog_color[4], fog[4], fog_curve[4], fog_shape[4];
 } mh3_shade_scene;
+
 typedef struct mh3_shade_palette {
     float position[20][12], normal[10][12];
 } mh3_shade_palette;
@@ -112,25 +121,30 @@ enum {
     MH3_SHADE_CONSTANT_KONST,    /* index: GX konst colour or alpha selector */
     MH3_SHADE_CONSTANT_FRACTION  /* index n: n/8 (16 = 2) */
 };
+
 /* value = first * second; each factor optionally replicates its alpha. */
 typedef struct mh3_shade_constant {
     uint8_t kind[2], index[2], alpha[2];
 } mh3_shade_constant;
+
 enum {
     MH3_SHADE_SOURCE_NONE,
     MH3_SHADE_SOURCE_TEXTURE,
     MH3_SHADE_SOURCE_VERTEX
 };
+
 /* input = offset + scale * source (source alpha replicated for colour if set);
  * texture is the material's texture role for a TEXTURE source. */
 typedef struct mh3_shade_term {
     uint8_t source, texture, replicate_alpha;
     mh3_shade_constant offset, scale;
 } mh3_shade_term;
+
 typedef struct mh3_shade_equation {
     mh3_shade_term input[4];       /* a, b, c, d */
     uint8_t subtract, bias, scale; /* GX encodings: bias 0/+half/-half, scale 1/2/4/half */
 } mh3_shade_equation;
+
 enum {
     MH3_SHADE_EXACT = 1,     /* classification reproduces the authored equation */
     MH3_SHADE_SWAP = 2,      /* approximation: non-identity swap table ignored */
@@ -140,6 +154,7 @@ enum {
     MH3_SHADE_INDIRECT = 32, /* approximation: indirect texturing ignored */
     MH3_SHADE_CHANNEL1 = 64  /* approximation: colour channel 1 shaded as channel 0 */
 };
+
 typedef struct mh3_shade_material {
     uint8_t textures, overlay, alpha_test, quality, model;
     uint8_t texture_map[3], texture_coordinate[3];
@@ -149,6 +164,7 @@ typedef struct mh3_shade_material {
      * Only literal zero/one references qualify; draw-time register values do not. */
     uint8_t pure_modulate;
 } mh3_shade_material;
+
 /* Pure function of the material's structural fields; returns quality flags. */
 uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_material *out);
 /* Resolve the material's constant references against the current state and
@@ -169,6 +185,7 @@ enum {
     MH3_SHADE_STRUCTURE_SWAPS = 4,
     MH3_SHADE_STRUCTURE_ALL = 7
 };
+
 int mh3_shade_structure_equal(const mh3_native_material_state *a, const mh3_native_material_state *b);
 int mh3_shade_structure_overlay_changes(const mh3_native_material_state *current, const mh3_native_material_state *source,
                                        uint32_t top_known, uint32_t groups);
@@ -190,6 +207,7 @@ enum {
     MH3_SHADE_GPU_ONE = 8,
     MH3_SHADE_GPU_COEFFICIENTS = 9
 };
+
 /* Coefficient slots. MODULATE: w0, w1, offset, kv, kc, d, overlay.
  * BASIC: input offsets a..d (0..3), input scales a..d (4..7), overlay (8). */
 enum {
@@ -204,6 +222,7 @@ enum {
     MH3_SHADE_GPU_BASIC_SCALE = 4,
     MH3_SHADE_GPU_BASIC_OVERLAY = 8
 };
+
 /* Colour lanes read palette[index.x] (rgb, or the color_mask component in all
  * three lanes when index.z is 1); the alpha lane reads the alpha_mask
  * component of palette[index.y]. A static coefficient picks entry 8 (one). */
@@ -211,6 +230,7 @@ typedef struct mh3_shade_gpu_pick {
     float index[4];
     float color_mask[4], alpha_mask[4];
 } mh3_shade_gpu_pick;
+
 typedef struct mh3_shade_gpu_material {
     float coefficient[MH3_SHADE_GPU_COEFFICIENTS][4];
     mh3_shade_gpu_pick pick[MH3_SHADE_GPU_COEFFICIENTS];
@@ -220,6 +240,7 @@ typedef struct mh3_shade_gpu_material {
     float select[8][4];   /* BASIC: colour inputs a..d, then alpha inputs a..d */
     float swizzle[4];     /* BASIC: colour input i replicates its source's alpha */
 } mh3_shade_gpu_material;
+
 /* Post texture matrix of one texture role, built by the vertex program:
  *   a = su cos, b = su sin, c = sv sin, d = sv cos
  *   s' = a s - b t + (b - a tu - b tv), t' = c s + d t + (-d - c tu + d tv + 1)
@@ -229,12 +250,14 @@ typedef struct mh3_shade_gpu_srt {
     float scale_rotation[4]; /* su, sv, sin, cos */
     float translation[4];    /* tu, tv, 0, 0 */
 } mh3_shade_gpu_srt;
+
 typedef struct mh3_shade_gpu_animated {
     float palette[MH3_SHADE_GPU_PALETTE][4]; /* register/konst RGBA / 255; [8] = 1 */
     float alpha_range[4];                    /* discard when alpha < x or alpha >= y */
     float texture_bias[4];                   /* role LOD bias (GLES sampling) */
     mh3_shade_gpu_srt srt[3];
 } mh3_shade_gpu_animated;
+
 /* Bake the classified material's structure. Returns 0 when a constant has
  * two animated factors (no shader form; the caller keeps resolving on the
  * CPU). *dynamic is set when a coefficient picks an animated entry. */

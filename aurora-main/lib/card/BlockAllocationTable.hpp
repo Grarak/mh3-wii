@@ -18,6 +18,7 @@ class BlockAllocationTable {
       uint16_t m_lastAllocated;
       std::array<uint16_t, 0xFFB> m_map;
     };
+
     std::array<uint8_t, BlockSize> raw{};
   };
 #pragma pack(pop)

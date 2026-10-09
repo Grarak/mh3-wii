@@ -102,6 +102,7 @@ static inline double frsqrte(double val) {
         if (mantissa == 0) {
             return sign ? NAN : 0.0;
         }
+
         return val;
     }
 

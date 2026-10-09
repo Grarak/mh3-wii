@@ -16,9 +16,11 @@ namespace aurora::card {
 CardGciFolder::GciFile* CardGciFolder::getFile(uint32_t idx) {
   if (m_files.size() > idx) {
     auto file = &m_files[idx];
+
     if (file->opened)
       return file;
   }
+
   return nullptr;
 }
 
@@ -27,9 +29,11 @@ CardGciFolder::GciFile* CardGciFolder::getFile(FileHandle& fh) { return getFile(
 const CardGciFolder::GciFile* CardGciFolder::getFile(uint32_t idx) const {
   if (m_files.size() > idx) {
     auto file = &m_files[idx];
+
     if (file->opened)
       return file;
   }
+
   return nullptr;
 }
 
@@ -56,15 +60,18 @@ void CardGciFolder::InitCard(const char* game, const char* maker) {
 
 ECardResult CardGciFolder::openFile(const char* filename, FileHandle& handleOut) {
   int idx = 0;
+
   for (auto& gciFile : m_files) {
     if (strcmp(filename, gciFile.file.m_filename) == 0) {
       gciFile.opened = true;
+
       if (gciFile.fileSize == 0)
         gciFile.fileSize = std::filesystem::file_size(m_folderPath / gciFile.filename);
 
       handleOut = FileHandle(idx, 0);
       return ECardResult::READY;
     }
+
     idx++;
   }
 
@@ -76,6 +83,7 @@ ECardResult CardGciFolder::openFile(uint32_t fileno, FileHandle& handleOut) {
     auto& gciFile = m_files[fileno];
     handleOut = FileHandle(fileno, 0);
     gciFile.opened = true;
+
     if (gciFile.fileSize == 0)
       gciFile.fileSize = std::filesystem::file_size(m_folderPath / gciFile.filename);
 
@@ -106,11 +114,13 @@ ECardResult CardGciFolder::createFile(const char* filename, size_t size, FileHan
   // write big endian header for dolphin compat
   gciFileHeader->swapEndian();
   FileIO file(m_folderPath / gciFilename, true);
+
   if (!file || !file.fileWrite(fileBuf.data(), fileBuf.size(), 0)) {
     return ECardResult::IOERROR;
   }
 
   gciFileHeader->swapEndian();
+
   // push non-endian swapped header first
   m_files.push_back({*gciFileHeader, fileSize,
                      std::u8string(gciFilename.begin(), gciFilename.end()), false});
@@ -121,6 +131,7 @@ ECardResult CardGciFolder::createFile(const char* filename, size_t size, FileHan
 
 ECardResult CardGciFolder::closeFile(FileHandle& fh) {
   auto file = getFile(fh);
+
   if (file) {
     file->opened = false;
     return ECardResult::READY;
@@ -131,10 +142,12 @@ ECardResult CardGciFolder::closeFile(FileHandle& fh) {
 
 void CardGciFolder::deleteFile(const FileHandle& fh) {
   auto file = getFile(fh.getFileNo());
+
   if (!file)
     return;
 
   FileIO fileIO(m_folderPath / file->filename, true);
+
   if (fileIO)
     fileIO.deleteFile();
 }
@@ -156,13 +169,17 @@ ECardResult CardGciFolder::renameFile(const char* oldName, const char* newName) 
 
 ECardResult CardGciFolder::fileWrite(FileHandle& fh, const void* buf, size_t size) {
   auto file = getFile(fh);
+
   if (file) {
     FileIO fileIO(m_folderPath / file->filename);
+
     if (fileIO) {
       if (fileIO.fileWrite(buf, size, sizeof(File) + fh.offset))
         return ECardResult::READY;
+
       return ECardResult::IOERROR;
     }
+
     return ECardResult::NOFILE;
   }
 
@@ -171,13 +188,17 @@ ECardResult CardGciFolder::fileWrite(FileHandle& fh, const void* buf, size_t siz
 
 ECardResult CardGciFolder::fileRead(FileHandle& fh, void* dst, size_t size) {
   auto file = getFile(fh);
+
   if (file) {
     FileIO fileIO(m_folderPath / file->filename);
+
     if (fileIO) {
       if (fileIO.fileRead(dst, size, sizeof(File) + fh.offset))
         return ECardResult::READY;
+
       return ECardResult::IOERROR;
     }
+
     return ECardResult::NOFILE;
   }
 
@@ -186,6 +207,7 @@ ECardResult CardGciFolder::fileRead(FileHandle& fh, void* dst, size_t size) {
 
 void CardGciFolder::seek(FileHandle& fh, int32_t pos, SeekOrigin whence) {
   auto file = getFile(fh);
+
   if (file) {
     switch (whence) {
     case SeekOrigin::Begin:
@@ -210,6 +232,7 @@ ECardResult CardGciFolder::getStatus(uint32_t fileNo, CardStat& statOut) const {
 
   if (!gciFile)
     return ECardResult::NOFILE;
+
   const auto file = &gciFile->file;
 
   std::strncpy(statOut.x0_fileName, file->m_filename, 32);
@@ -237,19 +260,24 @@ ECardResult CardGciFolder::getStatus(uint32_t fileNo, CardStat& statOut) const {
     statOut.x40_offsetBannerTlut = cur;
     cur += TlutSize(statOut.GetBannerFormat());
     bool palette = false;
+
     for (size_t i = 0; i < statOut.x44_offsetIcon.size(); ++i) {
       statOut.x44_offsetIcon[i] = cur;
       const EImageFormat fmt = statOut.GetIconFormat(static_cast<int>(i));
+
       if (fmt == EImageFormat::C8) {
         palette = true;
       }
+
       cur += IconSize(fmt);
     }
+
     if (palette) {
       statOut.x64_offsetIconTlut = cur;
       cur += TlutSize(EImageFormat::C8);
     } else
       statOut.x64_offsetIconTlut = UINT32_MAX;
+
     statOut.x68_offsetData = cur;
   }
 
@@ -265,6 +293,7 @@ ECardResult CardGciFolder::setStatus(uint32_t fileNo, const CardStat& stat) {
 
   if (!gciFile)
     return ECardResult::NOFILE;
+
   const auto file = &gciFile->file;
 
   file->m_bannerFlags = stat.x2e_bannerFormat;
@@ -345,10 +374,12 @@ bool CardGciFolder::open(const std::filesystem::path& filepath) {
   m_folderPath = filepath;
 
   std::error_code ec;
+
   if (!std::filesystem::exists(filepath, ec) || !std::filesystem::is_directory(filepath, ec)) {
     if (ec) {
       Log.warn("Failed to inspect GCI folder '{}': {}", fs_path_to_string(filepath), ec.message());
     }
+
     return false;
   }
 
@@ -360,47 +391,58 @@ bool CardGciFolder::open(const std::filesystem::path& filepath) {
   }
 
   const std::filesystem::directory_iterator end;
+
   while (it != end) {
     const auto path = it->path();
     const auto status = it->status(ec);
+
     if (ec) {
       Log.warn("Failed to inspect GCI folder entry '{}': {}", fs_path_to_string(path), ec.message());
       return false;
     }
+
     if (!std::filesystem::is_regular_file(status)) {
       it.increment(ec);
+
       if (ec) {
         Log.warn("Failed to continue enumerating GCI folder '{}': {}", fs_path_to_string(filepath), ec.message());
         return false;
       }
+
       continue;
     }
 
     if (path.extension() != ".gci") {
       it.increment(ec);
+
       if (ec) {
         Log.warn("Failed to continue enumerating GCI folder '{}': {}", fs_path_to_string(filepath), ec.message());
         return false;
       }
+
       continue;
     }
 
     FileIO file(path);
+
     if (!file) {
       Log.warn("Failed to open GCI file '{}'", fs_path_to_string(path));
       return false;
     }
 
     File fileData;
+
     if (!file.fileRead(&fileData, sizeof(File), 0)) {
       Log.warn("Failed to read GCI file '{}'", fs_path_to_string(path));
       return false;
     }
+
     fileData.swapEndian();
 
     m_files.push_back({fileData, file.fileSize(), path.filename().u8string(), false});
 
     it.increment(ec);
+
     if (ec) {
       Log.warn("Failed to continue enumerating GCI folder '{}': {}", fs_path_to_string(filepath), ec.message());
       return false;
@@ -425,6 +467,7 @@ ECardResult CardGciFolder::getError() const { return ECardResult::READY; }
 ProbeResults CardGciFolder::probeCardFile(const std::filesystem::path& filename) {
   if (!std::filesystem::exists(filename) || !std::filesystem::is_directory(filename))
     return {ECardResult::NOCARD, 0, 0};
+
   return {ECardResult::READY, static_cast<uint32_t>(ECardSize::Card2043Mb), BlockSize};
 }
 

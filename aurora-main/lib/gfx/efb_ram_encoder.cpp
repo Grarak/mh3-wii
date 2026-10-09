@@ -85,9 +85,11 @@ Pixel read_pixel(const uint8_t* pixels, uint32_t hostWidth, uint32_t hostHeight,
   const uint32_t hostX = std::min<uint32_t>(static_cast<uint32_t>(sampleXNumerator / (guestWidth * 2ull)), hostWidth - 1);
   const uint32_t hostY = std::min<uint32_t>(static_cast<uint32_t>(sampleYNumerator / (guestHeight * 2ull)), hostHeight - 1);
   const auto* src = pixels + static_cast<size_t>(hostY) * bytesPerRow + static_cast<size_t>(hostX) * 4;
+
   if (order == HostPixelOrder::BGRA) {
     return {src[2], src[1], src[0], src[3]};
   }
+
   return {src[0], src[1], src[2], src[3]};
 }
 
@@ -107,9 +109,11 @@ bool supports_format(GXTexFmt format) noexcept {
 size_t encoded_size(GXTexFmt format, uint32_t width, uint32_t height) noexcept {
   Layout layout{};
   BlockInfo block{};
+
   if (width == 0 || height == 0 || !describe(format, layout, block)) {
     return 0;
   }
+
   const uint64_t blocksX = (static_cast<uint64_t>(width) + block.width - 1) / block.width;
   const uint64_t blocksY = (static_cast<uint64_t>(height) + block.height - 1) / block.height;
   const uint64_t size = blocksX * blocksY * block.bytes;
@@ -121,6 +125,7 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
   Layout layout{};
   BlockInfo block{};
   const size_t required = encoded_size(format, guestWidth, guestHeight);
+
   if (dstValue == nullptr || hostPixels == nullptr || required == 0 || dstSize < required || hostWidth == 0 || hostHeight == 0 || hostBytesPerRow < hostWidth * 4 || !describe(format, layout, block)) {
     return false;
   }
@@ -133,9 +138,11 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
   for (uint32_t blockY = 0; blockY < blocksY; ++blockY) {
     for (uint32_t blockX = 0; blockX < blocksX; ++blockX) {
       uint8_t* blockDst = dst + (static_cast<size_t>(blockY) * blocksX + blockX) * block.bytes;
+
       if (layout == Layout::RGBA8) {
         uint8_t* ar = blockDst;
         uint8_t* gb = blockDst + 32;
+
         for (uint32_t y = 0; y < 4; ++y) {
           for (uint32_t x = 0; x < 4; ++x) {
             const Pixel pixel = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * 4 + x, blockY * 4 + y, guestWidth, guestHeight);
@@ -145,10 +152,12 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
             *gb++ = pixel.b;
           }
         }
+
         continue;
       }
 
       uint8_t* out = blockDst;
+
       for (uint32_t y = 0; y < block.height; ++y) {
         if (layout == Layout::I4) {
           for (uint32_t x = 0; x < block.width; x += 2) {
@@ -156,11 +165,13 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
             const Pixel second = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x + 1, blockY * block.height + y, guestWidth, guestHeight);
             *out++ = static_cast<uint8_t>((first.r & 0xf0) | (second.r >> 4));
           }
+
           continue;
         }
 
         for (uint32_t x = 0; x < block.width; ++x) {
           const Pixel pixel = read_pixel(hostPixels, hostWidth, hostHeight, hostBytesPerRow, order, blockX * block.width + x, blockY * block.height + y, guestWidth, guestHeight);
+
           switch (layout) {
           case Layout::I8:
             *out++ = pixel.r;
@@ -190,6 +201,7 @@ bool encode(void* dstValue, size_t dstSize, GXTexFmt format, uint32_t guestWidth
       }
     }
   }
+
   return true;
 }
 

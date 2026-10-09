@@ -22,6 +22,7 @@ int main() {
     stats.Reset(1000, initial);
     stats.Begin(2000);
     stats.End(7000, true);
+
     // The gap represents pacing/preemption between frames and must not enter
     // frame wall time. A skipped frame still executes logical game work.
     stats.Begin(17000);
@@ -63,6 +64,7 @@ int main() {
     BeginNativeFrameStatistics();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+
     while (std::chrono::steady_clock::now() < deadline) {}
     EndNativeFrameStatistics(true);
     const auto owner = TakeNativeFrameStatistics();

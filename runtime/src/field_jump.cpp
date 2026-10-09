@@ -49,6 +49,7 @@ enum : uint32_t {
     PrimInitAll = 0x800E3DA4,
     FilterReset = 0x80058514,
 };
+
 constexpr uint32_t kFirstCounterQuest = 1000; // free-roam quests are 1..4
 constexpr uint32_t kPlayMode = 0x8065AA85;    // u8
 constexpr uint8_t kPlayModeOnline = 4;
@@ -59,16 +60,19 @@ constexpr uint32_t kPlayerMoveWork = 2;
 enum : uint32_t {
     kPosition = 0x3C
 };
+
 constexpr uint64_t kSpawnSettle = 60; // game frames (30 Hz)
 enum : uint32_t {
     kWorkArea = 0xEA,
     kWorkStartArea = 0xEE
 };
+
 enum : uint32_t {
     kPhase = 8,
     kState = 9,
     kSubState = 10
 };
+
 enum : uint8_t {
     kStateLeave = 5,
     kSubStateTearDown = 2
@@ -98,19 +102,23 @@ Jump& State() {
 static void VillageTaskPort(CpuContext* ctx) {
     Jump& jump = State();
     const uint32_t tcb = ctx->gpr[3];
+
     if (jump.enabled && !jump.done && Memory::Read8(tcb + kPhase) == 1) {
         const int state = Memory::Read8(tcb + kState);
+
         if (state != jump.lastState) {
             std::fprintf(stderr, "MH3 field jump: village task state %d\n", state);
             jump.lastState = state;
             jump.steps = 0;
         }
+
         if (state == 2 && ++jump.steps >= jump.wait) {
             // As the village's departure (0x8021FC10), then state 5.
             const CpuContext saved = *ctx;
             GuestCall game{ctx};
             const uint32_t quest = jump.quest ? jump.quest : game.Call<FreeRoamQuest>() & 0xFFFF;
             std::fprintf(stderr, "MH3 field jump: leaving the village for quest %u\n", quest);
+
             // A free-roam quest leaves for the offline field; a quest from the
             // counter through the quest departure (0x8021F40C, play mode 6).
             Memory::Write8(kDeparture + 11, quest < kFirstCounterQuest ? 1 : 0);
@@ -125,6 +133,7 @@ static void VillageTaskPort(CpuContext* ctx) {
             jump.done = true;
         }
     }
+
     func_8021F40C(ctx);
 }
 
@@ -151,20 +160,27 @@ void RequestQuestSpawn(float x, float y, float z) {
 
 void FieldJumpFrame(uint64_t gameFrame) {
     Jump& jump = State();
+
     if (!jump.spawn || !jump.done)
         return;
+
     const uint32_t table = Memory::Read32(kMoveWorkTable);
     const uint32_t plw = table ? Memory::Read32(table + 16 + kPlayerMoveWork * 4) : 0;
+
     if (!plw || !Memory::Read8(plw) || Memory::ReadFloat32(plw + kPosition) == 0.0f) {
         jump.placedAt = 0;
         return;
     }
+
     if (!jump.placedAt)
         jump.placedAt = gameFrame;
+
     if (gameFrame - jump.placedAt < kSpawnSettle)
         return;
+
     for (int i = 0; i < 3; ++i)
         Memory::WriteFloat32(plw + kPosition + 4 * i, jump.spawnPos[i]);
+
     std::fprintf(stderr, "MH3 field jump: moved the hunter to %.1f %.1f %.1f\n", jump.spawnPos[0], jump.spawnPos[1], jump.spawnPos[2]);
     jump.spawn = false;
 }
@@ -174,14 +190,17 @@ extern "C" void func_803AD264(CpuContext* ctx);
 extern "C" void func_803AD744(CpuContext* ctx);
 static void LoadQuestFilePort(CpuContext* ctx) {
     const Jump& jump = State();
+
     if (jump.done && jump.set == QuestCatalog::Set::Arena) {
         func_803AD744(ctx);
         return;
     }
+
     if (!jump.done || jump.set != QuestCatalog::Set::Online) {
         func_803AD264(ctx);
         return;
     }
+
     const uint8_t playMode = Memory::Read8(kPlayMode);
     Memory::Write8(kPlayMode, kPlayModeOnline);
     func_803AD264(ctx);
@@ -198,14 +217,18 @@ extern "C" void func_803AF518(CpuContext* ctx);
 static void QuestMapSetupPort(CpuContext* ctx) {
     func_803AF518(ctx);
     const Jump& jump = State();
+
     if (!jump.done || jump.area < 0)
         return;
+
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
     const uint32_t work = game.Call<MoveWork>({0});
     *ctx = saved;
+
     if (!work)
         return;
+
     std::fprintf(stderr, "MH3 field jump: starting in area %d instead of %u\n", jump.area, Memory::Read8(work + kWorkArea));
     Memory::Write8(work + kWorkArea, uint8_t(jump.area));
     Memory::Write8(work + kWorkStartArea, uint8_t(jump.area));

@@ -52,6 +52,7 @@ uint16_t BlockAllocationTable::getNextBlock(uint16_t block) const {
 uint16_t BlockAllocationTable::nextFreeBlock(uint16_t maxBlock, uint16_t startingBlock) const {
   if (m_freeBlocks > 0) {
     maxBlock = std::min(maxBlock, static_cast<uint16_t>(BATSize));
+
     for (uint16_t i = startingBlock; i < maxBlock; ++i)
       if (m_map[i - FSTBlocks] == 0)
         return i;
@@ -66,41 +67,51 @@ uint16_t BlockAllocationTable::nextFreeBlock(uint16_t maxBlock, uint16_t startin
 
 bool BlockAllocationTable::clear(uint16_t first, uint16_t count) {
   std::vector<uint16_t> blocks;
+
   while (first != 0xFFFF && first != 0) {
     blocks.push_back(first);
     first = getNextBlock(first);
   }
+
   if (first > 0) {
     size_t length = blocks.size();
+
     if (length != count)
       return false;
 
     for (size_t i = 0; i < length; ++i)
       m_map[blocks.at(i) - FSTBlocks] = 0;
+
     m_freeBlocks += count;
     return true;
   }
+
   return false;
 }
 
 uint16_t BlockAllocationTable::allocateBlocks(uint16_t count, uint16_t maxBlocks) {
   uint16_t firstBlock = nextFreeBlock(maxBlocks - FSTBlocks, m_lastAllocated + 1);
   uint16_t freeBlock = firstBlock;
+
   if (freeBlock != 0xFFFF) {
     uint16_t tmpCount = count;
+
     while ((count--) > 0 && freeBlock != 0xFFFF) {
       m_map[(freeBlock - FSTBlocks)] = 0xFFFF;
+
       if (count != 0) {
         m_map[(freeBlock - FSTBlocks)] = nextFreeBlock(maxBlocks - FSTBlocks, freeBlock + 1);
         freeBlock = m_map[(freeBlock - FSTBlocks)];
       }
     }
+
     if (freeBlock == 0xFFFF)
       return 0xFFFF;
 
     m_lastAllocated = freeBlock;
     m_freeBlocks -= tmpCount;
   }
+
   return firstBlock;
 }
 } // namespace aurora::card

@@ -15,25 +15,33 @@ struct GuestCall {
 
     uint32_t operator()(uint32_t fn, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         uint32_t r = 3, f = 1;
+
         for (uint32_t v : ints)
             cpu->gpr[r++] = v;
+
         for (double v : floats)
             cpu->fpr[f++].d = v;
+
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
+
     // Calls the virtual function at `slot` in `object`'s vtable (at offset 0).
     uint32_t Virtual(uint32_t object, uint32_t slot, std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         const uint32_t fn = Memory::Read32(Memory::Read32(object) + slot);
         uint32_t r = 3, f = 1;
         cpu->gpr[r++] = object;
+
         for (uint32_t v : ints)
             cpu->gpr[r++] = v;
+
         for (double v : floats)
             cpu->fpr[f++].d = v;
+
         InvokeIndirectCpu(fn, cpu);
         return cpu->gpr[3];
     }
+
     // operator() for a constant target: the first call after the registry is
     // published binds the target's entry point once, so later calls skip the
     // dispatch lookup, the translated-address bookkeeping and the r14-r31
@@ -42,15 +50,20 @@ struct GuestCall {
     template <uint32_t Target>
     [[gnu::always_inline]] uint32_t Call(std::initializer_list<uint32_t> ints = {}, std::initializer_list<double> floats = {}) {
         uint32_t r = 3, f = 1;
+
         for (uint32_t v : ints)
             cpu->gpr[r++] = v;
+
         for (double v : floats)
             cpu->fpr[f++].d = v;
+
         static void (*bound)(CpuContext*) = nullptr;
+
         if (bound) [[likely]]
             bound(cpu);
         else
             bound = Bind(Target, cpu, &Dispatch<Target>);
+
         return cpu->gpr[3];
     }
 
@@ -61,15 +74,20 @@ struct GuestCall {
         const uint32_t fn = Memory::Read32(Memory::Read32(object) + Slot);
         uint32_t r = 3, f = 1;
         cpu->gpr[r++] = object;
+
         for (uint32_t v : ints)
             cpu->gpr[r++] = v;
+
         for (double v : floats)
             cpu->fpr[f++].d = v;
+
         static Memo memo;
+
         if (memo.fn == fn) [[likely]]
             memo.entry(cpu);
         else
             Rebind(fn, cpu, memo);
+
         return cpu->gpr[3];
     }
 
@@ -86,9 +104,11 @@ struct GuestCall {
     [[gnu::noinline]] static void Rebind(uint32_t fn, CpuContext* cpu, Memo& memo) {
         if (TranslatedFunctionRegistry::IsLookupPublished() && fn < 0x80800000u && TryGetCpuContext() == cpu) {
             const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(fn);
+
             if (record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
                 memo = {fn, record->entry};
         }
+
         InvokeIndirectCpu(fn, cpu);
     }
 
@@ -103,12 +123,15 @@ struct GuestCall {
     // so overlay targets always dispatch.
     [[gnu::noinline]] static void (*Bind(uint32_t target, CpuContext* cpu, void (*dispatch)(CpuContext*)))(CpuContext*) {
         void (*entry)(CpuContext*) = nullptr;
+
         if (TranslatedFunctionRegistry::IsLookupPublished()) {
             entry = dispatch;
             const RawDispatchRecord* record = TranslatedFunctionRegistry::FindRawByAddressPtr(target);
+
             if (target < 0x80800000u && TryGetCpuContext() == cpu && record && record->entry && (record->nonvolatileFprWriteMask & kPpcAllNonvolatileFprMask) == 0)
                 entry = record->entry;
         }
+
         InvokeIndirectCpu(target, cpu);
         return entry;
     }
@@ -128,10 +151,12 @@ class GuestFrame {
         cpu->gpr[1] = sp_;
         Memory::Write32(sp_, gpr_[1]);
     }
+
     ~GuestFrame() {
         Copy(cpu_->gpr, gpr_);
         cpu_->cr = cr_;
     }
+
     GuestFrame(const GuestFrame&) = delete;
     GuestFrame& operator=(const GuestFrame&) = delete;
     uint32_t operator[](uint32_t offset) const { return sp_ + offset; }
@@ -143,8 +168,10 @@ class GuestFrame {
     static void Copy(uint32_t (&to)[32], const uint32_t (&from)[32]) {
 #if defined(__ARM_NEON)
         uint32x4_t v[8];
+
         for (int i = 0; i < 8; ++i)
             v[i] = vld1q_u32(from + 4 * i);
+
         for (int i = 0; i < 8; ++i)
             vst1q_u32(to + 4 * i, v[i]);
 #else

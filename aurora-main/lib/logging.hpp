@@ -49,11 +49,13 @@ struct Module {
   [[noreturn]] void fatal(fmt::format_string<T...> fmt, T&&... args) noexcept {
     auto message = fmt::format(fmt, std::forward<T>(args)...);
     log_internal(LOG_FATAL, name, message.c_str(), static_cast<unsigned int>(message.size()));
+
     // Embedders can provide a fatal log callback, which the runtime uses for its own crash dialog.
     // Standalone Aurora builds fall back to logging.cpp's native one.
     if (g_config.logCallback == nullptr) {
       show_fatal_dialog(name, message);
     }
+
     std::abort();
   }
 

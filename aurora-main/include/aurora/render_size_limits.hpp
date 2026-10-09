@@ -26,6 +26,7 @@ inline float clamp_dynamic_aspect(float aspect) noexcept {
   if (!std::isfinite(aspect) || aspect <= 0.f) {
     return 1.f;
   }
+
   return std::max(aspect, kMinDynamicAspect);
 }
 
@@ -37,12 +38,14 @@ inline Size scale_framebuffer_to_aspect(uint32_t width, uint32_t height, float s
   const auto scaledWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(width) * scale)));
   const auto scaledHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(height) * scale)));
   const float aspect = clamp_dynamic_aspect(requestedAspect);
+
   if (aspect >= static_cast<float>(width) / static_cast<float>(height)) {
     return {
         std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(scaledHeight) * aspect))),
         scaledHeight,
     };
   }
+
   return {
       scaledWidth,
       std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(scaledWidth) / aspect))),
@@ -55,9 +58,11 @@ inline Size fit_framebuffer_to_budget(uint32_t width, uint32_t height, uint32_t 
   }
 
   uint32_t dimensionLimit = kMaxFramebufferDimension;
+
   if (adapterMaxDimension != 0 && adapterMaxDimension != std::numeric_limits<uint32_t>::max()) {
     dimensionLimit = std::min(dimensionLimit, adapterMaxDimension);
   }
+
   dimensionLimit = std::max(dimensionLimit, 1u);
 
   double fitScale = 1.0;
@@ -65,6 +70,7 @@ inline Size fit_framebuffer_to_budget(uint32_t width, uint32_t height, uint32_t 
   fitScale = std::min(fitScale, static_cast<double>(dimensionLimit) / static_cast<double>(height));
 
   const double requestedPixels = static_cast<double>(width) * static_cast<double>(height);
+
   if (requestedPixels > static_cast<double>(kMaxFramebufferPixels)) {
     fitScale = std::min(fitScale, std::sqrt(static_cast<double>(kMaxFramebufferPixels) / requestedPixels));
   }
@@ -72,6 +78,7 @@ inline Size fit_framebuffer_to_budget(uint32_t width, uint32_t height, uint32_t 
   if (fitScale >= 1.0) {
     return {width, height};
   }
+
   return {
       std::max(1u, static_cast<uint32_t>(std::floor(static_cast<double>(width) * fitScale))),
       std::max(1u, static_cast<uint32_t>(std::floor(static_cast<double>(height) * fitScale))),

@@ -1,16 +1,20 @@
 cmake_minimum_required(VERSION 3.25)
 project(aurora LANGUAGES C CXX)
+
 if (APPLE)
     enable_language(OBJC)
 endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(AURORA_GXM "Use the native PS Vita GXM renderer" ${VITA})
+
 if(AURORA_GXM)
   if(NOT VITA)
     message(FATAL_ERROR "AURORA_GXM requires a Vita toolchain")
   endif()
+
   # Vita ELF conversion rejects GOT relocations from position-independent code.
   set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
   enable_language(ASM)
@@ -33,6 +37,7 @@ if (CMAKE_CROSSCOMPILING)
   set(_default_linkage "static")
 else ()
   set(_default_provider "auto")
+
   if (WIN32)
     set(_default_linkage "shared")
   else ()
@@ -59,19 +64,23 @@ add_subdirectory(extern)
 
 include(cmake/aurora_core.cmake)
 include(cmake/aurora_os.cmake)
+
 if (AURORA_ENABLE_GX)
   include(cmake/aurora_gx.cmake)
   include(cmake/aurora_gd.cmake)
 endif ()
+
 include(cmake/aurora_pad.cmake)
 include(cmake/aurora_ms.cmake)
 include(cmake/aurora_si.cmake)
 include(cmake/aurora_main.cmake)
 include(cmake/aurora_mtx.cmake)
 include(cmake/aurora_vi.cmake)
+
 if(AURORA_ENABLE_CARD)
   include(cmake/aurora_card.cmake)
 endif()
+
 if (AURORA_ENABLE_DVD)
   include(cmake/aurora_dvd.cmake)
 endif ()

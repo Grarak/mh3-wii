@@ -14,11 +14,13 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR armv7l)
 set(mh3_triple arm-linux-gnueabihf)
+
 if(DEFINED ENV{MH3_CLANG})
   set(mh3_clang "$ENV{MH3_CLANG}")
 else()
   set(mh3_clang clang-21)
 endif()
+
 set(CMAKE_C_COMPILER ${mh3_clang})
 string(REGEX REPLACE "clang(-[0-9]+)?$" "clang++\\1" mh3_clangxx "${mh3_clang}")
 set(CMAKE_CXX_COMPILER ${mh3_clangxx})
@@ -29,12 +31,15 @@ set(CMAKE_ASM_COMPILER_TARGET ${mh3_triple})
 set(CMAKE_LIBRARY_ARCHITECTURE ${mh3_triple})
 set(mh3_arm32_cpu cortex-a9)
 set(mh3_arm32_fpu neon)
+
 if(DEFINED ENV{MH3_ARM32_CPU})
   set(mh3_arm32_cpu "$ENV{MH3_ARM32_CPU}")
 endif()
+
 if(DEFINED ENV{MH3_ARM32_FPU})
   set(mh3_arm32_fpu "$ENV{MH3_ARM32_FPU}")
 endif()
+
 set(mh3_arm32_flags "--target=${mh3_triple} -mcpu=${mh3_arm32_cpu} -mfpu=${mh3_arm32_fpu} -mfloat-abi=hard -mthumb -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64")
 set(CMAKE_C_FLAGS_INIT "${mh3_arm32_flags}")
 set(CMAKE_CXX_FLAGS_INIT "${mh3_arm32_flags}")
@@ -42,9 +47,11 @@ set(CMAKE_ASM_FLAGS_INIT "${mh3_arm32_flags}")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-fuse-ld=lld")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "-fuse-ld=lld")
 set(CMAKE_MODULE_LINKER_FLAGS_INIT "-fuse-ld=lld")
+
 if(DEFINED ENV{MH3_SYSROOT})
   set(CMAKE_SYSROOT "$ENV{MH3_SYSROOT}")
 endif()
+
 set(ENV{PKG_CONFIG_LIBDIR} "${CMAKE_SYSROOT}/usr/lib/${mh3_triple}/pkgconfig:${CMAKE_SYSROOT}/usr/share/pkgconfig")
 set(ENV{PKG_CONFIG_SYSROOT_DIR} "${CMAKE_SYSROOT}")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

@@ -48,8 +48,9 @@ set_target_properties(aurora_gx PROPERTIES FOLDER "aurora")
 
 target_link_libraries(aurora_gx PUBLIC aurora::core xxhash)
 target_link_libraries(aurora_gx PRIVATE sqlite3 PNG::PNG)
+
 if(AURORA_GXM)
-  # vprof needs source lines for the native GX and resource-cache bottlenecks.
+  # Source lines for profilers in the native GX and resource-cache code.
   # These tables stay in the development ELF, outside the installed SELF.
   target_compile_options(aurora_gx PRIVATE -gline-tables-only)
 endif()

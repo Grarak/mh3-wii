@@ -33,14 +33,17 @@ static inline struct _reent *current_reent(void)
 struct _reent *__wrap___getreent(void)
 {
     struct _reent *reent = current_reent();
+
     if (reent)
         return reent;
+
     return __real___getreent();
 }
 
 void *__wrap_pte_osTlsGetValue(unsigned int key)
 {
     struct _reent *reent = current_reent();
+
     if (!reent)
         return __real_pte_osTlsGetValue(key);
 
@@ -49,10 +52,13 @@ void *__wrap_pte_osTlsGetValue(unsigned int key)
        avoid aliasing newlib's private struct. This becomes one ARM32 load. */
     struct Mh3VitaTlsKeyEntry *entry;
     memcpy(&entry, (char *)reent - 2 * sizeof(void *), sizeof(entry));
+
     while (entry) {
         if (entry->key == key)
             return entry->value;
+
         entry = entry->next;
     }
+
     return NULL;
 }

@@ -28,6 +28,7 @@ typedef struct mh3_model_view_callbacks {
     mh3_res_status (*billboard)(void *user, uint32_t type, uint32_t matrix_index, int uniform_scale, mh3_res_mut_span position);
     mh3_res_status (*before_store)(void *user, uint32_t kind, uint32_t first_index, size_t bytes);
 } mh3_model_view_callbacks;
+
 mh3_res_status mh3_model_view_dma(const mh3_model_view_dma_input *input, const mh3_model_view_callbacks *callbacks);
 
 /* Renderer-owned native float arrays for an already admitted static model.
@@ -45,6 +46,7 @@ typedef struct mh3_model_view_native_input {
     mh3_matrix33 *normal;
     mh3_matrix34 *environment;
 } mh3_model_view_native_input;
+
 void mh3_model_view_native_static(const mh3_model_view_native_input *input);
 
 #ifdef __cplusplus

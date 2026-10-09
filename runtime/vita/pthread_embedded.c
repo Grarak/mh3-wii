@@ -29,11 +29,14 @@ pte_osResult __wrap_pte_osSemaphorePost(pte_osSemaphoreHandle handle, int count)
 {
     SceKernelSemaInfo info;
     info.size = sizeof info;
+
     if (sceKernelGetSemaInfo(handle, &info) >= 0 && info.currentCount + count > Cap) {
         count = Cap - info.currentCount;
+
         if (count <= 0)
             return PTE_OS_OK;
     }
+
     return __real_pte_osSemaphorePost(handle, count);
 }
 

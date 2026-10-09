@@ -46,6 +46,7 @@ struct Viewport {
 };
 
 extern GraphicsConfig g_graphicsConfig;
+
 // EFB color (RGBA8) and depth (Depth32F), top-down rows.
 extern RenderTarget g_frameBuffer;
 extern RenderTarget g_depthBuffer;

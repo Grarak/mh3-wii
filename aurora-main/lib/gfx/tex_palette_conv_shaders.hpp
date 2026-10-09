@@ -1,6 +1,6 @@
 #pragma once
 // Palette conversion shaders. Standard library only: the GXM shader bank
-// generator compiles every Programs entry (docs/vita-shader-bank.md).
+// generator compiles every Programs entry (docs/optimizations/rendering/offline-shader-bank.md).
 #include <array>
 #include <string_view>
 
@@ -67,6 +67,7 @@ struct Program {
   std::string_view fragment;
   const char* label;
 };
+
 // Indexed by tex_palette_conv::Variant.
 inline constexpr std::array Programs{
     Program{ShaderDirect, "TexPaletteConv Direct"},

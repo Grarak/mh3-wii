@@ -41,6 +41,7 @@ struct XmlNode {
                 return &attribute.second;
             }
         }
+
         return nullptr;
     }
 
@@ -51,15 +52,19 @@ struct XmlNode {
 
     bool AttributeBool(std::string_view attributeName, bool fallback) const {
         const std::string* value = FindAttribute(attributeName);
+
         if (!value) {
             return fallback;
         }
+
         if (*value == "true" || *value == "1" || *value == "yes") {
             return true;
         }
+
         if (*value == "false" || *value == "0" || *value == "no") {
             return false;
         }
+
         return fallback;
     }
 
@@ -67,20 +72,26 @@ struct XmlNode {
     // (Riivolution XMLs write memory offsets as 0x........).
     uint32_t AttributeUint(std::string_view attributeName, uint32_t fallback) const {
         const std::string* value = FindAttribute(attributeName);
+
         if (!value || value->empty()) {
             return fallback;
         }
+
         const std::string& text = *value;
         size_t index = 0;
         uint32_t base = 10;
+
         if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
             base = 16;
             index = 2;
         }
+
         uint64_t result = 0;
+
         for (; index < text.size(); ++index) {
             const char c = text[index];
             uint32_t digit;
+
             if (c >= '0' && c <= '9') {
                 digit = static_cast<uint32_t>(c - '0');
             } else if (base == 16 && c >= 'a' && c <= 'f') {
@@ -90,24 +101,31 @@ struct XmlNode {
             } else {
                 return fallback;
             }
+
             result = result * base + digit;
+
             if (result > 0xffffffffull) {
                 return fallback;
             }
         }
+
         return index > (base == 16 ? 2u : 0u) ? static_cast<uint32_t>(result) : fallback;
     }
 
     int AttributeInt(std::string_view attributeName, int fallback) const {
         const std::string* value = FindAttribute(attributeName);
+
         if (!value || value->empty()) {
             return fallback;
         }
+
         const bool negative = (*value)[0] == '-';
         const uint32_t magnitude = AttributeUintFromText(negative ? value->substr(1) : *value, 0x80000000u);
+
         if (magnitude == 0x80000000u && !negative) {
             return fallback;
         }
+
         return negative ? -static_cast<int>(magnitude) : static_cast<int>(magnitude);
     }
 
@@ -133,14 +151,17 @@ inline bool StartsWith(std::string_view text, std::string_view prefix) {
 inline XmlNode CopyXmlNode(const pugi::xml_node& source) {
     XmlNode destination;
     destination.name = source.name();
+
     for (const pugi::xml_attribute& attribute : source.attributes()) {
         destination.attributes.emplace_back(attribute.name(), attribute.value());
     }
+
     for (const pugi::xml_node& child : source.children()) {
         if (child.type() == pugi::node_element) {
             destination.children.push_back(CopyXmlNode(child));
         }
     }
+
     return destination;
 }
 
@@ -149,14 +170,17 @@ inline XmlNode CopyXmlNode(const pugi::xml_node& source) {
 inline std::optional<XmlNode> ParseXml(std::string_view text) {
     pugi::xml_document document;
     const pugi::xml_parse_result result = document.load_buffer(text.data(), text.size(), pugi::parse_default, pugi::encoding_utf8);
+
     if (!result) {
         return std::nullopt;
     }
 
     const pugi::xml_node root = document.document_element();
+
     if (!root) {
         return std::nullopt;
     }
+
     return CopyXmlNode(root);
 }
 
@@ -280,8 +304,10 @@ inline std::map<std::string, std::string> ReadParams(const XmlNode& node, std::m
         if (paramNode.name != "param") {
             continue;
         }
+
         params[paramNode.Attribute("name")] = paramNode.Attribute("value");
     }
+
     return params;
 }
 
@@ -289,15 +315,18 @@ inline std::map<std::string, std::string> ReadParams(const XmlNode& node, std::m
 
 inline std::optional<Disc> ParseString(std::string_view xml) {
     const std::optional<XmlNode> root = ParseXml(xml);
+
     if (!root || root->name != "wiidisc") {
         return std::nullopt;
     }
 
     Disc disc;
     disc.version = root->AttributeInt("version", -1);
+
     if (disc.version != 1) {
         return std::nullopt;
     }
+
     const std::string defaultRoot = root->Attribute("root");
 
     for (const XmlNode& node : root->children) {
@@ -313,15 +342,19 @@ inline std::optional<Disc> ParseString(std::string_view xml) {
                     disc.gameFilter.version = node.AttributeInt("version", -1);
                 }
             }
+
             std::vector<std::string> regions;
+
             for (const XmlNode& regionNode : node.children) {
                 if (regionNode.name == "region") {
                     regions.push_back(regionNode.Attribute("type"));
                 }
             }
+
             if (!regions.empty()) {
                 disc.gameFilter.regions = std::move(regions);
             }
+
             continue;
         }
 
@@ -330,39 +363,50 @@ inline std::optional<Disc> ParseString(std::string_view xml) {
                 if (sectionNode.name != "section") {
                     continue;
                 }
+
                 Section section;
                 section.name = sectionNode.Attribute("name");
+
                 for (const XmlNode& optionNode : sectionNode.children) {
                     if (optionNode.name != "option") {
                         continue;
                     }
+
                     Option option;
                     option.id = optionNode.Attribute("id");
                     option.name = optionNode.Attribute("name");
                     option.selectedChoice = optionNode.AttributeUint("default", 0);
                     auto optionParams = Detail::ReadParams(optionNode);
+
                     for (const XmlNode& choiceNode : optionNode.children) {
                         if (choiceNode.name != "choice") {
                             continue;
                         }
+
                         Choice choice;
                         choice.name = choiceNode.Attribute("name");
                         auto choiceParams = Detail::ReadParams(choiceNode, optionParams);
+
                         for (const XmlNode& patchRefNode : choiceNode.children) {
                             if (patchRefNode.name != "patch") {
                                 continue;
                             }
+
                             PatchReference patchReference;
                             patchReference.id = patchRefNode.Attribute("id");
                             patchReference.params = Detail::ReadParams(patchRefNode, choiceParams);
                             choice.patchReferences.push_back(std::move(patchReference));
                         }
+
                         option.choices.push_back(std::move(choice));
                     }
+
                     section.options.push_back(std::move(option));
                 }
+
                 disc.sections.push_back(std::move(section));
             }
+
             continue;
         }
 
@@ -370,6 +414,7 @@ inline std::optional<Disc> ParseString(std::string_view xml) {
             Patch patch;
             patch.id = node.Attribute("id");
             patch.root = node.Attribute("root");
+
             if (patch.root.empty()) {
                 patch.root = defaultRoot;
             }
@@ -411,6 +456,7 @@ inline std::optional<Disc> ParseString(std::string_view xml) {
                     patch.memoryPatches.push_back(std::move(memory));
                 }
             }
+
             disc.patches.push_back(std::move(patch));
         }
     }
@@ -420,12 +466,14 @@ inline std::optional<Disc> ParseString(std::string_view xml) {
 
 inline std::optional<Config> ParseConfigString(std::string_view xml) {
     const std::optional<XmlNode> root = ParseXml(xml);
+
     if (!root || root->name != "riivolution") {
         return std::nullopt;
     }
 
     Config config;
     config.version = root->AttributeInt("version", -1);
+
     if (config.version != 2) {
         return std::nullopt;
     }
@@ -434,6 +482,7 @@ inline std::optional<Config> ParseConfigString(std::string_view xml) {
         if (optionNode.name != "option") {
             continue;
         }
+
         ConfigOption option;
         option.id = optionNode.Attribute("id");
         option.defaultChoice = optionNode.AttributeUint("default", 0);
@@ -461,17 +510,22 @@ inline bool Disc::IsValidForGame(const std::string& gameId, std::optional<uint16
     if (gameFilter.game && !XmlDetail::StartsWith(gameIdFull, *gameFilter.game)) {
         return false;
     }
+
     if (gameFilter.developer && gameDeveloper != *gameFilter.developer) {
         return false;
     }
+
     if (gameFilter.disc && discNumberInt != *gameFilter.disc) {
         return false;
     }
+
     if (gameFilter.version && revisionInt != *gameFilter.version) {
         return false;
     }
+
     if (gameFilter.regions) {
         const auto& regions = *gameFilter.regions;
+
         if (!regions.empty() && std::find(regions.begin(), regions.end(), std::string(gameRegion)) == regions.end()) {
             return false;
         }
@@ -489,8 +543,10 @@ inline std::vector<Patch> Disc::GeneratePatches(const std::string& gameId) const
     const auto replaceVariables = [](std::string_view sv, const std::vector<std::pair<std::string, std::string_view>>& replacements) {
         std::string result;
         result.reserve(sv.size());
+
         while (!sv.empty()) {
             bool replaced = false;
+
             for (const auto& replacement : replacements) {
                 if (XmlDetail::StartsWith(sv, replacement.first)) {
                     result.append(replacement.second.data(), replacement.second.size());
@@ -499,27 +555,35 @@ inline std::vector<Patch> Disc::GeneratePatches(const std::string& gameId) const
                     break;
                 }
             }
+
             if (replaced) {
                 continue;
             }
+
             result.push_back(sv[0]);
             sv = sv.substr(1);
         }
+
         return result;
     };
 
     // Take only selected patches, replace placeholders in all strings, and
     // return them.
     std::vector<Patch> activePatches;
+
     for (const Section& section : sections) {
         for (const Option& option : section.options) {
             const uint32_t selected = option.selectedChoice;
+
             if (selected == 0 || selected > option.choices.size()) {
                 continue;
             }
+
             const Choice& choice = option.choices[selected - 1];
+
             for (const PatchReference& patchReference : choice.patchReferences) {
                 const auto patch = std::find_if(patches.begin(), patches.end(), [&](const Patch& candidate) { return candidate.id == patchReference.id; });
+
                 if (patch == patches.end()) {
                     continue;
                 }
@@ -528,26 +592,32 @@ inline std::vector<Patch> Disc::GeneratePatches(const std::string& gameId) const
                 replacements.emplace_back("{$__gameid}", gameIdNoRegion);
                 replacements.emplace_back("{$__region}", gameRegion);
                 replacements.emplace_back("{$__maker}", gameDeveloper);
+
                 for (const auto& param : patchReference.params) {
                     replacements.emplace_back("{$" + param.first + "}", param.second);
                 }
 
                 Patch newPatch = *patch;
                 newPatch.root = replaceVariables(newPatch.root, replacements);
+
                 for (File& file : newPatch.filePatches) {
                     file.disc = replaceVariables(file.disc, replacements);
                     file.external = replaceVariables(file.external, replacements);
                 }
+
                 for (Folder& folder : newPatch.folderPatches) {
                     folder.disc = replaceVariables(folder.disc, replacements);
                     folder.external = replaceVariables(folder.external, replacements);
                 }
+
                 for (Savegame& savegame : newPatch.savegamePatches) {
                     savegame.external = replaceVariables(savegame.external, replacements);
                 }
+
                 for (MemoryPatch& memory : newPatch.memoryPatches) {
                     memory.valuefile = replaceVariables(memory.valuefile, replacements);
                 }
+
                 activePatches.push_back(std::move(newPatch));
             }
         }
@@ -567,6 +637,7 @@ inline void ApplyConfigDefaults(Disc& disc, const Config& config) {
         for (Section& section : disc.sections) {
             for (Option& option : section.options) {
                 const bool matches = option.id.empty() ? (section.name + option.name) == configOption.id : option.id == configOption.id;
+
                 if (matches) {
                     option.selectedChoice = configOption.defaultChoice;
                 }
@@ -583,8 +654,10 @@ inline void ApplySelections(Disc& disc, const std::vector<OptionSelection>& sele
             if (!selection.section.empty() && section.name != selection.section) {
                 continue;
             }
+
             for (Option& option : section.options) {
                 const bool matches = (!option.id.empty() && option.id == selection.option) || option.name == selection.option;
+
                 if (matches && selection.choice <= option.choices.size()) {
                     option.selectedChoice = selection.choice;
                 }
@@ -606,11 +679,13 @@ inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRo
 
     const bool absolute = !externalRelativePath.empty() && externalRelativePath[0] == '/';
     std::string result(absolute ? sdRoot : patchRoot);
+
     while (!result.empty() && result.back() == '/') {
         result.pop_back();
     }
 
     std::string_view work = externalRelativePath;
+
     while (!work.empty() && work.front() == '/') {
         work.remove_prefix(1);
     }
@@ -619,6 +694,7 @@ inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRo
     }
 
     size_t depth = 0;
+
     while (!work.empty()) {
         const size_t separator = work.find('/');
         const std::string_view element = work.substr(0, separator);
@@ -630,11 +706,14 @@ inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRo
             if (depth == 0) {
                 return std::nullopt;
             }
+
             --depth;
             const size_t lastSlash = result.rfind('/');
+
             if (lastSlash == std::string::npos) {
                 return std::nullopt;
             }
+
             result.resize(lastSlash);
         } else if (!element.empty()) {
             ++depth;
@@ -645,6 +724,7 @@ inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRo
         if (separator == std::string_view::npos) {
             break;
         }
+
         work.remove_prefix(separator + 1);
     }
 
@@ -655,11 +735,13 @@ inline std::optional<std::string> MakeAbsoluteFromRelative(std::string_view sdRo
 // and the patch's 'root' attribute.
 inline std::string ResolvePatchRoot(std::string_view sdRoot, std::string_view xmlDirectory, std::string_view rootAttribute) {
     std::string patchRoot(xmlDirectory);
+
     if (!rootAttribute.empty()) {
         if (auto resolved = MakeAbsoluteFromRelative(sdRoot, xmlDirectory, rootAttribute)) {
             patchRoot = std::move(*resolved);
         }
     }
+
     return patchRoot;
 }
 
@@ -671,6 +753,7 @@ inline const Savegame* FindSavegamePatch(const std::vector<Patch>& activePatches
             return &patch.savegamePatches[0];
         }
     }
+
     return nullptr;
 }
 

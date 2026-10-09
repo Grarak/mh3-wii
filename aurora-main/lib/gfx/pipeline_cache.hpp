@@ -17,6 +17,7 @@ struct Pipeline {
   gl::ProgramPtr program;
   gl::RasterState raster;
 };
+
 using PipelinePtr = std::shared_ptr<Pipeline>;
 using NewPipelineCallback = std::function<PipelinePtr()>;
 

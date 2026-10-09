@@ -1,54 +1,69 @@
 cmake_minimum_required(VERSION 3.25)
 project(MH3Recompiled LANGUAGES C CXX ASM)
 option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrumentation" OFF)
+
 # Debug: every host function the compiler can see calls the trace hooks
 # (MH3_CALL_TRACE=PATH,movie). Before Aurora, so its code is traced too.
 option(MH3_ENABLE_FUNCTION_TRACE "Debug: count every host function call during movies" OFF)
+
 if(MH3_ENABLE_FUNCTION_TRACE)
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-finstrument-functions-after-inlining>)
 endif()
+
 option(MH3_ENABLE_COLLISION_CHECK "Build isolated Dolphin collision counterexample checks" OFF)
 option(MH3_WRITE_WATCH "Debug: report the guest code storing to MH3_WRITE_WATCH=START,LENGTH (rebuilds all generated code)" OFF)
 option(MH3_ENABLE_EFB_COPY_TRACE "Debug: page-protect GX texture-copy destinations and log host accesses" OFF)
+
 # Development-only runtime features, compiled out of release builds: MH3_STATS
 # speed line, MH3_PROFILE profile and GX counters, MH3_CAPTURE frame
 # dumps, MH3_FRAMESKIP, and scripted input (MH3_INPUT_FILE / _RECORD / _PLAYBACK).
 option(MH3_DEVELOPMENT "Build development/debug features (stats, captures, scripted input)" OFF)
+
 # Quest selection and native launcher features are present in every build.
 # Assertions follow CMAKE_BUILD_TYPE/NDEBUG independently of instrumentation.
 option(MH3_PROFILE_FRAME_POINTERS "Emit frame pointers and unwind tables for CPU caller profiling" ${MH3_DEVELOPMENT})
+
 if(MH3_PROFILE_FRAME_POINTERS)
   add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fno-omit-frame-pointer;-mno-omit-leaf-frame-pointer;-funwind-tables>")
+
   if(VITA OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv[78].*|arm)$")
     # Keep one documented ARM32 frame convention even in Thumb code. This is
     # AAPCS (previous FP and LR at r11), not Linux's legacy APCS perf walker.
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-mframe-chain=aapcs+leaf>)
   endif()
 endif()
+
 # Supported targets: arm32/arm64 Linux with GLES, and Vita with native GXM.
 # MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
 # configurable for development only; they are not a supported product.
 option(MH3_ALLOW_UNSUPPORTED_HOST "Configure on a host other than arm32/arm64 Linux" OFF)
+
 if(NOT VITA AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv7l|armv7|armv8l|arm)$"))
   if(NOT MH3_ALLOW_UNSUPPORTED_HOST)
     message(FATAL_ERROR "MH3 targets arm32/arm64 Linux; this is ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}. "
       "Cross-compile with cmake/toolchains/linux-arm32.cmake or linux-arm64.cmake, or set MH3_ALLOW_UNSUPPORTED_HOST=ON.")
   endif()
+
   message(WARNING "Configuring for unsupported host ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
 endif()
+
 if(MH3_AURORA_ROOT)
   enable_language(C)
+
   # The game thread owns the native renderer; GPU submissions are asynchronous.
   add_subdirectory("${MH3_AURORA_ROOT}" "${CMAKE_BINARY_DIR}/aurora")
 endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   message(FATAL_ERROR "The translated ISA helpers require Clang")
 endif()
+
 # Native AS wrappers retain their original translation, but become dynamic
 # winners. Refresh indirect tables AND direct-call traits before loading the
 # graph. This gate applies to Vita and ordinary Linux/ARM32 CMake builds.
@@ -56,12 +71,15 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(MH3_NATIVE_DISPATCH_RESOLVED_PROFILE "" CACHE FILEPATH "Optional resolved translator mod profile")
 set(MH3_NATIVE_DISPATCH_RETRO_CPP_DIR "" CACHE PATH "Optional translator mod C++ directory")
 set(native_dispatch_args)
+
 if(MH3_NATIVE_DISPATCH_RESOLVED_PROFILE)
   list(APPEND native_dispatch_args --resolved-profile "${MH3_NATIVE_DISPATCH_RESOLVED_PROFILE}")
 endif()
+
 if(MH3_NATIVE_DISPATCH_RETRO_CPP_DIR)
   list(APPEND native_dispatch_args --retro-cpp-dir "${MH3_NATIVE_DISPATCH_RETRO_CPP_DIR}")
 endif()
+
 file(GLOB_RECURSE native_dispatch_sources CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp")
@@ -74,33 +92,41 @@ file(GLOB native_dispatch_functions CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DI
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${native_dispatch_functions})
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../generated/translation.json" native_dispatch_metadata)
 string(JSON native_dispatch_bundle_type ERROR_VARIABLE native_dispatch_bundle_error TYPE "${native_dispatch_metadata}" sourceBundlePath)
+
 if(NOT native_dispatch_bundle_error AND native_dispatch_bundle_type STREQUAL "STRING")
   string(JSON native_dispatch_bundle GET "${native_dispatch_metadata}" sourceBundlePath)
   cmake_path(ABSOLUTE_PATH native_dispatch_bundle BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../generated")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${native_dispatch_bundle}")
 endif()
+
 if(MH3_NATIVE_DISPATCH_RESOLVED_PROFILE)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${MH3_NATIVE_DISPATCH_RESOLVED_PROFILE}")
 endif()
+
 if(MH3_NATIVE_DISPATCH_RETRO_CPP_DIR)
   file(GLOB_RECURSE native_dispatch_mod_sources CONFIGURE_DEPENDS "${MH3_NATIVE_DISPATCH_RETRO_CPP_DIR}/*")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${native_dispatch_mod_sources})
   cmake_path(GET MH3_NATIVE_DISPATCH_RETRO_CPP_DIR PARENT_PATH native_dispatch_mod_parent)
+
   if(EXISTS "${native_dispatch_mod_parent}/translated_sources.bin")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${native_dispatch_mod_parent}/translated_sources.bin")
   endif()
 endif()
+
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/prepare_native_dispatch.py"
   ${native_dispatch_args} RESULT_VARIABLE native_dispatch_result)
 if(NOT native_dispatch_result EQUAL 0)
   message(FATAL_ERROR "Native dispatch preparation failed; generated profile graph was not accepted")
 endif()
+
 include(../generated/build_shards/shards.cmake)
+
 if(VITA)
   set(MH3_GUEST_MEMORY_SOURCE vita/guest_memory.cpp)
 else()
   set(MH3_GUEST_MEMORY_SOURCE src/guest_flat_memory.cpp)
 endif()
+
 add_executable(MH3
   src/main.cpp src/memory.cpp ${MH3_GUEST_MEMORY_SOURCE} src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp native/mh3_classic_map.c src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
@@ -158,42 +184,54 @@ set_source_files_properties(native/mh3_material_state.c PROPERTIES COMPILE_OPTIO
 set_source_files_properties(native/mh3_scene_queue.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 set_source_files_properties(native/mh3_system_ui.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_include_directories(MH3 PRIVATE include ..)
+
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized backtraces of fatal errors (and dladdr).
 if(NOT VITA)
   set_target_properties(MH3 PROPERTIES ENABLE_EXPORTS ON)
   target_link_libraries(MH3 PRIVATE ${CMAKE_DL_LIBS})
+
   # Vita pad / host stick mapping to the Classic Controller report.
   add_executable(mh3_classic_map_check ../tests/native/test_mh3_classic_map.c native/mh3_classic_map.c)
   target_include_directories(mh3_classic_map_check PRIVATE ..)
   target_link_libraries(mh3_classic_map_check PRIVATE m)
   add_test(NAME mh3_classic_map_check COMMAND mh3_classic_map_check)
 endif()
+
 target_compile_options(MH3 PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-O2;-gline-tables-only;-ffp-contract=off>)
+
 if(MH3_ENABLE_FUNCTION_TRACE)
   target_sources(MH3 PRIVATE src/function_trace.cpp)
   target_compile_definitions(MH3 PRIVATE MH3_ENABLE_FUNCTION_TRACE=1)
 endif()
+
 if(MH3_ENABLE_GUEST_CALL_TRACE)
   target_sources(MH3 PRIVATE src/guest_call_trace.cpp)
   set(trace_manifest "${CMAKE_SOURCE_DIR}/../generated/build_shards/guest_trace_sources.cmake")
+
   if(NOT EXISTS "${trace_manifest}")
     message(FATAL_ERROR "Run scripts/trace_guest_calls.py enable before enabling guest call tracing")
   endif()
+
   include("${trace_manifest}")
+
   foreach(trace_source IN LISTS MH3_GUEST_TRACE_SOURCES)
     set_source_files_properties("${trace_source}" PROPERTIES
       COMPILE_DEFINITIONS MH3_ENABLE_GUEST_CALL_TRACE=1)
   endforeach()
 endif()
+
 enable_testing()
+
 if(MH3_ENABLE_COLLISION_CHECK)
   target_sources(MH3 PRIVATE src/collision_check.cpp)
   set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS MH3_ENABLE_COLLISION_CHECK=1)
   add_test(NAME mh3_collision_check COMMAND MH3 --collision-check)
 endif()
+
 add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
+
 if(TARGET aurora::core)
   target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
     src/native_material.cpp src/model_gpu.cpp src/model_cull.cpp native/mh3_model_cull.c src/model_assets.cpp src/native_frame_statistics.cpp
@@ -204,10 +242,12 @@ if(TARGET aurora::core)
   else()
     target_sources(MH3 PRIVATE src/audio_output.cpp)
   endif()
+
   if(MH3_ENABLE_EFB_COPY_TRACE)
     target_sources(MH3 PRIVATE src/efb_copy_trace.cpp)
     set_property(SOURCE src/graphics_host.cpp src/gx_stream.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_ENABLE_EFB_COPY_TRACE=1)
   endif()
+
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_render_state.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_display_utilities.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
@@ -218,6 +258,7 @@ if(TARGET aurora::core)
   set_source_files_properties(src/launcher_screen.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
+
   if(NOT VITA)
     add_executable(mh3_native_frame_statistics_check
       ../tests/native/test_native_frame_statistics.cpp src/native_frame_statistics.cpp)
@@ -233,6 +274,7 @@ if(TARGET aurora::core)
     target_compile_features(mh3_shader_cache_pack_check PRIVATE cxx_std_20)
     target_compile_options(mh3_shader_cache_pack_check PRIVATE -UNDEBUG)
     add_test(NAME mh3_shader_cache_pack_check COMMAND mh3_shader_cache_pack_check)
+
     # The Vita shader bank generator (docs/vita-shader-bank.md): sources of
     # every stage, keys unique, every fixed GLSL program translatable.
     add_executable(mh3-gxm-shader-bank ../scripts/vita_shader_bank.cpp src/native_shader_source.cpp "${MH3_AURORA_ROOT}/lib/gfx/cg_shader.cpp"
@@ -285,9 +327,11 @@ if(VITA)
   if(NOT TARGET aurora::core OR NOT AURORA_GXM)
     message(FATAL_ERROR "The Vita game requires MH3_AURORA_ROOT and AURORA_GXM=ON")
   endif()
+
   if(MH3_ENABLE_EFB_COPY_TRACE OR MH3_WRITE_WATCH)
     message(FATAL_ERROR "Page protection diagnostics require the Linux guest memory implementation")
   endif()
+
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
     vita/vita_controller.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
@@ -295,11 +339,13 @@ if(VITA)
   target_sources(MH3 PRIVATE vita/pthread_embedded.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=pte_osSemaphorePost" "-Wl,--wrap=pte_cancellable_wait")
   option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)
+
   if(MH3_VITA_FAST_TLS)
     target_sources(MH3 PRIVATE vita/fast_tls.c)
     target_link_options(MH3 PRIVATE "-Wl,--wrap=__getreent"
       "-Wl,--wrap=pte_osTlsGetValue")
   endif()
+
   # Drop unreferenced sections (also the nod bridge's Rust std helpers that
   # Vita newlib cannot provide).
   target_link_options(MH3 PRIVATE "-Wl,--gc-sections")
@@ -308,9 +354,11 @@ if(VITA)
   if(MH3_DEVELOPMENT)
     set_property(SOURCE vita/platform.cpp vita/launcher.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
   endif()
+
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
     ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub SceCtrl_stub SceTouch_stub SceCommonDialog_stub)
   set_target_properties(MH3 PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/ldscript.ld")
+
   # Every GXM program, compiled offline (docs/vita-shader-bank.md).
   include(../cmake/GxmShaderBank.cmake)
   include(FetchContent)
@@ -346,12 +394,15 @@ endif()
 # decrypted ISO (nodtool convert --decrypt) can be read.
 option(MH3_ROM_DECODER "Decode ISO/RVZ/WIA disc images on Linux (the Vita always decodes)" ON)
 option(MH3_ROM_DECODER_NOD "Decode disc images with the nod Rust library instead (needs cargo)" OFF)
+
 if(VITA OR MH3_ROM_DECODER)
   set(rom_decoder_dir "${CMAKE_CURRENT_SOURCE_DIR}/vita/rom_decoder")
+
   if(NOT MH3_ROM_DECODER_NOD)
     if(NOT TARGET libzstd_static)
       message(FATAL_ERROR "The ROM decoder needs Aurora's zstd (AURORA_CACHE_USE_ZSTD=ON)")
     endif()
+
     # libbzip2 1.0.8 and the 7-Zip LZMA SDK decoders, unmodified (third_party/).
     file(GLOB rom_decoder_bzip2 CONFIGURE_DEPENDS third_party/bzip2/*.c)
     add_library(mh3_rom_decoder STATIC src/rom_decoder.cpp ${rom_decoder_bzip2}
@@ -361,6 +412,7 @@ if(VITA OR MH3_ROM_DECODER)
     set_source_files_properties(${rom_decoder_bzip2} PROPERTIES COMPILE_OPTIONS -w)
     target_link_libraries(mh3_rom_decoder PRIVATE libzstd_static)
     target_link_libraries(MH3 PRIVATE mh3_rom_decoder)
+
     if(VITA)
       # The EABI memory helpers the nod archive used to supply (vita/aeabi_memory.c).
       target_sources(MH3 PRIVATE vita/aeabi_memory.c)
@@ -385,6 +437,7 @@ if(VITA OR MH3_ROM_DECODER)
     target_link_libraries(MH3 PRIVATE MH3RomDecoder)
   else()
     find_program(MH3_CARGO cargo HINTS "$ENV{HOME}/.cargo/bin" REQUIRED)
+
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(armv7|arm)")
       set(rom_decoder_triple armv7-unknown-linux-gnueabihf)
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
@@ -392,10 +445,12 @@ if(VITA OR MH3_ROM_DECODER)
     else()
       set(rom_decoder_triple x86_64-unknown-linux-gnu)
     endif()
+
     string(TOUPPER "${rom_decoder_triple}" rom_decoder_env)
     string(REPLACE "-" "_" rom_decoder_env "${rom_decoder_env}")
     string(REPLACE "-" "_" rom_decoder_cc "${rom_decoder_triple}")
     set(rom_decoder_archive "${CMAKE_BINARY_DIR}/rom-decoder/${rom_decoder_triple}/release/libmh3_rom_decoder.a")
+
     # The codec crates compile C with this build's compiler and target.
     add_custom_command(OUTPUT "${rom_decoder_archive}"
       COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rom-decoder"
@@ -413,6 +468,7 @@ if(VITA OR MH3_ROM_DECODER)
     add_dependencies(MH3RomDecoder MH3RomDecoderBuild)
     target_link_libraries(MH3 PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
   endif()
+
   set_property(SOURCE src/rom_image.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
 endif()
 
@@ -434,6 +490,7 @@ endif()
 if(TARGET aurora::core)
   if(NOT VITA)
     option(MH3_BUILD_VITA_TEXTURE_PACKER "Build the offline Vita texture packer" ON)
+
     if(MH3_BUILD_VITA_TEXTURE_PACKER)
       find_file(MH3_STB_DXT_HEADER stb_dxt.h
         HINTS ENV STB_INCLUDE_DIR
@@ -442,6 +499,7 @@ if(TARGET aurora::core)
       if(NOT MH3_STB_DXT_HEADER OR NOT EXISTS "${MH3_STB_DXT_HEADER}")
         message(FATAL_ERROR "Offline texture packer needs MH3_STB_DXT_HEADER; set its FILEPATH or disable MH3_BUILD_VITA_TEXTURE_PACKER")
       endif()
+
       add_executable(MH3VitaTexturePack ../scripts/vita_texture_pack.cpp)
       target_include_directories(MH3VitaTexturePack PRIVATE "${MH3_AURORA_ROOT}/lib")
       target_compile_definitions(MH3VitaTexturePack PRIVATE STB_DXT_HEADER="${MH3_STB_DXT_HEADER}")
@@ -456,6 +514,7 @@ if(TARGET aurora::core)
       target_compile_features(mh3_native_texture_format_check PRIVATE cxx_std_20)
       target_link_libraries(mh3_native_texture_format_check PRIVATE aurora::core aurora::gx aurora::vi)
     endif()
+
     add_executable(MH3LauncherTests EXCLUDE_FROM_ALL src/launcher_tests.cpp
       src/launcher_support.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/launcher_models.cpp src/disc_image.cpp
       src/rom_image.cpp src/asset_cache.cpp
@@ -463,10 +522,12 @@ if(TARGET aurora::core)
       native/mh3_vertex_sources.c native/mh3_mesh_pack.c native/mh3_material_pack.c native/mh3_model_catalog.c)
     target_include_directories(MH3LauncherTests PRIVATE include .. "${MH3_AURORA_ROOT}/lib")
     target_link_libraries(MH3LauncherTests PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
+
     if(TARGET MH3RomDecoder)
       target_link_libraries(MH3LauncherTests PRIVATE MH3RomDecoder pthread m ${CMAKE_DL_LIBS})
     endif()
   endif()
+
   add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp native/mh3_classic_map.c)
   target_include_directories(MH3ControllerHostTest PRIVATE include)
   target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)

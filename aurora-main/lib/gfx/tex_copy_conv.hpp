@@ -24,6 +24,7 @@ bool needs_conversion(GXTexFmt fmt);
 
 void initialize();
 void shutdown();
+
 // Render thread. `uniforms` is the batch uniform buffer holding req.uniformRange.
 void run(const ConvRequest& req);
 void blit(const ConvRequest& req);

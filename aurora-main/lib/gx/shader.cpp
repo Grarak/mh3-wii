@@ -59,6 +59,7 @@ static std::string alpha_bump_sel(size_t stageIdx, const ShaderConfig& config, c
   }
 
   std::string baseCoord;
+
   switch (stage.indTexAlphaSel) {
     DEFAULT_FATAL("invalid indTexAlphaSel {} for stage {}", underlying(stage.indTexAlphaSel), stageIdx);
   case GX_ITBA_S:
@@ -125,6 +126,7 @@ static std::string color_arg_reg(GXTevColorArg arg, size_t stageIdx, const Shade
     if (!tev_stage_texture_dependency(config, static_cast<u32>(stageIdx)).canSampleTexture) {
       return std::string(disabled_texture_color(config));
     }
+
     const auto& swap = config.tevSwapTable[stage.tevSwapTex];
     return fmt::format("sampled{}.{}{}{}", stageIdx, chan_comp(swap.red), chan_comp(swap.green), chan_comp(swap.blue));
   }
@@ -132,6 +134,7 @@ static std::string color_arg_reg(GXTevColorArg arg, size_t stageIdx, const Shade
     if (!tev_stage_texture_dependency(config, static_cast<u32>(stageIdx)).canSampleTexture) {
       return fmt::format("vec3f({})", disabled_texture_alpha(config));
     }
+
     const auto& swap = config.tevSwapTable[stage.tevSwapTex];
     return fmt::format("vec3f(sampled{}.{})", stageIdx, chan_comp(swap.alpha));
   }
@@ -140,13 +143,17 @@ static std::string color_arg_reg(GXTevColorArg arg, size_t stageIdx, const Shade
     if (stage.channelId == GX_COLOR_ZERO || stage.channelId == GX_COLOR_NULL) {
       return "vec3f(0.0)";
     }
+
     if (is_alpha_bump_channel(stage.channelId)) {
       std::string alpha = alpha_bump_sel(stageIdx, config, stage);
+
       if (stage.channelId == GX_ALPHA_BUMPN) {
         alpha = fmt::format("({} * (255.0 / 248.0))", alpha);
       }
+
       return fmt::format("vec3f({})", alpha);
     }
+
     u32 idx = color_channel(stage.channelId);
     const auto& swap = config.tevSwapTable[stage.tevSwapRas];
     return fmt::format("rast{}.{}{}{}", idx, chan_comp(swap.red), chan_comp(swap.green), chan_comp(swap.blue));
@@ -156,13 +163,17 @@ static std::string color_arg_reg(GXTevColorArg arg, size_t stageIdx, const Shade
     if (stage.channelId == GX_COLOR_ZERO || stage.channelId == GX_COLOR_NULL) {
       return "vec3f(0.0)";
     }
+
     if (is_alpha_bump_channel(stage.channelId)) {
       std::string alpha = alpha_bump_sel(stageIdx, config, stage);
+
       if (stage.channelId == GX_ALPHA_BUMPN) {
         alpha = fmt::format("({} * (255.0 / 248.0))", alpha);
       }
+
       return fmt::format("vec3f({})", alpha);
     }
+
     u32 idx = color_channel(stage.channelId);
     const auto& swap = config.tevSwapTable[stage.tevSwapRas];
     return fmt::format("vec3f(rast{}.{})", idx, chan_comp(swap.alpha));
@@ -253,6 +264,7 @@ static std::string alpha_arg_reg(GXTevAlphaArg arg, size_t stageIdx, const Shade
     if (!tev_stage_texture_dependency(config, static_cast<u32>(stageIdx)).canSampleTexture) {
       return std::string(disabled_texture_alpha(config));
     }
+
     const auto& swap = config.tevSwapTable[stage.tevSwapTex];
     return fmt::format("sampled{}.{}", stageIdx, chan_comp(swap.alpha));
   }
@@ -261,13 +273,17 @@ static std::string alpha_arg_reg(GXTevAlphaArg arg, size_t stageIdx, const Shade
     if (stage.channelId == GX_COLOR_ZERO || stage.channelId == GX_COLOR_NULL) {
       return "0.0";
     }
+
     if (is_alpha_bump_channel(stage.channelId)) {
       std::string alpha = alpha_bump_sel(stageIdx, config, stage);
+
       if (stage.channelId == GX_ALPHA_BUMPN) {
         alpha = fmt::format("({} * (255.0 / 248.0))", alpha);
       }
+
       return alpha;
     }
+
     u32 idx = color_channel(stage.channelId);
     const auto& swap = config.tevSwapTable[stage.tevSwapRas];
     return fmt::format("rast{}.{}", idx, chan_comp(swap.alpha));
@@ -401,11 +417,13 @@ static std::string tev_op(GXTevOp op, GXTevBias bias, GXTevScale scale, std::str
       return fmt::format("select({3}, {2}, greaterThan(round({0} * 255.0), round({1} * 255.0))) + {4}", a, b, c, zero,
                          d);
     }
+
     return fmt::format("select({3}, {2}, round({0} * 255.0) > round({1} * 255.0)) + {4}", a, b, c, zero, d);
   case GX_TEV_COMP_RGB8_EQ:
     if (suffix == "vec3f"sv) {
       return fmt::format("select({3}, {2}, equal(round({0} * 255.0), round({1} * 255.0))) + {4}", a, b, c, zero, d);
     }
+
     return fmt::format("select({3}, {2}, round({0} * 255.0) == round({1} * 255.0)) + {4}", a, b, c, zero, d);
   }
 }
@@ -437,8 +455,10 @@ static std::string tev_alpha_op(GXTevOp op, GXTevBias bias, GXTevScale scale, bo
                                 std::string_view colorA, std::string_view colorB) {
   const auto scalarOverflow = [](std::string_view reg) { return fmt::format("tev_overflow_f32({})", reg); };
   std::string expr;
+
   if (alpha_compare_uses_color_inputs(op)) {
     const auto colorOverflow = [](std::string_view reg) { return fmt::format("tev_overflow_vec3f({})", reg); };
+
     // GX alpha compares R8/GR16/BGR24 using the color combiner's A/B inputs, while C and D remain the scalar alpha-combiner inputs.
     expr = tev_op(op, bias, scale, colorOverflow(colorA), colorOverflow(colorB), scalarOverflow(c), d, "0.0"sv,
                   "f32"sv);
@@ -446,6 +466,7 @@ static std::string tev_alpha_op(GXTevOp op, GXTevBias bias, GXTevScale scale, bo
     // The numeric RGB8 op aliases are the alpha combiner's A8 compares and therefore continue to compare scalar alpha A/B inputs here.
     expr = tev_op(op, bias, scale, scalarOverflow(a), scalarOverflow(b), scalarOverflow(c), d, "0.0"sv, "f32"sv);
   }
+
   return clamp ? fmt::format("clamp({}, 0.0, 1.0)", expr) : fmt::format("clamp({}, -1024.0 / 255.0, 1023.0 / 255.0)", expr);
 }
 
@@ -460,6 +481,7 @@ static AlphaCompareExpr alpha_compare_not(const AlphaCompareExpr& expr) {
   if (expr.constant != -1) {
     return alpha_compare_const(expr.constant == 0);
   }
+
   return {fmt::format("!{}", expr.expr), -1};
 }
 
@@ -467,12 +489,15 @@ static AlphaCompareExpr alpha_compare_and(const AlphaCompareExpr& lhs, const Alp
   if (lhs.constant == 0 || rhs.constant == 0) {
     return alpha_compare_const(false);
   }
+
   if (lhs.constant == 1) {
     return rhs;
   }
+
   if (rhs.constant == 1) {
     return lhs;
   }
+
   return {fmt::format("({} && {})", lhs.expr, rhs.expr), -1};
 }
 
@@ -480,12 +505,15 @@ static AlphaCompareExpr alpha_compare_or(const AlphaCompareExpr& lhs, const Alph
   if (lhs.constant == 1 || rhs.constant == 1) {
     return alpha_compare_const(true);
   }
+
   if (lhs.constant == 0) {
     return rhs;
   }
+
   if (rhs.constant == 0) {
     return lhs;
   }
+
   return {fmt::format("({} || {})", lhs.expr, rhs.expr), -1};
 }
 
@@ -493,18 +521,23 @@ static AlphaCompareExpr alpha_compare_xor(const AlphaCompareExpr& lhs, const Alp
   if (lhs.constant != -1 && rhs.constant != -1) {
     return alpha_compare_const(lhs.constant != rhs.constant);
   }
+
   if (lhs.constant == 0) {
     return rhs;
   }
+
   if (rhs.constant == 0) {
     return lhs;
   }
+
   if (lhs.constant == 1) {
     return alpha_compare_not(rhs);
   }
+
   if (rhs.constant == 1) {
     return alpha_compare_not(lhs);
   }
+
   return {fmt::format("({} != {})", lhs.expr, rhs.expr), -1};
 }
 
@@ -512,24 +545,30 @@ static AlphaCompareExpr alpha_compare_xnor(const AlphaCompareExpr& lhs, const Al
   if (lhs.constant != -1 && rhs.constant != -1) {
     return alpha_compare_const(lhs.constant == rhs.constant);
   }
+
   if (lhs.constant == 0) {
     return alpha_compare_not(rhs);
   }
+
   if (rhs.constant == 0) {
     return alpha_compare_not(lhs);
   }
+
   if (lhs.constant == 1) {
     return rhs;
   }
+
   if (rhs.constant == 1) {
     return lhs;
   }
+
   return {fmt::format("({} == {})", lhs.expr, rhs.expr), -1};
 }
 
 static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref, bool floating=false) {
   const char* suffix=floating?".0":"u";
   const auto iref = static_cast<u32>(ref);
+
   switch (comp) {
   default:
     return alpha_compare_const(true);
@@ -539,11 +578,13 @@ static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref, bool floating=fals
     if (ref == 0) {
       return alpha_compare_const(false);
     }
+
     return {fmt::format("(alphaCompare < {}{})", iref, suffix), -1};
   case GX_LEQUAL:
     if (ref == 255) {
       return alpha_compare_const(true);
     }
+
     return {fmt::format("(alphaCompare <= {}{})", iref, suffix), -1};
   case GX_EQUAL:
     return {fmt::format("(alphaCompare == {}{})", iref, suffix), -1};
@@ -553,11 +594,13 @@ static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref, bool floating=fals
     if (ref == 0) {
       return alpha_compare_const(true);
     }
+
     return {fmt::format("(alphaCompare >= {}{})", iref, suffix), -1};
   case GX_GREATER:
     if (ref == 255) {
       return alpha_compare_const(false);
     }
+
     return {fmt::format("(alphaCompare > {}{})", iref, suffix), -1};
   case GX_ALWAYS:
     return alpha_compare_const(true);
@@ -566,43 +609,55 @@ static AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref, bool floating=fals
 
 static inline std::string vtx_attr(const ShaderConfig& config, GXAttr attr) {
   const auto type = config.attrs[attr].attrType;
+
   if (type == GX_NONE) {
     if (attr == GX_VA_PNMTXIDX) {
       return "ubuf.current_pnmtx";
     }
+
     if (attr == GX_VA_NRM) {
       // Default normal
       return "vec3f(1.0, 0.0, 0.0)"s;
     }
+
     if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
       return "vec4f(1.0)"s;
     }
+
     if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
       return "vec2f(0.0, 0.0)"s;
     }
+
     UNLIKELY FATAL("unmapped vtx attr {}", underlying(attr));
   }
+
   if (attr == GX_VA_POS) {
     return "in_pos"s;
   }
+
   if (attr == GX_VA_NRM) {
     return "in_nrm"s;
   }
+
   if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
     const auto idx = attr - GX_VA_CLR0;
     return fmt::format("in_clr{}", idx);
   }
+
   if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
     const auto idx = attr - GX_VA_TEX0;
     return fmt::format("in_tex{}_uv", idx);
   }
+
   if (attr == GX_VA_PNMTXIDX) {
     return "in_pnmtxidx"s;
   }
+
   if (attr >= GX_VA_TEX0MTXIDX && attr <= GX_VA_TEX7MTXIDX) {
     const auto idx = attr - GX_VA_TEX0MTXIDX;
     return fmt::format("in_texmtxidx{}", idx);
   }
+
   UNLIKELY FATAL("unhandled vtx attr {}", underlying(attr));
 }
 
@@ -615,12 +670,14 @@ constexpr std::array<std::string_view, GX_CC_ZERO + 1> TevColorArgNames{
     "CPREV"sv, "APREV"sv, "C0"sv,   "A0"sv,   "C1"sv,  "A1"sv,   "C2"sv,    "A2"sv,
     "TEXC"sv,  "TEXA"sv,  "RASC"sv, "RASA"sv, "ONE"sv, "HALF"sv, "KONST"sv, "ZERO"sv,
 };
+
 constexpr std::array<std::string_view, GX_CA_ZERO + 1> TevAlphaArgNames{
     "APREV"sv, "A0"sv, "A1"sv, "A2"sv, "TEXA"sv, "RASA"sv, "KONST"sv, "ZERO"sv,
 };
 
 auto fetch_attr(const AttrConfig& mapping, std::string_view buf, std::string_view offs, bool le, u8 cntOverride = 0) -> std::string {
   const u8 cnt = cntOverride != 0 ? cntOverride : mapping.cnt;
+
   switch (mapping.compType) {
   case GX_U8:
     return fmt::format("fetch_u8_{}({}, {}, {}u, {})", cnt, buf, offs, mapping.frac, le);
@@ -682,11 +739,13 @@ static std::string offset_plus(std::string_view offs, u32 add) {
   if (add == 0) {
     return std::string(offs);
   }
+
   return fmt::format("({} + {}u)", offs, add);
 }
 
 auto normal_group_load(const ShaderConfig& config, u8 group, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[GX_VA_NRM];
+
   if (mapping.attrType == GX_NONE || mapping.cnt != 9) {
     return attr_load(config, GX_VA_NRM, vidx);
   }
@@ -719,9 +778,11 @@ auto normal_group_load(const ShaderConfig& config, u8 group, std::string_view vi
 
 auto attr_load(const ShaderConfig& config, GXAttr attr, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[attr];
+
   if (mapping.attrType == GX_NONE) {
     return vtx_attr(config, attr);
   }
+
   auto buf = "vbuf"sv;
   auto offs = fmt::format("ubuf.vtx_start + {} * {}u + {}u", vidx, config.vtxStride, mapping.offset);
   auto le = false; // Vertex buffer is always big endian (for now)
@@ -736,6 +797,7 @@ auto attr_load(const ShaderConfig& config, GXAttr attr, std::string_view vidx) -
     buf = "abuf"sv;
     le = mapping.le;
   }
+
   switch (attr) {
   case GX_VA_PNMTXIDX:
     return fmt::format("(raw_fetch_u8_1({}, {}) / 3u)", buf, offs);
@@ -750,9 +812,11 @@ auto attr_load(const ShaderConfig& config, GXAttr attr, std::string_view vidx) -
     return fmt::format("raw_fetch_u8_1({}, {})", buf, offs);
   case GX_VA_POS: {
     const auto posLoad = fetch_attr(mapping, buf, offs, le);
+
     if (mapping.cnt == 2) {
       return fmt::format("vec3f({}, 0.0)", posLoad);
     }
+
     return posLoad;
   }
   case GX_VA_NRM:
@@ -769,9 +833,11 @@ auto attr_load(const ShaderConfig& config, GXAttr attr, std::string_view vidx) -
   case GX_VA_TEX6:
   case GX_VA_TEX7: {
     const auto texLoad = fetch_attr(mapping, buf, offs, le);
+
     if (mapping.cnt == 1) {
       return fmt::format("vec2f({}, 0.0)", texLoad);
     }
+
     return texLoad;
   }
   default:
@@ -789,6 +855,7 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
   std::string_view shift8 = alpha ? "8u"sv : "vec3u(8u)"sv;
   std::string outVar;
   std::string_view posVar;
+
   if (UsePerPixelLighting) {
     outVar = fmt::format("rast{}", i);
     posVar = "in.mv_pos"sv;
@@ -796,7 +863,9 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
     outVar = fmt::format("out.cc{}", i);
     posVar = "mv_pos"sv;
   }
+
   std::string ambSrc, matSrc;
+
   if (cc.ambSrc == GX_SRC_VTX) {
     if (UsePerPixelLighting) {
       ambSrc = fmt::format("in.clr{}", i);
@@ -806,6 +875,7 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
   } else if (cc.ambSrc == GX_SRC_REG) {
     ambSrc = fmt::format("ubuf.cc{0}{1}_amb", i, alpha ? "a"sv : ""sv);
   }
+
   if (cc.matSrc == GX_SRC_VTX) {
     if (UsePerPixelLighting) {
       matSrc = fmt::format("in.clr{}", i);
@@ -815,16 +885,20 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
   } else if (cc.matSrc == GX_SRC_REG) {
     matSrc = fmt::format("ubuf.cc{0}{1}_mat", i, alpha ? "a"sv : ""sv);
   }
+
   if (!cc.lightingEnabled) {
     // The XF lighting block consumes and produces 8-bit channel values even when lighting is disabled.
     if (alpha) {
       return fmt::format("\n    {0}.a = f32(i32(round({1}.a * 255.0))) / 255.0;", outVar, matSrc);
     }
+
     return fmt::format("\n    {0} = vec4f(vec3f(vec3i(round({1}.rgb * 255.0))) / 255.0, 1.0);", outVar,
                        matSrc);
   }
+
   GXDiffuseFn diffFn = cc.diffFn;
   std::string lightAttnFn;
+
   if (cc.attnFn == GX_AF_NONE) {
     lightAttnFn = "attn = 1.0;"s;
   } else if (cc.attnFn == GX_AF_SPOT) {
@@ -845,8 +919,10 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
           attn = select(select(0.0, 1.0, cos_attn > 0.0), max(0.0, cos_attn / dist_attn), dist_attn != 0.0);)""",
                               normal, dist_attn);
   }
+
   std::string_view normal = UsePerPixelLighting ? "in.mv_nrm"sv : "mv_nrm"sv;
   std::string lightDirSetup;
+
   if (cc.attnFn == GX_AF_NONE) {
     lightDirSetup = fmt::format(R"""(
           vec3 ldir = light.pos - {0};
@@ -862,7 +938,9 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
           ldir = ldir / dist;)""",
                            posVar);
   }
+
   std::string_view lightDiffFn;
+
   if (diffFn == GX_DF_NONE) {
     lightDiffFn = "1.0"sv;
   } else if (diffFn == GX_DF_SIGN) {
@@ -878,6 +956,7 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
       lightDiffFn = "max(0.0, dot(ldir, mv_nrm))"sv;
     }
   }
+
   const auto outputTarget = alpha ? fmt::format("{}.a", outVar) : outVar;
   const auto outputValue =
       alpha
@@ -907,12 +986,15 @@ static std::string_view vtx_attr_type(GXAttr attr) noexcept {
   if (attr == GX_VA_PNMTXIDX || (attr >= GX_VA_TEX0MTXIDX && attr <= GX_VA_TEX7MTXIDX)) {
     return "uint";
   }
+
   if (attr == GX_VA_POS || attr == GX_VA_NRM) {
     return "vec3";
   }
+
   if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
     return "vec4";
   }
+
   return "vec2";
 }
 
@@ -921,14 +1003,17 @@ static bool is_ident_char(char c) noexcept { return std::isalnum(static_cast<uns
 // Replaces `from` wherever it starts a token (WGSL's in./out. struct members).
 static std::string replace_token(std::string s, std::string_view from, std::string_view to) {
   size_t pos = 0;
+
   while ((pos = s.find(from, pos)) != std::string::npos) {
     if (pos > 0 && is_ident_char(s[pos - 1])) {
       pos += from.size();
       continue;
     }
+
     s.replace(pos, from.size(), to);
     pos += to.size();
   }
+
   return s;
 }
 
@@ -943,6 +1028,7 @@ static std::string native_float_op(const TevOp& op,std::string_view a,std::strin
   const float bias=op.bias==GX_TB_ADDHALF?128.f/255.f:op.bias==GX_TB_SUBHALF?-128.f/255.f:0.f;
   const float scale=op.scale==GX_CS_SCALE_2?2.f:op.scale==GX_CS_SCALE_4?4.f:op.scale==GX_CS_DIVIDE_2?.5f:1.f;
   std::string expression;
+
   if(op.op==GX_TEV_ADD || op.op==GX_TEV_SUB) {
     expression=fmt::format("(({}) + {:.9f} {} mix({}, {}, {})) * {:.1f}",
                           d,bias,op.op==GX_TEV_SUB?"-":"+",a,b,c,scale);
@@ -953,6 +1039,7 @@ static std::string native_float_op(const TevOp& op,std::string_view a,std::strin
     const bool equal=(unsigned(op.op)&1)!=0;
     const char* comparison=equal?"==":">";
     std::string condition;
+
     switch(op.op) {
     case GX_TEV_COMP_R8_GT:case GX_TEV_COMP_R8_EQ:
       condition=fmt::format("({}).r {} ({}).r",ca,comparison,cb);break;
@@ -964,8 +1051,10 @@ static std::string native_float_op(const TevOp& op,std::string_view a,std::strin
       condition=vector?fmt::format("{}({}, {})",equal?"equal":"greaterThan",a,b):fmt::format("({}) {} ({})",a,comparison,b);break;
     default:Log.fatal("Invalid native material comparison {}",unsigned(op.op));
     }
+
     expression=fmt::format("select({}, {}, {}) + ({})",vector?"vec3(0.0)":"0.0",c,condition,d);
   }
+
   return op.clamp?fmt::format("clamp({}, 0.0, 1.0)",expression):
       fmt::format("clamp({}, -1024.0 / 255.0, 1023.0 / 255.0)",expression);
 }
@@ -974,18 +1063,22 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
                                         u8 nativeZeroLodBiasMask,bool approximateNative,const gl::MeshLayout* nativeMeshLayout,u8 nativeNonzeroProjectiveMask,u8 nativeZeroProjectiveMask) noexcept {
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
+
   // All native materials use float combiners. The explicit switch exists only
   // for reference probes; material properties never trigger an exact fallback.
   const bool nativeFloat=nativeVertices && approximateNative;
   const bool compact = nativeMeshLayout != nullptr;
   CHECK(!(nativeZeroProjectiveMask & nativeNonzeroProjectiveMask),"Projective Q certificates overlap");
   CHECK(!nativeZeroProjectiveMask || compact,"Zero projective Q requires a compact source certificate");
+
   if (compact) {
     CHECK(nativeVertices && config.lineMode==0,"Compact models require native triangle equations");
     gfx::validate_mesh_layout(*nativeMeshLayout);
     CHECK(config.attrs[GX_VA_PNMTXIDX].attrType==GX_NONE,"Compact rigid mesh has a per-vertex matrix index");
+
     for(unsigned i=0;i<8;++i) {
       CHECK(config.attrs[GX_VA_TEX0MTXIDX+i].attrType==GX_NONE,"Compact rigid mesh has a texture matrix index");
+
       if(!info.sampledTexCoords.test(i)) continue;
       CHECK(config.tcgs[i].type==GX_TG_MTX2x4 || config.tcgs[i].type==GX_TG_MTX3x4 || config.tcgs[i].type==GX_TG_SRTG,
             "Compact mesh requires a certified emboss texgen producer");
@@ -1009,6 +1102,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
 
   // Load points for line/point expansion
   std::string_view vidxAttr = "vidx"sv;
+
   if (config.lineMode != 0) {
     vtxInAttrs += "\n    uint iidx = uint(gl_InstanceID);";
     uniBufAttrs +=
@@ -1044,6 +1138,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           attr_load(config, GX_VA_POS, "vidx_b"sv), attr_load(config, GX_VA_PNMTXIDX, "vidx_a"sv),
           attr_load(config, GX_VA_PNMTXIDX, "vidx_b"sv));
     }
+
     vidxAttr = "in_vidx"sv;
   } else if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
     vtxXfrAttrsPre += "\n    uint in_pnmtxidx = ubuf.current_pnmtx;";
@@ -1052,9 +1147,11 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
   // Load vertex attributes
   for (GXAttr attr = GX_VA_PNMTXIDX; attr <= GX_VA_TEX7; attr = static_cast<GXAttr>(attr + 1)) {
     const auto attrType = config.attrs[attr].attrType;
+
     if (attrType == GX_NONE) {
       continue;
     }
+
     // in_pnmtxidx and in_pos written above for line mode
     if ((attr != GX_VA_PNMTXIDX && attr != GX_VA_POS) || config.lineMode == 0) {
       vtxXfrAttrsPre += fmt::format("\n    {} {} = {};", vtx_attr_type(attr), vtx_attr(config, attr),
@@ -1072,6 +1169,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       vtxXfrAttrsPre+=fmt::format("\n    uint in_texmtxidx{} = uint(mesh_matrix{}.{});",
           i,packed/4,"xyzw"[packed%4]);
     }
+
     for (const auto& attribute : nativeMeshLayout->attributes) {
       if(attribute.location>=12) continue;
       const GXAttr attr=attribute.location==0?GX_VA_POS:attribute.location==1?GX_VA_NRM:
@@ -1083,6 +1181,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       vtxXfrAttrsPre+=fmt::format("\n    {} {} = {}.{};",vtx_attr_type(attr),vtx_attr(config,attr),name,swizzle);
     }
   }
+
   if (config.lineMode == 0) {
     vtxXfrAttrsPre += fmt::format(
         "\n    vec3 mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
@@ -1116,6 +1215,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         "\n    vec4 clip_base = select(clip_a, clip_b, use_b);"
         "\n    out.pos = vec4f(clip_base.xy + offset_ndc * clip_base.w, clip_base.zw);";
   }
+
   // The near/far depth correction used to be applied here per-vertex (out.pos.z = -out.pos.z for
   // reversed, or += out.pos.w for forward), redundantly on top of the same correction already
   // folded into ubuf.proj by effective_projection() (shader_info.cpp) - applying it twice canceled
@@ -1144,6 +1244,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
   }
 
   uniBufAttrs += "\n    mat4 proj;";
+
   // Only the matrix slots this shader can read are uploaded, in compacted order; see UniformMatrixLayout.
   uniBufAttrs += fmt::format("\n    mat3x4 postex_mtx[{}];", std::max<u32>(info.matrixLayout.postexCount, 1));
   uniBufAttrs += fmt::format("\n    mat3x4 nrm_mtx[{}];", std::max<u32>(info.matrixLayout.nrmCount, 1));
@@ -1158,23 +1259,28 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    ivec2 tex{0}_fixed_uv = vec2i(tex{0}_uv * ubuf.texcoord{0}_scale.xy * 128.0);", texCoordId);
       emittedFixedTexCoord[texCoordId] = true;
     }
+
     return fmt::format("tex{}_fixed_uv", texCoordId);
   };
 
   static std::array regName{"prev"sv, "tevreg0"sv, "tevreg1"sv, "tevreg2"sv};
+
   for (u32 idx = 0; idx < config.tevStageCount; ++idx) {
     const auto& stage = config.tevStages[idx];
     std::string colorA = color_arg_reg(stage.colorPass.a, idx, config, stage);
     std::string colorB = color_arg_reg(stage.colorPass.b, idx, config, stage);
     fragmentFn += fmt::format("\n    // TEV stage {}", idx);
+
     if (alpha_compare_uses_color_inputs(stage.alphaOp.op)) {
       const std::string colorAName = fmt::format("tev_stage{}_color_a", idx);
       const std::string colorBName = fmt::format("tev_stage{}_color_b", idx);
+
       // The color result is emitted before the alpha result below.
       fragmentFn += fmt::format("\n    vec3 {0} = {1};\n    vec3 {2} = {3};", colorAName, colorA, colorBName, colorB);
       colorA = colorAName;
       colorB = colorBName;
     }
+
     {
       std::string_view outReg = regName[stage.colorOp.outReg];
       std::string op = tev_color_op(
@@ -1184,6 +1290,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           color_arg_reg(stage.colorPass.c,idx,config,stage),color_arg_reg(stage.colorPass.d,idx,config,stage),true);
       fragmentFn += fmt::format("\n    {0} = vec4f({1}, {0}.a);", outReg, op);
     }
+
     {
       std::string_view outReg = regName[stage.alphaOp.outReg];
       std::string op = tev_alpha_op(
@@ -1200,9 +1307,11 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
 
   {
     const auto& lastStage = config.tevStages[config.tevStageCount - 1];
+
     if (lastStage.colorOp.outReg != 0) {
       fragmentFn += fmt::format("\n    prev = vec4f({0}.rgb, prev.a);", regName[lastStage.colorOp.outReg]);
     }
+
     if (lastStage.alphaOp.outReg != 0) {
       fragmentFn += fmt::format("\n    prev.a = {0}.a;", regName[lastStage.alphaOp.outReg]);
     }
@@ -1210,12 +1319,14 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
 
   const auto loadsTevRegs = info.loadsTevRegRgb | info.loadsTevRegAlpha;
   const auto writesTevRegs = info.writesTevRegRgb | info.writesTevRegAlpha;
+
   if (loadsTevRegs.test(0)) {
     uniBufAttrs += "\n    vec4 tevprev;";
     fragmentFnPre += "\n    vec4 prev = ubuf.tevprev;";
   } else {
     fragmentFnPre += "\n    vec4 prev = vec4(0.0);";
   }
+
   for (int i = 1 /* Skip TEVPREV */; i < loadsTevRegs.size(); ++i) {
     if (loadsTevRegs.test(i)) {
       uniBufAttrs += fmt::format("\n    vec4 tevreg{};", i - 1);
@@ -1258,15 +1369,19 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
 
     const auto& cc = config.colorChannels[i];
     const auto& cca = config.colorChannels[i + GX_ALPHA0];
+
     if (cc.lightingEnabled && cc.ambSrc == GX_SRC_REG) {
       uniBufAttrs += fmt::format("\n    vec4 cc{0}_amb;", i);
     }
+
     if (cc.matSrc == GX_SRC_REG) {
       uniBufAttrs += fmt::format("\n    vec4 cc{0}_mat;", i);
     }
+
     if (cca.lightingEnabled && cca.ambSrc == GX_SRC_REG) {
       uniBufAttrs += fmt::format("\n    vec4 cc{0}a_amb;", i);
     }
+
     if (cca.matSrc == GX_SRC_REG) {
       uniBufAttrs += fmt::format("\n    vec4 cc{0}a_mat;", i);
     }
@@ -1291,23 +1406,28 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       fragmentFnPre += fmt::format("\n    vec4 rast{0} = in.cc{0};", i);
     }
   }
+
   for (int i = 0; i < info.sampledKColors.size(); ++i) {
     if (info.sampledKColors.test(i)) {
       uniBufAttrs += fmt::format("\n    vec4 kcolor{};", i);
     }
   }
+
   for (int i = 0; i < info.sampledTexCoords.size(); ++i) {
     if (!info.sampledTexCoords.test(i)) {
       continue;
     }
+
     const auto& tcg = config.tcgs[i];
     const bool hardwareProjection=nativeVertices && (nativeNonzeroProjectiveMask & (1u<<i));
     const bool zeroProjection=compact && (nativeZeroProjectiveMask & (1u<<i));
+
     if (tcg.type == GX_TG_MTX3x4 && !zeroProjection) {
       vtxOutAttrs += varying(hardwareProjection?"vec4":"vec3", fmt::format("tex{}_uvw", i));
     } else {
       vtxOutAttrs += varying("vec2", fmt::format("tex{}_uv", i));
     }
+
     if(nativeVertices && !compact) {
       if(tcg.type==GX_TG_MTX3x4) {
         vtxXfrAttrs+=hardwareProjection?
@@ -1320,8 +1440,10 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         vtxXfrAttrs+=fmt::format("\n    out.tex{0}_uv = native_tex{0}.xy;",i);
         fragmentFnPre+=fmt::format("\n    vec2 tex{0}_uv = in.tex{0}_uv;",i);
       }
+
       continue;
     }
+
     if (tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
       vtxXfrAttrs += fmt::format("\n    vec4 tc{} = vec4f({}, 1.0, 1.0);", i,
                                  vtx_attr(config, GXAttr(GX_VA_TEX0 + (tcg.src - GX_TG_TEX0))));
@@ -1344,9 +1466,11 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       vtxXfrAttrs += fmt::format("\n    vec4 tc{} = vec4f({}.rgb, 1.0);", i, vtx_attr(config, GX_VA_CLR1));
     } else
       UNLIKELY FATAL("unhandled tcg src {}", underlying(tcg.src));
+
     if (tcg.inputFormAB11) {
       vtxXfrAttrs += fmt::format("\n    tc{}.z = 1.0;", i);
     }
+
     if (tcg.type == GX_TG_MTX2x4 || tcg.type == GX_TG_MTX3x4) {
       if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
         if(compact) {
@@ -1369,15 +1493,18 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
               "texgen {} matrix slot {} missing from the uniform layout", i, texMtxSlot);
         vtxXfrAttrs += fmt::format("\n    vec3 tc{0}_tmp = tc{0} * ubuf.postex_mtx[{1}];", i, texMtxIdx);
       }
+
       if (tcg.type == GX_TG_MTX2x4) {
         vtxXfrAttrs += fmt::format("\n    tc{0}_tmp.z = 1.0;", i);
       }
     } else if (tcg.type == GX_TG_SRTG) {
       vtxXfrAttrs += fmt::format("\n    vec3 tc{0}_tmp = vec3f(tc{0}.xy, 1.0);", i);
     }
+
     if (config.dualTexEnabled && tcg.normalize) {
       vtxXfrAttrs += fmt::format("\n    tc{0}_tmp = normalize(tc{0}_tmp);", i);
     }
+
     if (!config.dualTexEnabled || tcg.postMtx == GX_PTIDENTITY) {
       vtxXfrAttrs += fmt::format("\n    vec3 tc{0}_proj = tc{0}_tmp;", i);
     } else {
@@ -1385,6 +1512,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       vtxXfrAttrs +=
           fmt::format("\n    vec3 tc{0}_proj = vec4f(tc{0}_tmp.xyz, 1.0) * ubuf.postmtx[{1}];", i, postMtxIdx);
     }
+
     if (tcg.type == GX_TG_MTX2x4 || tcg.type == GX_TG_MTX3x4) {
       vtxXfrAttrs += fmt::format(
           "\n    if (tc{0}_proj.z == 0.0) {{"
@@ -1393,6 +1521,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    }}",
           i);
     }
+
     // Apply line/point tex offset
     if (config.lineMode == 3) {
       // GX_POINTS: offset S for right columns, T for bottom rows
@@ -1410,6 +1539,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    }}",
           i);
     }
+
     if (tcg.type == GX_TG_MTX3x4 && !zeroProjection) {
       vtxXfrAttrs += hardwareProjection?
           fmt::format("\n    out.tex{0}_uvw = vec4(tc{0}_proj.xy, 0.0, tc{0}_proj.z);",i):
@@ -1425,6 +1555,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       fragmentFnPre += fmt::format("\n    vec2 tex{0}_uv = in.tex{0}_uv.xy;", i);
     }
   }
+
   // Multiple TEV stages may reference the same indirect stage,
   // so we sample each indirect texture only once.
   const auto ind_scale_shift = [](const GXIndTexScale s) -> u32 {
@@ -1451,10 +1582,12 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       FATAL("unhandled indirect scale {}", underlying(s));
     }
   };
+
   for (int i = 0; i < info.usedIndStages.size(); ++i) {
     if (!info.usedIndStages.test(i)) {
       continue;
     }
+
     const auto& indStage = config.indStages[i];
     const int effectiveIndTexCoord = tev_effective_texcoord(config, indStage.texCoordId);
     const std::string indFixedUv =
@@ -1467,10 +1600,13 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         i, effectiveIndTexCoord, underlying(indStage.texMapId), ind_scale_shift(indStage.scaleS),
         ind_scale_shift(indStage.scaleT), indFixedUv);
   }
+
   const bool usesFixedTexcoordState = shader_uses_fixed_texcoord_state(config);
+
   if (usesFixedTexcoordState) {
     fragmentFnPre += "\n    ivec2 t_TexCoord = vec2i(0);";
   }
+
   for (int i = 0; i < config.tevStageCount; ++i) {
     const auto& stage = config.tevStages[i];
     const auto textureDependency = tev_stage_texture_dependency(config, static_cast<u32>(i));
@@ -1479,18 +1615,23 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
     const bool needsTevTexCoord = textureDependency.needsFixedTexcoordState;
     const bool needsTextureSample = textureDependency.combinerUsesTexture || static_cast<int>(i) == zTexStage;
     const bool willSampleTexture = tev_texture_sample_enabled(textureDependency, needsTextureSample);
+
     if (!needsTevTexCoord && !needsTextureSample) {
       continue;
     }
+
     const bool hasBaseCoord = textureDependency.texCoordId >= 0;
     std::string uvIn;
+
     if (needsTevTexCoord) {
       fragmentFnPre += fmt::format("\n    // TEV stage {} indirect", i);
 
       // Apply indirect texture matrix (produces an S17.7 fixed-point offset).
       std::string indirectOffsetFixed;
+
       if (needsIndirectCoord && hasIndirectStage) {
         u32 fmtShift = 0;
+
         switch (stage.indTexFormat) {
         case GX_ITF_8:
           break;
@@ -1506,6 +1647,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         default:
           FATAL("unhandled indirect format {}", underlying(stage.indTexFormat));
         }
+
         if (fmtShift == 0) {
           fragmentFnPre += fmt::format("\n    ivec3 ind{0}_coord = t_IndTexCoord{1};", i, underlying(stage.indTexStage));
         } else {
@@ -1516,18 +1658,22 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         if (stage.indTexBiasSel != GX_ITB_NONE) {
           auto bias = stage.indTexFormat == GX_ITF_8 ? "-128"sv : "1"sv;
           auto biasS = "0"sv, biasT = "0"sv, biasU = "0"sv;
+
           if (stage.indTexBiasSel == GX_ITB_S || stage.indTexBiasSel == GX_ITB_ST || stage.indTexBiasSel == GX_ITB_SU ||
               stage.indTexBiasSel == GX_ITB_STU) {
             biasS = "1"sv;
           }
+
           if (stage.indTexBiasSel == GX_ITB_T || stage.indTexBiasSel == GX_ITB_ST || stage.indTexBiasSel == GX_ITB_TU ||
               stage.indTexBiasSel == GX_ITB_STU) {
             biasT = "1"sv;
           }
+
           if (stage.indTexBiasSel == GX_ITB_U || stage.indTexBiasSel == GX_ITB_SU || stage.indTexBiasSel == GX_ITB_TU ||
               stage.indTexBiasSel == GX_ITB_STU) {
             biasU = "1"sv;
           }
+
           fragmentFnPre += fmt::format("\n    ind{0}_coord = ind{0}_coord + vec3i({1}, {2}, {3}) * {4};", i, biasS,
                                        biasT, biasU, bias);
         }
@@ -1579,24 +1725,31 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       // Wrap base coord and combine with the indirect translation.
       auto wrap_comp = [](GXIndTexWrap wrap, std::string&& coord) -> std::string {
         const int mask = tev_indirect_wrap_mask(wrap);
+
         if (mask == -1) {
           return std::move(coord);
         }
+
         if (mask == 0) {
           return "0";
         }
+
         CHECK(mask > 0, "invalid indirect wrap {}", underlying(wrap));
         return fmt::format("({} & {})", coord, mask);
       };
+
       std::string baseCoordExpr = "vec2i(0)";
+
       if (hasBaseCoord) {
         u32 texCoordId = static_cast<u32>(textureDependency.texCoordId);
         baseCoordExpr = fixed_texcoord_name(texCoordId);
       }
+
       const std::string wrappedExpr =
           fmt::format("vec2i({}, {})", wrap_comp(stage.indTexWrapS, fmt::format("{}.x", baseCoordExpr)),
                       wrap_comp(stage.indTexWrapT, fmt::format("{}.y", baseCoordExpr)));
       std::string finalCoord = wrappedExpr;
+
       if (!indirectOffsetFixed.empty()) {
         finalCoord = fmt::format("{} + ({})", wrappedExpr, indirectOffsetFixed);
       }
@@ -1607,6 +1760,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         } else {
           fragmentFnPre += fmt::format("\n    t_TexCoord = {};", finalCoord);
         }
+
         fragmentFnPre += "\n    t_TexCoord = tev_s24_fixed_vec2i(t_TexCoord);";
 
         // ShaderInfo only emits texN_size_bias and texture bindings for a texture that can actually be sampled.
@@ -1618,10 +1772,13 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
         }
       }
     }
+
     if (!willSampleTexture) {
       continue;
     }
+
     const bool directCoordinate=uvIn.empty();
+
     if (uvIn.empty()) {
       // No indirect texturing
       if(nativeVertices) {
@@ -1632,6 +1789,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
                            textureDependency.texMapId);
       }
     }
+
     if (nativeVertices && (nativeZeroLodBiasMask & (1u << textureDependency.texMapId))) {
       if(directCoordinate && textureDependency.texCoordId>=0 &&
          config.tcgs[textureDependency.texCoordId].type==GX_TG_MTX3x4 &&
@@ -1683,18 +1841,21 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           zTexBias);
       break;
     }
+
     if (zTexOp == GX_ZT_ADD) {
       fragmentFn += fmt::format(
           "\n    uint oldZ = u32(round(clamp({0}, 0.0, 1.0) * 16777216.0));"
           "\n    ztexCoord = (ztexCoord + oldZ) & 0x00ffffffu;",
           UseReversedZ ? "(1.0 - in.pos.z)" : "in.pos.z");
     }
+
     fragmentFn += "\n    float ztexDepth = f32(ztexCoord) / 16777216.0;";
     fogZCoordExpr = "ztexCoord";
   }
 
   if (info.usesPTTexMtx.any())
     uniBufAttrs += fmt::format("\n    mat3x4 postmtx[{}];", MaxPTTexMtx);
+
   if (info.usesFog) {
     uniformPre +=
         "\n"
@@ -1723,6 +1884,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    float fogZe = ubuf.fog.a * f32(fogZCoord) / 16777216.0;",
           fogZCoordExpr);
     }
+
     if (config.fogRangeAdjust) {
       fragmentFn +=
           "\n    float fogRangeOffset = (2.0 * (in.pos.x / ubuf.fog.range_base.y)) - 1.0 - ubuf.fog.range_base.x;"
@@ -1734,7 +1896,9 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    float fogRangeK = mix(fogRangeKLower, fogRangeKUpper, fract(fogRangeFloatIndex));"
           "\n    fogZe *= sqrt(fogRangeOffset * fogRangeOffset + fogRangeK * fogRangeK) / fogRangeK;";
     }
+
     fragmentFn += "\n    float fogF = clamp(fogZe - ubuf.fog.c, 0.0, 1.0);";
+
     switch (config.fogType) {
       DEFAULT_FATAL("invalid fog type {}", config.fogType);
     case static_cast<GXFogType>(1):
@@ -1764,28 +1928,36 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
           "\n    float fogZ = exp2(-8.0 * fogF * fogF);";
       break;
     }
+
     fragmentFn += "\n    prev = vec4f(mix(prev.rgb, ubuf.fog.color.rgb, clamp(fogZ, 0.0, 1.0)), prev.a);";
   }
+
   if (info.usedIndTexMtxs.any()) {
     uniBufAttrs += "\n    ivec4 ind_mtx[6];";
   }
+
   for (int i = 0; i < info.sampledTexCoords.size(); ++i) {
     if (info.sampledTexCoords.test(i)) {
       uniBufAttrs += fmt::format("\n    vec4 texcoord{}_scale;", i);
     }
   }
+
   for (int i = 0; i < info.sampledTextures.size(); ++i) {
     if (!info.sampledTextures.test(i)) {
       continue;
     }
+
     uniBufAttrs += fmt::format("\n    vec4 tex{}_size_bias;", i);
     texBindings += fmt::format("\nuniform highp sampler2D tex{};", i);
   }
+
   if(!nativeFloat) fragmentFn += "\n    prev = tev_overflow_vec4f(prev);";
+
   if (config.alphaCompare) {
     const auto comp0 = alpha_compare(config.alphaCompare.comp0, config.alphaCompare.ref0, nativeFloat);
     const auto comp1 = alpha_compare(config.alphaCompare.comp1, config.alphaCompare.ref1, nativeFloat);
     AlphaCompareExpr pass;
+
     switch (config.alphaCompare.op) {
     default:
       pass = alpha_compare_and(comp0, comp1);
@@ -1803,7 +1975,9 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
       pass = alpha_compare_xnor(comp0, comp1);
       break;
     }
+
     const auto discard = alpha_compare_not(pass);
+
     if (discard.constant == 1) {
       fragmentFn += "\n    // Alpha compare\n    discard;";
     } else if (discard.constant != 0) {
@@ -1815,6 +1989,7 @@ gl::ProgramDesc build_shader_description(const ShaderConfig& config,bool nativeV
   }
 
   std::string fragmentReturn = "    frag_color = prev;";
+
   if (usesZTextureDepth) {
     // ztexDepth is in GX's native distance terms (0=near/1=far, see fogDepthExpr's comment above),
     // but the depth output must use the host NDC-z convention gl_FragCoord.z itself uses -
@@ -2103,6 +2278,7 @@ layout(std140) uniform Ubuf {{
 
   std::string vertexVaryings;
   std::string fragmentVaryings;
+
   for (const auto& [type, name] : varyings) {
     vertexVaryings += fmt::format("\nout {} v_{};", type, name);
     fragmentVaryings += fmt::format("\nin {} v_{};", type, name);
@@ -2136,8 +2312,10 @@ void main() {{{3}
       "layout(location=4) in vec4 native_color1;\n";
     for(unsigned i=0;i<8;++i)
       attributes+=fmt::format("layout(location={}) in vec3 native_tex{};\n",i+5,i);
+
     if(compact) {
       attributes.clear();
+
       for(const auto& attribute : nativeMeshLayout->attributes) {
         // Declare vec4 inputs so GLES/GXM supply standard missing components;
         // the prepared layout still controls the physical fetch width.
@@ -2145,8 +2323,10 @@ void main() {{{3}
                                 std::string_view(gfx::MeshAttributeNames[attribute.location]).substr(2));
       }
     }
+
     vertexSource=fmt::format("{}{}{}\nvoid main() {{{}\n}}\n",uniformBlock,attributes,vertexVaryings,vertexMain);
   }
+
   const auto fragmentSource = fmt::format(R"""({0}{1}{2}
 layout(location = 0) out vec4 frag_color;
 {3}
@@ -2165,15 +2345,19 @@ void main() {{{4}
       .nativeMaterialVertices = nativeVertices && !compact,
       .nativeMeshLayout = compact?*nativeMeshLayout:gl::MeshLayout{},
   };
+
   for (u32 i = 0; i < MaxTextures; ++i) {
     desc.samplers.emplace_back(fmt::format("tex{}", i), static_cast<int>(i));
   }
+
   if(!nativeVertices) {
     desc.samplers.emplace_back("vbuf", static_cast<int>(gfx::VertexBufferUnit));
     desc.samplers.emplace_back("abuf", static_cast<int>(gfx::StorageBufferUnit));
   }
+
   return desc;
 }
+
 gl::ProgramPtr build_shader(const ShaderConfig& config) noexcept {
   return std::make_shared<gl::Program>(build_shader_description(config));
 }

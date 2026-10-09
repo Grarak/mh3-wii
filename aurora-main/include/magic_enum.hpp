@@ -259,6 +259,7 @@ constexpr bool cmp_equal(string_view lhs, string_view rhs, BinaryPredicate&& p) 
     }
 
     const auto size = lhs.size();
+
     for (std::size_t i = 0; i < size; ++i) {
       if (!p(lhs[i], rhs[i])) {
         return false;
@@ -290,6 +291,7 @@ constexpr I log2(I value) noexcept {
   static_assert(std::is_integral_v<I>, "magic_enum::detail::log2 requires integral type.");
 
   auto ret = I{0};
+
   for (; value > I{1}; value >>= I{1}, ++ret) {}
 
   return ret;
@@ -417,6 +419,7 @@ inline constexpr auto reflected_max_v = reflected_max<E, IsFlags>();
 template <std::size_t N>
 constexpr std::size_t values_count(const bool (&valid)[N]) noexcept {
   auto count = std::size_t{0};
+
   for (std::size_t i = 0; i < N; ++i) {
     if (valid[i]) {
       ++count;
@@ -434,6 +437,7 @@ constexpr auto values(std::index_sequence<I...>) noexcept {
 
   if constexpr (count > 0) {
     E values[count] = {};
+
     for (std::size_t i = 0, v = 0; v < count; ++i) {
       if (valid[i]) {
         values[v++] = value<E, Min, IsFlags>(i);
@@ -571,6 +575,7 @@ constexpr U value_ors() noexcept {
   static_assert(is_enum_v<E>, "magic_enum::detail::endex requires enum type.");
 
   auto value = U{0};
+
   for (std::size_t i = 0; i < count_v<E, true>; ++i) {
     value |= static_cast<U>(values_v<E, true>[i]);
   }
@@ -828,6 +833,7 @@ std::basic_ostream<Char, Traits>& operator<<(std::basic_ostream<Char, Traits>& o
     for (const auto c : name) {
       os.put(c);
     }
+
     return os;
   }
 #endif
@@ -927,13 +933,16 @@ template <typename E>
 
   string name;
   auto check_value = U{0};
+
   for (std::size_t i = 0; i < detail::count_v<D, true>; ++i) {
     if (const auto v = static_cast<U>(enum_value<D>(i)); (static_cast<U>(value) & v) != 0) {
       check_value |= v;
       const auto n = detail::names_v<D, true>[i];
+
       if (!name.empty()) {
         name.append(1, '|');
       }
+
       name.append(n.data(), n.size());
     }
   }
@@ -972,6 +981,7 @@ template <typename E>
 
   if constexpr (detail::is_sparse_v<D, true>) {
     auto check_value = U{0};
+
     for (std::size_t i = 0; i < detail::count_v<D, true>; ++i) {
       if (const auto v = static_cast<U>(enum_value<D>(i)); (value & v) != 0) {
         check_value |= v;
@@ -1002,10 +1012,12 @@ template <typename E, typename BinaryPredicate>
   using U = underlying_type_t<D>;
 
   auto result = U{0};
+
   while (!value.empty()) {
     const auto d = detail::find(value, '|');
     const auto s = (d == string_view::npos) ? value : value.substr(0, d);
     auto f = U{0};
+
     for (std::size_t i = 0; i < detail::count_v<D, true>; ++i) {
       if (detail::cmp_equal(s, detail::names_v<D, true>[i], p)) {
         f = static_cast<U>(enum_value<D>(i));
@@ -1013,9 +1025,11 @@ template <typename E, typename BinaryPredicate>
         break;
       }
     }
+
     if (f == U{0}) {
       return {}; // Invalid value or out of range.
     }
+
     value.remove_prefix((d == string_view::npos) ? value.size() : d + 1);
   }
 
@@ -1103,6 +1117,7 @@ std::basic_ostream<Char, Traits>& operator<<(std::basic_ostream<Char, Traits>& o
     for (const auto c : name) {
       os.put(c);
     }
+
     return os;
   }
 #endif

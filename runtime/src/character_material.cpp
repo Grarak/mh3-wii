@@ -23,11 +23,13 @@ aurora::MaterialSource Snapshot(uint32_t object) {
     source.width = (image & 1023) + 1;
     source.height = ((image >> 10) & 1023) + 1;
     source.format = (image >> 20) & 15;
+
     if (source.width != 128 || source.height != 128 || (source.format >= 8 && source.format <= 10))
         throw std::runtime_error("Unexpected character material source: " + std::to_string(source.width) + "x" + std::to_string(source.height) + " format " + std::to_string(source.format));
 #ifdef __vita__
     if (address >= 64 && Memory::Contains(address - 64, 64)) {
         const uint32_t header = address - 64, tag = Memory::Read32(header + 60);
+
         if ((tag & 0xf0000000u) == AURORA_NATIVE_TEXTURE_TAG && Memory::Read32(header) == 0x54455830 && Memory::Read32(header + 16) == 64 && Memory::Read16(header + 28) == 128 &&
             Memory::Read16(header + 30) == 128 && Memory::Read32(header + 32) == source.format)
             source.nativeAsset = tag & 0x0fffffffu;
@@ -35,6 +37,7 @@ aurora::MaterialSource Snapshot(uint32_t object) {
 #endif
     if (!source.nativeAsset) {
         uint32_t bytes = 128 * 128;
+
         switch (source.format) {
         case 0:
         case 14:
@@ -54,19 +57,24 @@ aurora::MaterialSource Snapshot(uint32_t object) {
         default:
             throw std::runtime_error("Unsupported character material source format");
         }
+
         const auto* data = Memory::GetPointer(address, bytes);
         source.bytes.assign(data, data + bytes);
     }
+
     return source;
 }
+
 void PrepareSlot(uint32_t slot) {
     const uint32_t base = Memory::Read8(0x8066BDB0 + slot);
     const uint32_t variant = Memory::Read8(0x8066B985 + slot);
     const int detail = int8_t(Memory::Read8(0x8066BE22 + slot));
     const uint32_t patch = Memory::Read8(0x8066BE2C + slot);
+
     // Preserve the game's float computation and truncation to GXColor alpha.
     const float opacity = float(Memory::Read8(0x8066BDBE + slot)) / Memory::ReadFloat32(0x8079803C);
     const uint8_t alpha = uint32_t(Memory::ReadFloat32(0x80798038) * opacity) & 255;
+
     for (uint32_t output = 0; output < 2; ++output) {
         aurora::MaterialComposition material;
         const uint32_t texture = 0x8066B990 + (base + output * 4) * 32;
@@ -74,16 +82,21 @@ void PrepareSlot(uint32_t slot) {
         material.sources[1] = Snapshot(texture + 32);
         material.opacity = float(alpha) / 255.f;
         material.optionalOverlay = output == 1 && detail > 0;
+
         if (material.optionalOverlay)
             material.sources[2] = Snapshot(0x8066BA90 + (uint32_t(detail) + variant * 12) * 32);
+
         material.atlas = output == 1;
+
         if (material.atlas) {
             material.sources[3] = Snapshot(0x8066BA90);
             material.atlasX = (patch & 3) * 32;
             material.atlasY = (patch >> 2) * 16 + variant * 64;
+
             if (material.atlasY > 112)
                 throw std::runtime_error("Character material atlas region exceeds source");
         }
+
         const uint32_t destination = Memory::Read32((output ? 0x8066BDF0 : 0x8066BDC8) + 4 * slot);
         const void* data = Memory::GetPointer(destination, 128 * 128 * 4);
         SubmitHostGraphicsTask([owner = slot * 2 + output, data, material = std::move(material)]() mutable { aurora::publish_generated_material(owner, data, std::move(material)); });
@@ -93,9 +106,11 @@ void PrepareSlot(uint32_t slot) {
 #endif
 }
 } // namespace
+
 extern "C" void MH3_CharacterMaterials(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x60);
     GuestCall game{ctx};
+
     if (Memory::Read8(0x8066B968) == 1) {
         for (uint32_t slot = 0; slot < 10; ++slot) {
             if (!Memory::Read8(0x8066B97B + slot) || !Memory::Read8(0x8066BE18 + slot))
@@ -108,12 +123,15 @@ extern "C" void MH3_CharacterMaterials(CpuContext* ctx) {
                 Memory::Write8(0x8066BE18 + slot, 0);
             }
         }
+
         // Fresh GPU targets and explicit producer revisions replace the old
         // texture-cache invalidation. Skipped frames retain their dirty slots.
     }
+
     // Original final untextured screen quad and inherited state.
     for (uint32_t i = 0; i < 3; ++i)
         Memory::Write32(frame[0x10 + i * 4], Memory::Read32(0x80798030));
+
     Memory::Write32(frame[0x20], Memory::Read32(0x8079804C));
     Memory::Write32(frame[0x24], Memory::Read32(0x80798050));
     Memory::Write32(frame[0x28], Memory::Read32(0x8065B21C));

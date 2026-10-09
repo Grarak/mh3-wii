@@ -45,6 +45,7 @@ struct PipelineConfig {
   uint32_t dstAlpha;
   bool depthCompare, depthUpdate, alphaUpdate, colorUpdate;
 };
+
 static_assert(std::has_unique_object_representations_v<PipelineConfig>);
 
 inline bool valid_pipeline_config(const PipelineConfig& config) noexcept {
@@ -54,6 +55,7 @@ inline bool valid_pipeline_config(const PipelineConfig& config) noexcept {
            static_cast<std::underlying_type_t<Value>>(value) <=
                static_cast<std::underlying_type_t<Value>>(maximum);
   };
+
   const bool validSamples = config.msaaSamples == 1 || config.msaaSamples == 2 ||
                             config.msaaSamples == 4 || config.msaaSamples == 8;
   return config.version == GXPipelineConfigVersion && validSamples &&

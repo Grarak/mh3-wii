@@ -1,7 +1,7 @@
 #pragma once
 // Scene feedback shaders. Standard library only: the GXM shader bank
 // generator compiles every copy mode and the glare brightness program
-// (docs/vita-shader-bank.md).
+// (docs/optimizations/rendering/offline-shader-bank.md).
 #include <string>
 #include <string_view>
 
@@ -11,6 +11,7 @@ inline constexpr unsigned CopyModes = 4;
 inline std::string copy_label(unsigned mode) {
   return "Native scene feedback capture " + std::to_string(mode);
 }
+
 inline constexpr std::string_view BrightLabel = "Native scene glare brightness";
 inline constexpr std::string_view Vertex = R"(
 out vec2 v_uv;
@@ -32,25 +33,33 @@ void main() {
 inline std::string copy_vertex(unsigned mode) {
   const bool box = mode & 2;
   std::string source(SampleVertex);
+
   if (!box)
     return source;
+
   source.insert(source.find("const vec2 positions"), "out vec2 v_sample1;\nout vec2 v_sample2;\nout vec2 v_sample3;\n");
   source.insert(source.rfind('}'),
                 "  vec2 uv=v_sample0;\n  v_sample0=uv-options.xy;\n  v_sample1=uv+vec2(options.x,-options.y);\n  v_sample2=uv+vec2(-options.x,options.y);\n  v_sample3=uv+options.xy;\n");
   return source;
 }
+
 inline std::string copy_fragment(unsigned mode) {
   const bool box = mode & 2, rgb565 = mode & 1;
   std::string source = "uniform sampler2D tex0;\nin vec2 v_sample0;\n";
+
   if (box)
     source += "in vec2 v_sample1;\nin vec2 v_sample2;\nin vec2 v_sample3;\n";
+
   source += "layout(location = 0) out vec4 frag_color;\nvoid main() {\n  vec4 c=";
   source += box ? "0.25*(texture(tex0,v_sample0)+texture(tex0,v_sample1)+texture(tex0,v_sample2)+texture(tex0,v_sample3));\n" : "texture(tex0,v_sample0);\n";
+
   if (rgb565)
     source += "  c=vec4(floor(clamp(c.rgb,0.0,1.0)*vec3(31.0,63.0,31.0)+0.5)/vec3(31.0,63.0,31.0),1.0);\n";
+
   source += "  frag_color=c;\n}\n";
   return source;
 }
+
 inline constexpr std::string_view Bright = R"(
 uniform sampler2D tex0;
 uniform vec4 thresholds;

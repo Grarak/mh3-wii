@@ -18,17 +18,22 @@
 
 inline uint32_t PpcLoadPsqFloatBitsInline(uint32_t value) {
     const uint32_t magnitude = value & 0x7FFFFFFFu;
+
     if (magnitude > 0x7F800000u)
         return value | 0x00400000u;
+
     return value;
 }
 
 inline uint32_t PpcStorePsqFloatBitsInline(uint32_t value) {
     const uint32_t magnitude = value & 0x7FFFFFFFu;
+
     if (magnitude < 0x00800000u)
         return value & 0x80000000u;
+
     if (magnitude > 0x7F800000u)
         return value | 0x00400000u;
+
     return value;
 }
 
@@ -162,6 +167,7 @@ namespace PsqFlat {
 #include "ppc_isa_quantized_access.inc"
 #undef MKW_PSQ_MEM
 } // namespace PsqFlat
+
 using namespace PsqFlat;
 
 namespace MemoryHw {

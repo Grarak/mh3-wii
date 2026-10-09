@@ -46,14 +46,19 @@ inline bool RequiresSchedulerWait(int64_t timeoutMilliseconds) {
 
 inline short WiiEventsToNative(uint32_t events) {
     int native = 0;
+
     if (events & 0x0001u)
         native |= POLLRDNORM;
+
     if (events & 0x0002u)
         native |= POLLRDBAND;
+
     if (events & 0x0004u)
         native |= POLLPRI;
+
     if (events & 0x0008u)
         native |= POLLWRNORM;
+
     if (events & 0x0010u)
         native |= POLLWRBAND;
 
@@ -68,22 +73,31 @@ inline short WiiEventsToNative(uint32_t events) {
 
 inline uint32_t NativeEventsToWii(short events) {
     uint32_t wii = 0;
+
     if (events & POLLRDNORM)
         wii |= 0x0001u;
+
     if (events & POLLRDBAND)
         wii |= 0x0002u;
+
     if (events & POLLPRI)
         wii |= 0x0004u;
+
     if (events & POLLWRNORM)
         wii |= 0x0008u;
+
     if (events & POLLWRBAND)
         wii |= 0x0010u;
+
     if (events & POLLERR)
         wii |= 0x0020u;
+
     if (events & POLLHUP)
         wii |= 0x0040u;
+
     if (events & POLLNVAL)
         wii |= 0x0080u;
+
     return wii;
 }
 
@@ -94,6 +108,7 @@ class Timeout {
 
     static Timeout FromMilliseconds(int64_t milliseconds, TimePoint now = Clock::now()) {
         Timeout timeout;
+
         if (milliseconds < 0) {
             timeout.m_infinite = true;
             timeout.m_deadline = TimePoint::max();
@@ -132,14 +147,17 @@ int ProbeNow(std::vector<CopiedDescriptor>& descriptors, IsStillValid&& isStillV
     std::array<size_t, kMaxDescriptors> originalIndices{};
     size_t activeCount = 0;
     int invalidCount = 0;
+
     for (size_t i = 0; i < descriptors.size(); ++i) {
         CopiedDescriptor& descriptor = descriptors[i];
         descriptor.revents = 0;
+
         if (!isStillValid(descriptor)) {
             descriptor.revents = POLLNVAL;
             ++invalidCount;
             continue;
         }
+
         active[activeCount].fd = descriptor.nativeFd;
         active[activeCount].events = descriptor.events;
         active[activeCount].revents = 0;
@@ -160,8 +178,10 @@ int ProbeNow(std::vector<CopiedDescriptor>& descriptors, IsStillValid&& isStillV
         for (size_t i = 0; i < activeCount; ++i) {
             descriptors[originalIndices[i]].revents = active[i].revents;
         }
+
         return result + invalidCount;
     }
+
     return invalidCount > 0 ? invalidCount : result;
 }
 

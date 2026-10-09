@@ -16,6 +16,7 @@ void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes);
 namespace {
 constexpr uint32_t kBuckets = 0x80796D30, kBuffer = 0x8065B3A0;
 constexpr uint32_t kBucketBytes = 0x4880;
+
 // The first 32 halfwords of each array are list heads: 0xFFFF is empty.
 constexpr uint32_t kHeadBytes = 32 * 2;
 
@@ -24,6 +25,7 @@ void ClearDrawBuckets(CpuContext*) {
     for (uint32_t i = 0; i < 2; ++i) {
         const uint32_t buckets = Memory::Read32(kBuckets + 4 * i);
         FillNativeGuestMemory(buckets, 0, kBucketBytes);
+
         // The original's halfword stores (no producer retirement; the fill
         // above already retired the range).
         std::memset(Memory::GetPointer(buckets, kHeadBytes), 0xFF, kHeadBytes);

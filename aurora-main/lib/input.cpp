@@ -50,15 +50,18 @@ std::string port_preferences_path() {
   }
 
   std::string path{g_config.userPath};
+
   if (!path.empty() && path.back() != '/' && path.back() != '\\') {
     path += '/';
   }
+
   path += "controller_ports.dat";
   return path;
 }
 
 std::string normalize_serial(const char* serial) {
   std::string normalized;
+
   if (serial == nullptr) {
     return normalized;
   }
@@ -67,8 +70,10 @@ std::string normalize_serial(const char* serial) {
     if (*c == ':' || *c == '-') {
       continue;
     }
+
     normalized += *c >= 'A' && *c <= 'Z' ? static_cast<char>(*c - 'A' + 'a') : *c;
   }
+
   return normalized;
 }
 
@@ -88,26 +93,34 @@ ControllerIdentity controller_identity(const GameController& controller) {
 bool read_exact(SDL_IOStream* file, void* dst, size_t size) {
   auto* bytes = static_cast<uint8_t*>(dst);
   size_t total = 0;
+
   while (total < size) {
     const size_t read = SDL_ReadIO(file, bytes + total, size - total);
+
     if (read == 0) {
       return false;
     }
+
     total += read;
   }
+
   return true;
 }
 
 bool write_exact(SDL_IOStream* file, const void* src, size_t size) {
   auto* bytes = static_cast<const uint8_t*>(src);
   size_t total = 0;
+
   while (total < size) {
     const size_t written = SDL_WriteIO(file, bytes + total, size - total);
+
     if (written == 0) {
       return false;
     }
+
     total += written;
   }
+
   return true;
 }
 
@@ -123,6 +136,7 @@ bool write_value(SDL_IOStream* file, const T& value) {
 
 bool read_string(SDL_IOStream* file, std::string& value) {
   uint32_t size = 0;
+
   if (!read_value(file, size) || size > kMaxPersistedStringLength) {
     return false;
   }
@@ -146,11 +160,13 @@ bool write_identity(SDL_IOStream* file, const ControllerIdentity& identity) {
 
 bool read_port_preferences_file(std::array<PortPreference, PAD_MAX_CONTROLLERS>& preferences) {
   const auto path = port_preferences_path();
+
   if (path.empty()) {
     return true;
   }
 
   SDL_IOStream* file = SDL_IOFromFile(path.c_str(), "rb");
+
   if (file == nullptr) {
     return true;
   }
@@ -172,9 +188,11 @@ bool read_port_preferences_file(std::array<PortPreference, PAD_MAX_CONTROLLERS>&
   }
 
   SDL_CloseIO(file);
+
   if (!ok) {
     Log.warn("Ignoring invalid controller port preference file '{}'", path);
   }
+
   return ok;
 }
 
@@ -184,14 +202,17 @@ void ensure_port_preferences_loaded() {
   }
 
   std::array<PortPreference, PAD_MAX_CONTROLLERS> preferences;
+
   if (read_port_preferences_file(preferences)) {
     g_portPreferences = std::move(preferences);
   }
+
   g_portPreferencesLoaded = true;
 }
 
 void save_port_preferences() {
   const auto path = port_preferences_path();
+
   if (path.empty()) {
     return;
   }
@@ -202,12 +223,14 @@ void save_port_preferences() {
   }
 
   SDL_IOStream* file = SDL_IOFromFile(path.c_str(), "wb");
+
   if (file == nullptr) {
     Log.warn("Failed to open controller port preference file '{}': {}", path, SDL_GetError());
     return;
   }
 
   bool ok = write_value(file, kPortPreferencesMagic) && write_value(file, kPortPreferencesVersion);
+
   for (const auto& preference : g_portPreferences) {
     const auto state = static_cast<uint8_t>(preference.state);
     ok = ok && write_value(file, state) && write_identity(file, preference.identity);
@@ -216,9 +239,11 @@ void save_port_preferences() {
   if (!SDL_FlushIO(file)) {
     ok = false;
   }
+
   if (!SDL_CloseIO(file)) {
     ok = false;
   }
+
   if (!ok) {
     Log.warn("Failed to write controller port preference file '{}': {}", path, SDL_GetError());
   }
@@ -234,10 +259,12 @@ IdentityMatch identity_match(const ControllerIdentity& saved, const ControllerId
   if (saved.guid.empty()) {
     return IdentityMatch::None;
   }
+
   if (saved.guid == current.guid) {
     return saved.serial.empty() || serial_matches(saved.serial, current.serial) ? IdentityMatch::Exact
                                                                                 : IdentityMatch::None;
   }
+
   if (!serial_matches(saved.serial, current.serial)) {
     return IdentityMatch::None;
   }
@@ -274,6 +301,7 @@ bool is_instance_claimed(const std::array<Uint32, PAD_MAX_CONTROLLERS>& claimedC
 
 void apply_port_preferences() noexcept {
   ensure_port_preferences_loaded();
+
   if (!std::any_of(g_portPreferences.begin(), g_portPreferences.end(),
                    [](const auto& preference) { return preference.state != PortPreferenceState::Unset; })) {
     return;
@@ -281,6 +309,7 @@ void apply_port_preferences() noexcept {
 
   for (auto& [instance, controller] : g_GameControllers) {
     const int32_t player = effective_player_index(controller);
+
     if (player >= 0 && player < PAD_MAX_CONTROLLERS && g_portPreferences[player].state != PortPreferenceState::Unset) {
       // Keep SDL's default player assignment from taking explicitly configured ports
       assign_player_index(controller, -1);
@@ -289,14 +318,17 @@ void apply_port_preferences() noexcept {
 
   std::array<Uint32, PAD_MAX_CONTROLLERS> claimedControllers{};
   size_t claimedCount = 0;
+
   for (uint32_t port = 0; port < g_portPreferences.size(); ++port) {
     const auto& preference = g_portPreferences[port];
+
     if (preference.state != PortPreferenceState::Controller) {
       continue;
     }
 
     Uint32 fallbackInstance = 0;
     GameController* fallbackController = nullptr;
+
     for (auto& [instance, controller] : g_GameControllers) {
       if (is_instance_claimed(claimedControllers, claimedCount, instance)) {
         continue;
@@ -314,10 +346,12 @@ void apply_port_preferences() noexcept {
           fallbackInstance = instance;
           fallbackController = &controller;
         }
+
         continue;
       case IdentityMatch::None:
         continue;
       }
+
       break;
     }
 
@@ -332,29 +366,36 @@ void apply_port_preferences() noexcept {
 // at connect time, so anything mapped later (the setup wizard) stays at -1.
 void ensure_player_index(GameController& controller) noexcept {
   const int32_t player = SDL_GetGamepadPlayerIndex(controller.m_controller);
+
   if (player >= 0) {
     controller.m_playerIndex = player;
     return;
   }
+
   if (controller.m_playerIndex >= 0) {
     return;
   }
+
   ensure_port_preferences_loaded();
   const auto claim = [&](bool skipConfiguredPorts) {
     for (int32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
       if (skipConfiguredPorts && g_portPreferences[port].state != PortPreferenceState::Unset) {
         continue;
       }
+
       const bool taken = std::any_of(g_GameControllers.begin(), g_GameControllers.end(), [&](const auto& entry) {
         return entry.second.m_controller != controller.m_controller && effective_player_index(entry.second) == port;
       });
+
       if (!taken) {
         assign_player_index(controller, port);
         return true;
       }
     }
+
     return false;
   };
+
   // Explicitly configured ports are only used as a last resort so a hot-plugged
   // controller cannot steal the port its preferred device will claim.
   if (!claim(true)) {
@@ -387,25 +428,31 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
   if (g_GameControllers.contains(which)) {
     return which;
   }
+
   auto* ctrl = SDL_OpenGamepad(which);
+
   if (ctrl != nullptr) {
     GameController controller;
     controller.m_controller = ctrl;
     controller.m_index = which;
     controller.m_vid = SDL_GetGamepadVendor(ctrl);
     controller.m_pid = SDL_GetGamepadProduct(ctrl);
+
     if (controller.m_vid == 0x05ac /* USB_VENDOR_APPLE */ && controller.m_pid == 3) {
       // Ignore Apple TV remote
       SDL_CloseGamepad(ctrl);
       return -1;
     }
+
     controller.m_isGameCube = controller.m_vid == 0x057E && controller.m_pid == 0x0337;
     const char* serial = SDL_GetGamepadSerial(ctrl);
     controller.m_gameCubeUseOrdinaryStop = controller.m_isGameCube && serial && "GCP+"sv == serial;
+
     if (controller.m_isGameCube ||
         (SDL_GetGamepadType(ctrl) == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO && controller.m_pid == 0x2073)) {
       controller.m_deadZones.emulateTriggers = false;
     }
+
     const auto props = SDL_GetGamepadProperties(ctrl);
     controller.m_hasRumble = SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, true);
     controller.m_hasRgbLed = SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RGB_LED_BOOLEAN, false);
@@ -417,6 +464,7 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
     // First-use convenience only: never override a saved assignment or None.
     if (g_portPreferences[0].state == PortPreferenceState::Unset) {
       bool hasOtherPortPreference = false;
+
       for (size_t port = 1; port < g_portPreferences.size(); ++port) {
         if (g_portPreferences[port].state == PortPreferenceState::Controller &&
             identity_match(g_portPreferences[port].identity, controller_identity(g_GameControllers[instance])) !=
@@ -425,8 +473,10 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
           break;
         }
       }
+
       if (!hasOtherPortPreference) {
         const auto* p0 = get_controller_for_player(0);
+
         if (p0 == nullptr) {
           assign_player_index(g_GameControllers[instance], 0);
           persist_controller_for_player(0, &g_GameControllers[instance]);
@@ -444,9 +494,11 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
 
 bool refresh_controller(SDL_JoystickID instance) noexcept {
   const auto it = g_GameControllers.find(instance);
+
   if (it == g_GameControllers.end()) {
     return false;
   }
+
   // The SDL mapping changed underneath us; drop the cached PAD bindings so they
   // are rebuilt from the new one.
   it->second.m_mappingLoaded = false;
@@ -467,6 +519,7 @@ bool is_gamecube(Uint32 instance) noexcept {
   if (auto it = g_GameControllers.find(instance); it != g_GameControllers.end()) {
     return it->second.m_isGameCube;
   }
+
   return false;
 }
 
@@ -475,6 +528,7 @@ int32_t player_index(Uint32 instance) noexcept {
     const int player = SDL_GetGamepadPlayerIndex(it->second.m_controller);
     return player >= 0 ? player : it->second.m_playerIndex;
   }
+
   return -1;
 }
 
@@ -488,10 +542,12 @@ void set_player_index(Uint32 instance, Sint32 index) noexcept {
 std::string controller_name(Uint32 instance) noexcept {
   if (auto it = g_GameControllers.find(instance); it != g_GameControllers.end()) {
     const auto* name = SDL_GetGamepadName(it->second.m_controller);
+
     if (name != nullptr) {
       return {name};
     }
   }
+
   return {};
 }
 
@@ -499,6 +555,7 @@ bool controller_has_rumble(Uint32 instance) noexcept {
   if (auto it = g_GameControllers.find(instance); it != g_GameControllers.end()) {
     return it->second.m_hasRumble;
   }
+
   return false;
 }
 
@@ -512,6 +569,7 @@ void controller_rumble(uint32_t instance, uint16_t low_freq_intensity, uint16_t 
     if (it->second.m_gameCubeUseOrdinaryStop && low_freq_intensity == 0 && high_freq_intensity == 0) {
       high_freq_intensity = 1;
     }
+
     SDL_RumbleGamepad(it->second.m_controller, low_freq_intensity, high_freq_intensity, duration_ms);
   }
 }
@@ -524,6 +582,7 @@ void persist_controller_for_player(uint32_t player, const GameController* contro
   }
 
   ensure_port_preferences_loaded();
+
   if (controller != nullptr) {
     g_portPreferences[player].state = PortPreferenceState::Controller;
     g_portPreferences[player].identity = controller_identity(*controller);
@@ -531,6 +590,7 @@ void persist_controller_for_player(uint32_t player, const GameController* contro
     g_portPreferences[player].state = PortPreferenceState::None;
     g_portPreferences[player].identity = {};
   }
+
   save_port_preferences();
 }
 
@@ -565,6 +625,7 @@ void shutdown() noexcept {
     if (!controller.second.m_hasRumble) {
       continue;
     }
+
     controller_rumble(controller.first, 0, 0, 0);
   }
 }

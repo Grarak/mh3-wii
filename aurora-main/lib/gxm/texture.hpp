@@ -34,6 +34,7 @@ private:
     MappedArena* arena;
     size_t bytes;
   };
+
   std::vector<RetiredAllocation> m_retired;
   Device& m_device;
   size_t m_mainBudget, m_phycontBudget;
@@ -61,6 +62,7 @@ public:
     m_lastUse = m_pool.m_device.current_fence();
     m_gpuWritten |= writes;
   }
+
   void* pixels() const noexcept { return m_data; }
   uint32_t row_bytes(uint32_t mip = 0) const;
   size_t size() const noexcept { return m_bytes; }

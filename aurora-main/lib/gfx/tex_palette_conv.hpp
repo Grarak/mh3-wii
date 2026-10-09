@@ -19,6 +19,7 @@ struct ConvRequest {
 
 void initialize();
 void shutdown();
+
 // Render thread.
 void run(const ConvRequest& req);
 

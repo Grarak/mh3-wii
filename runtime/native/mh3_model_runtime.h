@@ -16,6 +16,7 @@ typedef struct {
     mh3_res_span span;
     int writable;
 } mh3_res_region;
+
 typedef struct {
     mh3_res_span mem1, mem2, locked_cache;
     /* Optional owned regions, ordered by address and nonoverlapping. They
@@ -24,6 +25,7 @@ typedef struct {
     const mh3_res_region *regions;
     size_t region_count;
 } mh3_res_memory;
+
 /* The region holding [address, address + bytes), or NULL (no region starts at
  * or before the canonical address, or the range leaves the region). */
 const mh3_res_region *mh3_res_memory_region(const mh3_res_memory *, uint32_t address, size_t bytes, size_t *offset);
@@ -32,6 +34,7 @@ typedef struct {
     size_t offset;
     uint32_t guest_base;
 } mh3_res_memory_view;
+
 /* Checked compatibility boundary for native producers borrowing an owned bank. */
 mh3_res_status mh3_res_runtime_map(const mh3_res_memory *memory, uint32_t address, size_t required, mh3_res_memory_view *out);
 

@@ -60,6 +60,7 @@ CopySourceRect map_texture_copy_source(const aurora::gfx::ClipRect& source, bool
 
   const auto [logicalWidth, logicalHeight] = aurora::gx::logical_fb_size();
   const auto [targetWidth, targetHeight] = aurora::gfx::get_render_target_size();
+
   if (logicalWidth == 0 || logicalHeight == 0 || targetWidth == 0 || targetHeight == 0) {
     return {
         .clearRect = source,
@@ -72,6 +73,7 @@ CopySourceRect map_texture_copy_source(const aurora::gfx::ClipRect& source, bool
     float sample;
     int32_t nearest;
   };
+
   const auto mapEdge = [](int32_t edge, uint32_t logicalSize, uint32_t targetSize) {
     // Round scaled copy edges consistently to avoid seams and off-by-one pixels.
     const int64_t numerator = static_cast<int64_t>(edge) * static_cast<int64_t>(targetSize);
@@ -87,6 +89,7 @@ CopySourceRect map_texture_copy_source(const aurora::gfx::ClipRect& source, bool
         .nearest = static_cast<int32_t>(nearestValue),
     };
   };
+
   const auto left = mapEdge(source.x, logicalWidth, targetWidth);
   const auto top = mapEdge(source.y, logicalHeight, targetHeight);
   const auto right = mapEdge(source.x + source.width, logicalWidth, targetWidth);
@@ -109,11 +112,13 @@ CopySourceRect map_texture_copy_source(const aurora::gfx::ClipRect& source, bool
 
 u32 pack_copy_filter_samples(u8 reg, const std::array<std::array<u8, 2>, 12>& samplePattern, size_t first) {
   u32 value = static_cast<u32>(reg) << 24;
+
   for (size_t i = 0; i < 6; ++i) {
     const size_t sample = first + i;
     const u8 component = samplePattern[sample / 2][sample % 2] & 0x0fu;
     value |= static_cast<u32>(component) << (i * 4);
   }
+
   return value;
 }
 
@@ -147,6 +152,7 @@ aurora::Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
 
   const auto [logicalFbWidth, logicalFbHeight] = aurora::gx::logical_fb_size();
   const auto [targetWidth, targetHeight] = aurora::gfx::get_render_target_size();
+
   if (logicalFbWidth == 0 || logicalFbHeight == 0 || targetWidth == 0 || targetHeight == 0) {
     return {logicalWidth, logicalHeight};
   }
@@ -174,6 +180,7 @@ struct CopyTexturePoolEntry {
   u32 scaledHeight = 0;
   aurora::gfx::TextureHandle handle;
 };
+
 std::vector<CopyTexturePoolEntry> g_copyTexturePool;
   // Keep only a few reusable copy targets per destination.
 constexpr size_t kCopyTexturePoolPerKey = 3;
@@ -181,27 +188,34 @@ constexpr size_t kCopyTexturePoolPerKey = 3;
 aurora::gfx::TextureHandle acquire_copy_texture(const aurora::gx::GXState::CopyTextureKey& key, u32 width, u32 height,
                                                 GXTexFmt texCopyFmt) {
   size_t sameKey = 0;
+
   for (auto it = g_copyTexturePool.begin(); it != g_copyTexturePool.end();) {
     if (!(it->key == key)) {
       ++it;
       continue;
     }
+
     // Discard retired targets when their internal resolution changes.
     if ((it->scaledWidth != width || it->scaledHeight != height) && it->handle.use_count() <= 1) {
       it = g_copyTexturePool.erase(it);
       continue;
     }
+
     ++sameKey;
+
     if (it->scaledWidth == width && it->scaledHeight == height && it->handle.use_count() == 1) {
       return it->handle;
     }
+
     ++it;
   }
 
   auto handle = create_copy_texture(width, height, texCopyFmt);
+
   if (sameKey < kCopyTexturePoolPerKey) {
     g_copyTexturePool.push_back({key, width, height, handle});
   }
+
   return handle;
 }
 
@@ -213,10 +227,12 @@ u16 get_num_xfb_lines_internal(u16 efbHeight, u32 iScale) {
   u32 realHeight = (count / iScale) + 1u;
 
   u32 reducedScale = iScale;
+
   if (reducedScale > 0x80u && reducedScale < 0x100u) {
     while ((reducedScale & 1u) == 0u) {
       reducedScale >>= 1;
     }
+
     if (reducedScale != 0u && (efbHeight % reducedScale) == 0u) {
       ++realHeight;
     }
@@ -238,6 +254,7 @@ void prune_copy_texture_pool(const void* dest) noexcept {
     g_copyTexturePool.clear();
     return;
   }
+
   std::erase_if(g_copyTexturePool, [dest](const CopyTexturePoolEntry& entry) { return entry.key.dest == dest; });
 }
 } // namespace aurora::gx
@@ -258,6 +275,7 @@ GXRenderModeObj GXNtsc480IntDf = {
     {6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6},
     {8, 8, 10, 12, 10, 8, 8},
 };
+
 GXRenderModeObj GXNtsc480Int = {
     VI_TVMODE_NTSC_INT,
     640,
@@ -273,6 +291,7 @@ GXRenderModeObj GXNtsc480Int = {
     {6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6},
     {0, 0, 21, 22, 21, 0, 0},
 };
+
 GXRenderModeObj GXPal528IntDf = {
     VI_TVMODE_PAL_INT,
     704,
@@ -288,6 +307,7 @@ GXRenderModeObj GXPal528IntDf = {
     {6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6},
     {8, 8, 10, 12, 10, 8, 8},
 };
+
 GXRenderModeObj GXMpal480IntDf = {
     VI_TVMODE_PAL_INT,
     640,

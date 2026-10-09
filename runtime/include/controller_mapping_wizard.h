@@ -13,6 +13,7 @@ void HandleSdlEvent(const SDL_Event& event);
 
 // Lists devices that need setup inside the controller settings menu.
 void DrawSetupList();
+
 // Draws the wizard window when active; call once per overlay frame.
 void Draw();
 

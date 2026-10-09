@@ -74,6 +74,7 @@ inline void MkwApplyHostNiMode(uint32_t fpscr) noexcept {
     const uint32_t csr = MkwGetHostFpControl();
     const bool wantNi = (fpscr & 0x4u) != 0;
     const uint32_t want = wantNi ? (csr | kMkwFpControlFlushToZeroBits) : (csr & ~kMkwFpControlFlushToZeroBits);
+
     if (want != csr)
         MkwSetHostFpControl(want);
     // `want` has every flush-to-zero bit set or every one clear, so this is exactly

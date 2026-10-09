@@ -25,6 +25,7 @@ typedef struct {
     uint32_t id;
     mh3_cull_box box;
 } mh3_scene_cull_pair;
+
 typedef struct {
     mh3_scene_cull_pair *pairs;
     uint32_t count, capacity;

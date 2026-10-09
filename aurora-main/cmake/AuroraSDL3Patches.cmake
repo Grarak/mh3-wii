@@ -14,14 +14,18 @@
 function(_aurora_sdl3_replace file description old new)
   file(READ "${file}" _content)
   string(FIND "${_content}" "${new}" _already)
+
   if (NOT _already EQUAL -1)
     return()
   endif ()
+
   string(FIND "${_content}" "${old}" _anchor)
+
   if (_anchor EQUAL -1)
     message(FATAL_ERROR "aurora: SDL3 patch '${description}' does not apply to ${file}; "
       "the vendored SDL version changed, review AuroraSDL3Patches.cmake")
   endif ()
+
   string(REPLACE "${old}" "${new}" _content "${_content}")
   file(WRITE "${file}" "${_content}")
   message(STATUS "aurora: SDL3 patch applied: ${description}")
@@ -29,6 +33,7 @@ endfunction()
 
 function(aurora_sdl3_apply_patches sdl_source_dir)
   set(_wii "${sdl_source_dir}/src/joystick/hidapi/SDL_hidapi_wii.c")
+
   if (NOT EXISTS "${_wii}")
     message(FATAL_ERROR "aurora: SDL3 source tree at ${sdl_source_dir} has no SDL_hidapi_wii.c")
   endif ()

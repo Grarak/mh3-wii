@@ -9,6 +9,7 @@ extern "C" {
 enum {
     MH3_MODEL_SORT_CAPACITY = 2048
 };
+
 typedef struct {
     float depth;
     uint16_t priority, node, material, shape;
@@ -24,6 +25,7 @@ typedef struct {
     int32_t (*phase)(void *, unsigned);
     void (*set_phase)(void *, unsigned, int32_t);
 } mh3_model_sort_ops;
+
 int mh3_model_draw_less(const mh3_model_draw_record *, const mh3_model_draw_record *, int translucent);
 size_t mh3_model_draw_minimum(const mh3_model_sort_ops *, size_t, size_t);
 void mh3_model_draw_selection_sort(const mh3_model_sort_ops *, size_t, size_t);
@@ -44,6 +46,7 @@ typedef struct {
     mh3_matrix_table positions;
     float missing_depth;
 } mh3_model_draw_collection;
+
 mh3_res_status mh3_model_draw_collect(const mh3_model_draw_collection *, mh3_model_draw_record *, size_t, uint32_t *);
 mh3_res_status mh3_model_draw_sorted(const mh3_res_model *, const mh3_model_draw_record *, uint32_t, uint32_t, mh3_model_draw_emit, void *, mh3_model_draw_stats *);
 typedef mh3_res_status (*mh3_model_record_read)(void *, uint32_t, mh3_model_draw_record *);
@@ -60,6 +63,7 @@ typedef struct {
     void (*complete_sources)(void *);
     mh3_res_status (*pass)(void *, uint32_t, uint32_t, uint32_t, int, int);
 } mh3_model_draw_pipeline;
+
 mh3_res_status mh3_model_draw_pipeline_run(const mh3_model_draw_pipeline *, const uint32_t[3], uint32_t, uint32_t, uint32_t, uint32_t);
 
 /* Application identities below are opaque at the C boundary. Callbacks may
@@ -76,6 +80,7 @@ typedef struct {
     /* model, sources, opaque stream, translucent stream, replacement, options */
     mh3_res_status (*draw)(void *, uint32_t, const uint32_t[3], uint32_t, uint32_t, uint32_t, uint32_t);
 } mh3_model_scene_draw_ops;
+
 mh3_res_status mh3_model_scene_options(mh3_res_span, uint32_t *);
 mh3_res_status mh3_model_scene_draw(const mh3_model_scene_draw_ops *, mh3_res_span, uint32_t, uint32_t);
 mh3_res_status mh3_model_scene_task(const mh3_model_scene_draw_ops *, mh3_res_span, uint32_t, uint32_t, uint32_t, uint32_t);

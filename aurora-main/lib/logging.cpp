@@ -21,10 +21,12 @@ extern AuroraConfig g_config;
 void Module::show_fatal_dialog(const char* module, std::string_view message) noexcept {
   try {
     std::string body = "Aurora stopped because of a fatal renderer error";
+
     if (module != nullptr && module[0] != '\0') {
       body += " in ";
       body += module;
     }
+
     body += ":\n\n";
     body.append(message.data(), message.size());
     body += "\n\nSee the console and log files for more details.";
@@ -44,6 +46,7 @@ void log_internal(const AuroraLogLevel level, const char* module, const char* me
   if (module == nullptr) {
     module = "";
   }
+
   if (g_config.logCallback == nullptr) {
     fmt::println(stderr, "[{}] [{}] {}", level, module, std::string_view(message, len));
   } else {
@@ -55,6 +58,7 @@ void log_internal(const AuroraLogLevel level, const char* module, const char* me
 auto fmt::formatter<AuroraLogLevel>::format(const AuroraLogLevel level, format_context& ctx) const
     -> format_context::iterator {
   std::string_view name = "unknown";
+
   switch (level) {
   case LOG_DEBUG:
     name = "debug";
@@ -74,5 +78,6 @@ auto fmt::formatter<AuroraLogLevel>::format(const AuroraLogLevel level, format_c
   default:
     break;
   }
+
   return formatter<std::string_view>::format(name, ctx);
 }

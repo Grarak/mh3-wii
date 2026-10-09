@@ -39,6 +39,7 @@ typedef struct {
   double averageFrameTimeMs;
   double p95FrameTimeMs;
   double jitterMs;
+
   // framesPerSecond with duplicated presentation slots scaled out, so this is the rate of frames
   // that carried new motion. Equal to framesPerSecond when every slot replayed real interpolation.
   double effectiveFramesPerSecond;

@@ -6,6 +6,7 @@
 static void near(float a, float b) {
     assert(fabsf(a - b) < .000001f);
 }
+
 int main(void) {
     mh3_draw_state draw = {0};
     mh3_native_material_state material = {0};
@@ -78,6 +79,7 @@ int main(void) {
      * vertex modulation and indexed palettes, independently of framebuffer. */
     AuroraNativeVertex vertices[4] = {0};
     const float clip[4][2] = {{-1, 1}, {1, 1}, {1, -1}, {-1, -1}}, uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+
     for (unsigned i = 0; i < 4; i++) {
         vertices[i].position[0] = clip[i][0];
         vertices[i].position[1] = clip[i][1];
@@ -85,11 +87,13 @@ int main(void) {
         memcpy(vertices[i].uv, uv[i], 8);
         memset(vertices[i].color, 255, 4);
     }
+
     draw.viewport[2] = draw.viewport[3] = 4;
     mh3_native_texture_binding texture = {0};
     texture.source.width = texture.source.height = 4;
     texture.source.format = 6;
     uint8_t pixels[64] = {0};
+
     for (unsigned y = 0; y < 4; y++)
         for (unsigned x = 0; x < 4; x++) {
             const unsigned i = y * 4 + x;

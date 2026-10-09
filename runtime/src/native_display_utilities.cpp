@@ -9,8 +9,10 @@
 void ClearNativeDepthTarget() {
     if (!OnNativeGraphicsThread())
         throw std::runtime_error("Native depth clear called outside graphics owner");
+
     if (!NativeGraphicsFrameShouldRender())
         return;
+
     if (aurora::gl::on_render_thread())
         aurora::gl::clear_depth_full_target(0.f);
     else

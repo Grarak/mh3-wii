@@ -44,10 +44,13 @@ std::string ResolveDolphinCardPath(ECardSlot slot, const char* regionCode, bool 
   /* Check our registry keys */
   HKEY hkey;
   wchar_t configPath[MAX_PATH] = {0};
+
   if (RegOpenKeyEx(HKEY_CURRENT_USER, TEXT("Software\\Dolphin Emulator"), 0, KEY_QUERY_VALUE, &hkey) == ERROR_SUCCESS) {
     DWORD size = MAX_PATH;
+
     if (RegQueryValueEx(hkey, TEXT("UserConfigPath"), nullptr, nullptr, (LPBYTE)configPath, &size) != ERROR_SUCCESS)
       configPath[0] = 0;
+
     RegCloseKey(hkey);
   }
 
@@ -57,6 +60,7 @@ std::string ResolveDolphinCardPath(ECardSlot slot, const char* regionCode, bool 
       SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &my_documents));
 
   std::wstring w_path;
+
   if (configPath[0]) /* Case 1 */
     w_path = configPath;
   else if (my_documents_found) /* Case 2 */ {
@@ -73,6 +77,7 @@ std::string ResolveDolphinCardPath(ECardSlot slot, const char* regionCode, bool 
 #endif
 
   std::string path;
+
   if (isGciFolder) {
     path = fmt::format("{}/GC/{}/Card {}", ConvertWideToANSI(w_path), regionCode, slot == ECardSlot::SlotA ? 'A' : 'B');
   }else {
@@ -89,9 +94,11 @@ std::string ResolveDolphinCardPath(ECardSlot slot, const char* regionCode, bool 
 #else
 static std::optional<std::string> GetPrefPath(const char* app) {
   char* path = SDL_GetPrefPath(nullptr, app);
+
   if (path == nullptr) {
     return {};
   }
+
   std::string str{path};
   SDL_free(path);
   return str;
@@ -99,10 +106,13 @@ static std::optional<std::string> GetPrefPath(const char* app) {
 
 std::string ResolveDolphinCardPath(ECardSlot slot, const char* regionCode, bool isGciFolder) {
   const auto dolphinPath = GetPrefPath("dolphin-emu");
+
   if (!dolphinPath) {
     return {};
   }
+
   auto path = *dolphinPath;
+
   if (isGciFolder) {
     path += fmt::format("GC/{}/Card {}", regionCode, slot == ECardSlot::SlotA ? 'A' : 'B');
   }else {

@@ -40,6 +40,7 @@ struct Vec2 {
   bool operator==(const Vec2& rhs) const { return x == rhs.x && y == rhs.y; }
   bool operator!=(const Vec2& rhs) const { return !(*this == rhs); }
 };
+
 template <typename T>
 struct Vec3 {
   T x{};
@@ -53,6 +54,7 @@ struct Vec3 {
   bool operator==(const Vec3& rhs) const { return x == rhs.x && y == rhs.y && z == rhs.z; }
   bool operator!=(const Vec3& rhs) const { return !(*this == rhs); }
 };
+
 template <typename T>
 struct Vec4 {
 #ifdef USE_GCC_VECTOR_EXTENSIONS
@@ -106,8 +108,10 @@ struct Vec4 {
     return m[0] == rhs.m[0] && m[1] == rhs.m[1] && m[2] == rhs.m[2] && m[3] == rhs.m[3];
 #endif
   }
+
   bool operator!=(const Vec4& rhs) const { return !(*this == rhs); }
 };
+
 template <typename T>
 [[nodiscard]] Vec4<T> operator+(const Vec4<T>& a, const Vec4<T>& b) {
 #ifdef USE_GCC_VECTOR_EXTENSIONS
@@ -116,6 +120,7 @@ template <typename T>
   return {a.m[0] + b.m[0], a.m[1] + b.m[1], a.m[2] + b.m[2], a.m[3] + b.m[3]};
 #endif
 }
+
 template <typename T>
 [[nodiscard]] Vec4<T> operator*(const Vec4<T>& a, const Vec4<T>& b) {
 #ifdef USE_GCC_VECTOR_EXTENSIONS
@@ -124,6 +129,7 @@ template <typename T>
   return {a.m[0] * b.m[0], a.m[1] * b.m[1], a.m[2] * b.m[2], a.m[3] * b.m[3]};
 #endif
 }
+
 template <typename T>
 struct Mat3x2 {
   Vec2<T> m0{};
@@ -136,6 +142,7 @@ struct Mat3x2 {
   bool operator==(const Mat3x2& rhs) const { return m0 == rhs.m0 && m1 == rhs.m1 && m2 == rhs.m2; }
   bool operator!=(const Mat3x2& rhs) const { return !(*this == rhs); }
 };
+
 template <typename T>
 struct Mat4x2 {
   Vec2<T> m0{};
@@ -158,6 +165,7 @@ struct Mat4x2 {
   bool operator==(const Mat4x2& rhs) const { return m0 == rhs.m0 && m1 == rhs.m1 && m2 == rhs.m2 && m3 == rhs.m3; }
   bool operator!=(const Mat4x2& rhs) const { return !(*this == rhs); }
 };
+
 template <typename T>
 struct Mat2x4 {
   Vec4<T> m0{};
@@ -169,6 +177,7 @@ struct Mat2x4 {
   bool operator==(const Mat2x4& rhs) const { return m0 == rhs.m0 && m1 == rhs.m1; }
   bool operator!=(const Mat2x4& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(sizeof(Mat2x4<float>) == 32);
 template <typename T>
 struct Mat4x4;
@@ -187,6 +196,7 @@ struct Mat3x4 {
   bool operator==(const Mat3x4& rhs) const { return m0 == rhs.m0 && m1 == rhs.m1 && m2 == rhs.m2; }
   bool operator!=(const Mat3x4& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(sizeof(Mat3x4<float>) == 48);
 template <typename T>
 struct Mat4x4 {
@@ -207,6 +217,7 @@ struct Mat4x4 {
         {m0[3], m1[3], m2[3], m3[3]},
     };
   }
+
   Mat4x4& operator=(const Mat4x4& other) = default;
 
   Vec4<T>& operator[](size_t i) { return *(&m0 + i); }
@@ -215,15 +226,19 @@ struct Mat4x4 {
   bool operator==(const Mat4x4& rhs) const { return m0 == rhs.m0 && m1 == rhs.m1 && m2 == rhs.m2 && m3 == rhs.m3; }
   bool operator!=(const Mat4x4& rhs) const { return !(*this == rhs); }
 };
+
 static_assert(sizeof(Mat4x4<float>) == 64);
 template <typename T>
 [[nodiscard]] Mat4x4<T> operator*(const Mat4x4<T>& a, const Mat4x4<T>& b) {
   Mat4x4<T> out;
+
   for (size_t i = 0; i < 4; ++i) {
     *(&out.m0 + i) = a.m0 * b[i].template shuffle<0, 0, 0, 0>() + a.m1 * b[i].template shuffle<1, 1, 1, 1>() + a.m2 * b[i].template shuffle<2, 2, 2, 2>() + a.m3 * b[i].template shuffle<3, 3, 3, 3>();
   }
+
   return out;
 }
+
 template <typename T>
 [[nodiscard]] Mat4x4<T> Mat3x4<T>::to4x4() const {
   return {
@@ -233,6 +248,7 @@ template <typename T>
       {m0[3], m1[3], m2[3], 1.f},
   };
 }
+
 template <typename T>
 [[nodiscard]] Mat4x4<T> Mat3x4<T>::toTransposed4x4() const {
   return Mat4x4<T>{
@@ -242,6 +258,7 @@ template <typename T>
       {m0[3], m1[3], m2[3], 1.f},
   };
 }
+
 constexpr Mat4x4 Mat4x4_Identity{
     Vec4{1.f, 0.f, 0.f, 0.f},
     Vec4{0.f, 1.f, 0.f, 0.f},

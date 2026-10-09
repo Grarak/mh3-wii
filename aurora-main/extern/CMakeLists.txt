@@ -3,6 +3,7 @@ include(FetchContent)
 # Don't build tests for third party dependencies
 set(BUILD_TESTING OFF CACHE INTERNAL "Build tests")
 set(SKIP_INSTALL_ALL ON)
+
 if (NOT DEFINED BUILD_SHARED_LIBS)
   set(_USE_SHARED ON)
 else ()
@@ -28,6 +29,7 @@ if (NOT TARGET xxhash)
     EXCLUDE_FROM_ALL
   )
   set(XXHASH_BUILD_XXHSUM OFF CACHE INTERNAL "Build the xxhsum binary")
+
   # xxhash uses CMAKE_DEPENDENT_OPTION(BUILD_SHARED_LIBS ...) which writes
   # a sticky CACHE INTERNAL entry on reconfigure. Undo it afterward.
   set(_aurora_xxhash_saved_bsl "${BUILD_SHARED_LIBS}")
@@ -35,12 +37,14 @@ if (NOT TARGET xxhash)
   unset(BUILD_SHARED_LIBS CACHE)
   set(BUILD_SHARED_LIBS "${_aurora_xxhash_saved_bsl}")
   unset(_aurora_xxhash_saved_bsl)
+
   if (NOT TARGET xxhash)
     message(FATAL_ERROR "Failed to make xxhash available")
   endif ()
 else ()
   message(STATUS "aurora: Using existing xxhash")
 endif ()
+
 if(VITA)
   target_compile_options(xxhash PRIVATE -gline-tables-only)
 endif()
@@ -54,11 +58,13 @@ if (NOT TARGET fmt)
     EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(fmt)
+
   if(VITA)
     include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/AuroraVitaDependencyPatches.cmake")
     aurora_patch_vita_fmt("${fmt_SOURCE_DIR}")
     target_compile_definitions(fmt PUBLIC FMT_USE_FALLBACK_FILE=1)
   endif()
+
   if (NOT TARGET fmt)
     message(FATAL_ERROR "Failed to make fmt available")
   endif ()
@@ -78,14 +84,17 @@ if (AURORA_ENABLE_GX)
   if (NOT TARGET ZLIB::ZLIB)
     aurora_find_package_global(ZLIB QUIET)
   endif ()
+
   if (NOT TARGET ZLIB::ZLIB)
     message(STATUS "aurora: Fetching zlib")
     set(_AURORA_ZLIB_SHARED ${_USE_SHARED})
+
     # ClangCL injects Clang's C headers into the MSVC resource compiler path, and zlib's DLL version
     # resource then hits syntax rc.exe cannot parse. Use the resource-free static target here.
     if (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       set(_AURORA_ZLIB_SHARED OFF)
     endif ()
+
     set(ZLIB_BUILD_SHARED ${_AURORA_ZLIB_SHARED} CACHE BOOL "Enable building zlib shared library" FORCE)
     set(ZLIB_BUILD_TESTING OFF CACHE BOOL "Enable Zlib Examples as tests" FORCE)
     set(ZLIB_INSTALL OFF CACHE BOOL "Enable installation of zlib" FORCE)
@@ -97,12 +106,15 @@ if (AURORA_ENABLE_GX)
       EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(ZLIB)
+
     if (NOT TARGET ZLIB::ZLIB AND TARGET ZLIB::ZLIBSTATIC)
       add_library(ZLIB::ZLIB ALIAS zlibstatic)
     endif ()
+
     if (NOT TARGET ZLIB::ZLIB)
       message(FATAL_ERROR "Failed to make zlib available")
     endif ()
+
     # libpng calls find_package(ZLIB) even when zlib was already provided by FetchContent.
     file(WRITE "${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/ZLIBConfig.cmake"
       "set(ZLIB_FOUND TRUE)\n"
@@ -120,6 +132,7 @@ if (AURORA_ENABLE_GX)
       aurora_find_package_global(PNG QUIET)
     endif ()
   endif ()
+
   if (NOT TARGET PNG::PNG)
     message(STATUS "aurora: Fetching libpng")
     set(PNG_SHARED ${_USE_SHARED} CACHE BOOL "Build libpng as a shared library" FORCE)
@@ -133,6 +146,7 @@ if (AURORA_ENABLE_GX)
       EXCLUDE_FROM_ALL
     )
     FetchContent_MakeAvailable(PNG)
+
     if (TARGET png_shared AND _USE_SHARED)
       add_library(PNG::PNG ALIAS png_shared)
     elseif (TARGET png_static)
@@ -145,6 +159,7 @@ if (AURORA_ENABLE_GX)
   endif ()
 
   aurora_find_package_global(Freetype QUIET)
+
   if (NOT TARGET Freetype::Freetype)
     message(STATUS "aurora: Fetching Freetype")
     set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
@@ -161,6 +176,7 @@ if (AURORA_ENABLE_GX)
   else ()
     message(STATUS "aurora: Using existing Freetype")
   endif ()
+
   if(VITA)
     # FindFreetype does not propagate the VitaSDK archive's bzip2 dependency.
     find_package(BZip2 REQUIRED)
@@ -186,6 +202,7 @@ if (AURORA_ENABLE_GX)
       ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
     )
     target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+
     if(VITA)
       target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS)
     endif()

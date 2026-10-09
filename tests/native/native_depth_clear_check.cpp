@@ -22,24 +22,29 @@ void require(bool value,const char *reason) {if(!value) throw std::runtime_error
 void pixel(unsigned x,unsigned y,const std::array<uint8_t,4>& expected) {
     uint8_t actual[4]{};
     aurora::gl::read_pixels(aurora::gpu::g_frameBuffer.texture->gl(),x,y,1,1,actual);
+
     for(unsigned channel=0;channel<4;++channel) if(std::abs(int(actual[channel])-int(expected[channel]))>1) {
         std::fprintf(stderr,"Pixel %u,%u: %u %u %u %u expected %u %u %u %u\n",x,y,
             actual[0],actual[1],actual[2],actual[3],expected[0],expected[1],expected[2],expected[3]);
         throw std::runtime_error("Native depth clear changed color/alpha or retained stale depth");
     }
 }
+
 void quad(const std::array<uint8_t,4>& color) {
     AuroraNativeGeometry geometry{};
     require(aurora_allocate_native_geometry(4,6,&geometry),"Depth clear probe geometry unavailable");
     const float positions[4][2]={{-1,-1},{1,-1},{1,1},{-1,1}};
+
     for(unsigned i=0;i<4;++i) {
         auto& vertex=geometry.vertices[i];vertex.position[0]=positions[i][0];vertex.position[1]=positions[i][1];
         vertex.position[2]=0;vertex.position[3]=1;vertex.uv[0]=vertex.uv[1]=0;
         std::memcpy(vertex.color,color.data(),4);
     }
+
     const uint16_t indices[6]={0,1,2,0,2,3};std::memcpy(geometry.indices,indices,sizeof(indices));
     aurora_submit_native_geometry(&geometry,0);
 }
+
 void same(const aurora::gl::OffscreenState& before,const aurora::gl::OffscreenState& after) {
     require(before.viewport==after.viewport && before.depthRange==after.depthRange && before.scissor==after.scissor &&
         before.scissorEnabled==after.scissorEnabled && before.raster.depthWrite==after.raster.depthWrite &&
@@ -52,6 +57,7 @@ void same(const aurora::gl::OffscreenState& before,const aurora::gl::OffscreenSt
         before.activeTexture==after.activeTexture,"Native full-target depth clear changed retained backend state");
 }
 }
+
 int main(int argc,char **argv) {
     try {
         const std::string cache=argc>1?argv[1]:"/tmp/mh3-native-depth-clear";
@@ -69,6 +75,7 @@ int main(int argc,char **argv) {
         const mh3_raster_state raster{0,1,0,3,1,1,0,0,1,0};SetNativeRaster(raster);
         const mh3_draw_state logical=GetNativeDrawState();
         const auto before=aurora::gl::save_offscreen_state();ClearNativeDepthTarget();
+
         // SDL can enforce a larger physical window than the 64x64 authored
         // target. Sample the actual scaled scissor rather than fixed pixels.
         const unsigned insideX=unsigned(before.scissor[0]+before.scissor[2]/2);
@@ -76,9 +83,11 @@ int main(int argc,char **argv) {
         same(before,aurora::gl::save_offscreen_state());
         require(std::memcmp(&logical,&GetNativeDrawState(),sizeof(logical))==0,"Depth clear mutated typed application draw state");
         pixel(2,2,{51,102,153,64});pixel(insideX,insideY,{51,102,153,64});
+
         // The retained scissor, viewport, depth test/write and alpha mask must
         // still apply to a draw issued immediately after the utility clear.
         quad({0,255,0,255});pixel(insideX,insideY,{0,255,0,64});pixel(2,2,{51,102,153,64});
+
         // Probe depth outside both the old viewport and scissor. A .5 draw
         // passes only if the original .8 depth was cleared over the full target.
         aurora::gl::set_viewport(0,0,aurora::gpu::g_frameBuffer.width,aurora::gpu::g_frameBuffer.height,0,1);

@@ -48,6 +48,7 @@ constexpr uint32_t kMinLead = 2;
 constexpr uint32_t kMaxLead = 64;            // 192 ms
 constexpr uint32_t kMaxTicksPerService = 96; // bounds one service's burst
 constexpr uint32_t kLeadWindowTicks = 333;   // one second of audio
+
 // The largest tick: marker, reset, globals, three effects and every voice
 // with every group.
 constexpr uint32_t kWorstTickWords = 2 + 1 + 4 + 3 * (2 + kReverbConfigWords) + kMaxVoices * (2 + (kPbHalfwords + 1) / 2);
@@ -80,10 +81,12 @@ struct Driver {
     bool globalsSent = false;
     uint32_t globals[3]{};
     PendingAux aux[3];
+
     // Statistics (game thread).
     uint64_t syncNs = 0, callbackNs = 0, serviceNs = 0, ticks = 0, voiceRecords = 0, services = 0;
     uint32_t ringHighWater = 0;
 };
+
 Driver g;
 
 void EmitGlobals(CommandRing& ring) {
@@ -91,6 +94,7 @@ void EmitGlobals(CommandRing& ring) {
                                uint32_t(FlatRead16(kAuxAReturn)) | uint32_t(FlatRead16(kAuxBReturn)) << 16, FlatRead16(kAuxCReturn)};
     if (g.globalsSent && std::memcmp(words, g.globals, sizeof(words)) == 0)
         return;
+
     uint32_t* out = ring.Reserve(4);
     out[0] = Header(Command::Globals, 4);
     std::memcpy(out + 1, words, sizeof(words));
@@ -101,22 +105,28 @@ void EmitGlobals(CommandRing& ring) {
 void EmitAux(CommandRing& ring) {
     for (uint32_t bus = 0; bus < 3; ++bus) {
         PendingAux& aux = g.aux[bus];
+
         if (!aux.pending)
             continue;
+
         const uint32_t words = 2 + (aux.kind == AuxKind::ReverbHi ? kReverbConfigWords : 0);
         uint32_t* out = ring.Reserve(words);
         out[0] = Header(Command::Aux, words, bus);
         out[1] = uint32_t(aux.kind);
+
         if (aux.kind == AuxKind::ReverbHi)
             std::memcpy(out + 2, &aux.config, sizeof(aux.config));
+
         aux.pending = false;
     }
 }
 
 void RunUserCallback(CpuContext* cpu) {
     const uint32_t callback = FlatRead32(kUserCallback);
+
     if (!callback)
         return;
+
     struct Restore {
         CpuContext* cpu;
         CpuContext saved;
@@ -136,12 +146,14 @@ void ProduceTick(CpuContext* cpu, Mixer& mixer) {
     uint32_t* marker = ring.Reserve(2);
     marker[0] = Header(Command::Tick, 2);
     marker[1] = tick;
+
     if (g.resetPending) {
         ring.Reserve(1)[0] = Header(Command::Reset, 1);
         g.resetPending = false;
         g.globalsSent = false;
         ForgetMixerVoices();
     }
+
     EmitGlobals(ring);
     EmitAux(ring);
     g.voiceRecords += FlushVoices(ring, mixer.FeedbackState(), tick);
@@ -162,6 +174,7 @@ ReverbConfig SnapshotReverb(uint32_t state) {
     // AXFXReverbHiInit/Settings filled them before the registration.
     ReverbConfig c{};
     c.earlyLength = FlatRead32(state + 0x18);
+
     for (uint32_t k = 0; k < 3; ++k) {
         c.earlyTaps[k] = FlatRead32(state + 0x0C + 4 * k);
         c.earlyGains[k] = LoadFloat(state + 0x20 + 4 * k);
@@ -171,12 +184,15 @@ ReverbConfig SnapshotReverb(uint32_t state) {
         c.lastPos[k] = FlatRead32(state + 0xD4 + 4 * k);
         c.lastLength[k] = FlatRead32(state + 0xE0 + 4 * k);
     }
+
     c.preDelayPos = FlatRead32(state + 0x38);
     c.preDelayLength = FlatRead32(state + 0x3C);
+
     for (uint32_t k = 0; k < 2; ++k) {
         c.allpassPos[k] = FlatRead32(state + 0xB0 + 4 * k);
         c.allpassLength[k] = FlatRead32(state + 0xB8 + 4 * k);
     }
+
     c.allpassGain = LoadFloat(state + 0xF8);
     c.lowpassCoef = LoadFloat(state + 0x108);
     c.crosstalk = LoadFloat(state + 0x12C);
@@ -190,6 +206,7 @@ bool ValidReverb(const ReverbConfig& c) {
     constexpr uint32_t kMaxLine = 1u << 17;  // 4 s at 32 kHz
     if (!c.earlyLength || c.earlyLength > kMaxLine || c.preDelayLength > kMaxLine)
         return false;
+
     for (uint32_t k = 0; k < 3; ++k)
         if (!c.combLength[k] || c.combLength[k] > kMaxLine || !c.lastLength[k] || c.lastLength[k] > kMaxLine)
             return false;
@@ -210,6 +227,7 @@ void StartNativeAudio(CpuContext*) {
         g.resetPending = true;
         return;
     }
+
     Mixer& mixer = GetMixer();
     mixer.Initialize(GuestFlat::Host(Memory::kMem1CachedBase), uint32_t(Memory::kMem1Size), GuestFlat::Host(Memory::kMem2CachedBase), uint32_t(Memory::kMem2Size));
     const uint32_t lead = g.lead;
@@ -228,17 +246,21 @@ void StopNativeAudio() {
 void NoteAuxCallback(uint32_t bus, uint32_t callback, uint32_t context) {
     if (!g.active || bus >= 3)
         return;
+
     PendingAux& aux = g.aux[bus];
     aux.pending = true;
     aux.kind = AuxKind::None;
+
     if (callback == kAxfxReverbHiCallback && context) {
         aux.config = SnapshotReverb(context);
+
         if (ValidReverb(aux.config) && (FlatRead32(context + 0x10C) & 1) == 0)
             aux.kind = AuxKind::ReverbHi;
         else
             std::fprintf(stderr, "MH3 audio: aux %c reverb state at %08x not initialized; effect off\n", 'A' + bus, unsigned(context));
     } else if (callback) {
         static bool reported[3];
+
         if (!reported[bus]) {
             std::fprintf(stderr, "MH3 audio: aux %c callback %08x has no native effect; effect off\n", 'A' + bus, unsigned(callback));
             reported[bus] = true;
@@ -249,6 +271,7 @@ void NoteAuxCallback(uint32_t bus, uint32_t callback, uint32_t context) {
 void ServiceNativeAudio(CpuContext* cpu) {
     if (!g.active || g.servicing)
         return;
+
     g.servicing = true;
     struct Done {
         ~Done() { g.servicing = false; }
@@ -256,24 +279,30 @@ void ServiceNativeAudio(CpuContext* cpu) {
     const uint64_t start = NowNs();
     Mixer& mixer = GetMixer();
     const uint32_t rendered = mixer.FeedbackState().renderedTicks.load(std::memory_order_acquire);
+
     // Lead: the most ticks the mixer advanced between two services over the
     // last second, plus a margin; it grows at once and shrinks per window.
     const uint32_t advanced = rendered - g.lastRendered;
     g.lastRendered = rendered;
     g.windowMax = std::max(g.windowMax, advanced);
     g.lead = std::max(g.lead, std::min(advanced + kMinLead, kMaxLead));
+
     if (rendered - g.windowStart >= kLeadWindowTicks) {
         g.lead = std::clamp(g.windowMax + kMinLead, kMinLead, kMaxLead);
         g.windowMax = 0;
         g.windowStart = rendered;
     }
+
     const uint32_t target = rendered + g.lead;
     CommandRing& ring = mixer.Ring();
+
     for (uint32_t n = 0; int32_t(target - g.produced) > 0 && n < kMaxTicksPerService; ++n) {
         if (ring.Free() < kWorstTickWords)
             break;
+
         ProduceTick(cpu, mixer);
     }
+
     ++g.services;
     g.serviceNs += NowNs() - start;
 }
@@ -281,6 +310,7 @@ void ServiceNativeAudio(CpuContext* cpu) {
 void ReportNativeAudioStatistics(double seconds) {
     if (!g.active)
         return;
+
     static Driver previous;
     static uint64_t previousRenderNs = 0, previousRendered = 0, previousFrozen = 0, previousLate = 0;
     MixerStatistics& s = GetMixer().Statistics();

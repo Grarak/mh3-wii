@@ -19,10 +19,13 @@ namespace {
 uint32_t Strcmp(uint32_t a, uint32_t b) {
     const uint8_t* p = GuestFlat::Host(a);
     const uint8_t* q = GuestFlat::Host(b);
+
     for (;; ++p, ++q) {
         const uint32_t x = *p, y = *q;
+
         if (x != y)
             return x - y;
+
         if (!x)
             return 0;
     }
@@ -35,6 +38,7 @@ void StrcmpPort(CpuContext* ctx) {
 uint32_t StrcmpChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
     const bool check = PortCheck::Enabled("strcmp");
+
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;

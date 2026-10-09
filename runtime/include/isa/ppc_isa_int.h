@@ -16,12 +16,14 @@ inline uint32_t PpcRotl32Inline(uint32_t value, uint32_t shift) {
 }
 
 extern "C" uint32_t OSSystemCall();
+
 // dcbz: zero one 32-byte block of guest memory (the translator aligns the
 // address). Never used on hardware.
 inline int32_t memset_zero_32(int32_t address) {
     std::memset(GuestFlat::Host(static_cast<uint32_t>(address)), 0, 32);
     return 0;
 }
+
 extern "C" void OS_HLE_ProcessAlarms(int maxToProcess);
 
 extern "C" uint32_t PPC_Mcrxr(uint32_t crField);
@@ -80,10 +82,13 @@ template <typename T>
 inline int32_t CompareUnsigned(T a, T b) {
     uint32_t ua = static_cast<uint32_t>(a);
     uint32_t ub = static_cast<uint32_t>(b);
+
     if (ua < ub)
         return -1;
+
     if (ua > ub)
         return 1;
+
     return 0;
 }
 

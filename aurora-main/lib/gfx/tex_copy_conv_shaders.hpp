@@ -1,6 +1,6 @@
 #pragma once
 // Copy conversion shaders. Standard library and GX enums only: the GXM shader
-// bank generator compiles Blit and every Conversions entry (docs/vita-shader-bank.md).
+// bank generator compiles Blit and every Conversions entry (docs/optimizations/rendering/offline-shader-bank.md).
 #include "tex_copy_format_contract.hpp"
 #include "../gx/reversed_z.hpp"
 #include <dolphin/gx/GXEnum.h>
@@ -295,6 +295,7 @@ struct Conversion {
   const char* label;
   bool depth;
 };
+
 // Passthrough blit (for scaling); its format is only a placeholder.
 inline constexpr Conversion Blit{GX_TF_RGBA8, FragPassthrough, "TexCopyConv Blit", false};
 inline constexpr std::array Conversions{
@@ -316,6 +317,7 @@ inline constexpr std::array Conversions{
     Conversion{GX_TF_Z16, FragZ16, "TexCopyConv Z16", true},
     Conversion{GX_TF_Z24X8, FragZ24X8, "TexCopyConv Z24X8", true},
 };
+
 // The fragment body (preamble and main) of one conversion.
 inline std::string fragment(const Conversion& conversion) {
   return (conversion.depth ? depth_preamble() : std::string(ShaderPreamble)) + std::string(conversion.fragment);

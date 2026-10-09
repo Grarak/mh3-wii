@@ -42,6 +42,7 @@ K MakeKey(uint64_t id) {
         return K(id) * K(16) + K(0x80000000u);
     }
 }
+
 template <typename K>
 uint64_t KeyId(const K& key) {
     if constexpr (std::is_same_v<K, StructKey>)
@@ -56,10 +57,12 @@ void Run(uint64_t seed, uint64_t range) {
     FastMap<K, uint64_t> map;
     std::unordered_map<uint64_t, uint64_t> reference;
     std::unordered_map<uint64_t, const uint64_t*> addresses;
+
     for (int step = 0; step < 200000; ++step) {
         const uint64_t id = rng() % range;
         const K key = MakeKey<K>(id);
         CHECK(KeyId(key) == id);
+
         switch (rng() % 8) {
         case 0:
         case 1: {
@@ -67,26 +70,32 @@ void Run(uint64_t seed, uint64_t range) {
             auto [it, inserted] = map.insert_or_assign(key, value);
             const bool fresh = reference.insert_or_assign(id, value).second;
             CHECK(inserted == fresh && it->second == value);
+
             if (inserted)
                 addresses[id] = &it->second;
+
             break;
         }
         case 2: {
             auto [it, inserted] = map.try_emplace(key, 7);
             const bool fresh = reference.try_emplace(id, 7).second;
             CHECK(inserted == fresh);
+
             if (inserted)
                 addresses[id] = &it->second;
+
             break;
         }
         case 3: {
             const auto it = map.find(key);
             const auto ref = reference.find(id);
             CHECK((it == map.end()) == (ref == reference.end()));
+
             if (ref != reference.end()) {
                 CHECK(it->second == ref->second);
                 CHECK(&it->second == addresses[id]);
             }
+
             break;
         }
         case 4:
@@ -105,11 +114,13 @@ void Run(uint64_t seed, uint64_t range) {
                     }
                 }
             }
+
             break;
         case 6:
             if (rng() % 64 == 0) {
                 const uint64_t bit = rng() & 1;
                 size_t expected = 0;
+
                 for (auto it = reference.begin(); it != reference.end();) {
                     if ((it->second & 1) == bit) {
                         addresses.erase(it->first);
@@ -119,28 +130,38 @@ void Run(uint64_t seed, uint64_t range) {
                         ++it;
                     }
                 }
+
                 CHECK(map.erase_if([bit](const auto& entry) { return (entry.second & 1) == bit; }) == expected);
             }
+
             break;
         case 7:
             if (rng() % 4096 == 0) {
                 FastMap<K, uint64_t> copy = map;
                 CHECK(copy.size() == map.size());
+
                 for (const auto& [k, v] : map)
                     CHECK(copy.at(k) == v);
+
                 map = std::move(copy);
+
                 for (auto& [k, v] : map)
                     addresses[KeyId(k)] = &v;
             }
+
             break;
         }
+
         CHECK(map.size() == reference.size());
     }
+
     size_t seen = 0;
+
     for (const auto& [k, v] : map) {
         CHECK(reference.at(KeyId(k)) == v);
         ++seen;
     }
+
     CHECK(seen == reference.size());
     map.clear();
     CHECK(map.empty() && map.begin() == map.end());
@@ -151,9 +172,11 @@ void RunSet(uint64_t seed, uint64_t range) {
     std::mt19937_64 rng(seed);
     FastSet<K> set;
     std::unordered_set<uint64_t> reference;
+
     for (int step = 0; step < 100000; ++step) {
         const uint64_t id = rng() % range;
         const K key = MakeKey<K>(id);
+
         switch (rng() % 5) {
         case 0:
         case 1:
@@ -176,15 +199,20 @@ void RunSet(uint64_t seed, uint64_t range) {
                     }
                 }
             }
+
             break;
         }
+
         CHECK(set.size() == reference.size());
     }
+
     size_t seen = 0;
+
     for (const K& key : set) {
         CHECK(reference.contains(KeyId(key)));
         ++seen;
     }
+
     CHECK(seen == reference.size());
 }
 
@@ -194,11 +222,13 @@ void RunSet(uint64_t seed, uint64_t range) {
 void CheckLowBits() {
     bool used[256] = {};
     int distinct = 0;
+
     for (uintptr_t i = 0; i < 256; ++i) {
         const uint32_t bucket = FastHash(reinterpret_cast<const void*>(0x81230000 + i * 32), 64u, 64u) & 255;
         distinct += !used[bucket];
         used[bucket] = true;
     }
+
     CHECK(distinct > 140);
 }
 
@@ -212,9 +242,12 @@ int main() {
         RunSet<uint32_t>(seed, 3000);
         RunSet<StructKey>(seed, 3000);
     }
+
     CheckLowBits();
+
     if (failures)
         return 1;
+
     std::printf("FastMap check passed\n");
     return 0;
 }

@@ -17,27 +17,35 @@ void Checked(mh3_lifetime_status status) {
     if (status != MH3_LIFETIME_OK)
         throw std::runtime_error("Native resource lifetime validation failed: " + std::to_string(status));
 }
+
 bool Canonical(uint32_t address, uint32_t bytes, uint32_t* out) {
     return mh3_source_canonical_address(address, bytes, out) == MH3_RES_OK;
 }
+
 uint32_t RamAddress(uint32_t address, uint32_t bytes) {
     uint32_t result;
+
     if (!Canonical(address, bytes, &result))
         throw std::runtime_error("Native heap record is outside MEM1/MEM2");
+
     return result;
 }
+
 uint32_t Link(uint32_t address) {
     return address ? RamAddress(address, 16) : 0;
 }
+
 void Put32(uint8_t* destination, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i)
         destination[i] = uint8_t(value >> (24 - 8 * i));
 }
+
 mh3_lifetime_expheap ReadHeap(uint32_t address) {
     const uint32_t canonical = RamAddress(address, 80);
     std::array<uint8_t, 80> record;
     std::memcpy(record.data(), Memory::GetPointer(address, record.size()), record.size());
     const uint32_t begin = Memory::Read32(address + 24), end = Memory::Read32(address + 28);
+
     if (end < begin || !end)
         throw std::runtime_error("Native heap extent is invalid");
     // Validate the entire original view, including an end at the RAM boundary.
@@ -45,12 +53,15 @@ mh3_lifetime_expheap ReadHeap(uint32_t address) {
     const uint32_t last = RamAddress(end - 1, 1) + 1;
     Put32(record.data() + 24, first);
     Put32(record.data() + 28, last);
+
     for (unsigned offset = 60; offset <= 72; offset += 4)
         Put32(record.data() + offset, Link(Memory::Read32(address + offset)));
+
     mh3_lifetime_expheap heap;
     Checked(mh3_lifetime_expheap_read(record.data(), record.size(), canonical, &heap));
     return heap;
 }
+
 mh3_lifetime_expblock ReadBlock(uint32_t address) {
     mh3_lifetime_expblock block;
     Checked(mh3_lifetime_expblock_read(Memory::GetPointer(address, 16), 16, &block));
@@ -58,22 +69,27 @@ mh3_lifetime_expblock ReadBlock(uint32_t address) {
     block.next = Link(block.next);
     return block;
 }
+
 mh3_lifetime_status ReadBlockCallback(void*, uint32_t address, mh3_lifetime_expblock* out) {
     *out = ReadBlock(address);
     return MH3_LIFETIME_OK;
 }
+
 class HeapLock {
   public:
     HeapLock(CpuContext* cpu, uint32_t heap) : call_{cpu}, heap_(heap) {
         Memory::GetPointer(heap, 80);
         locked_ = (Memory::Read32(heap + 56) & 4) != 0;
+
         if (locked_)
             call_(0x804D25A0, {heap_ + 32});
     }
+
     ~HeapLock() noexcept(false) {
         if (locked_)
             call_(0x804D2680, {heap_ + 32});
     }
+
     HeapLock(const HeapLock&) = delete;
     HeapLock& operator=(const HeapLock&) = delete;
 
@@ -82,52 +98,67 @@ class HeapLock {
     uint32_t heap_;
     bool locked_;
 };
+
 void RetireWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
     if (!bytes)
         return;
+
     uint32_t canonical;
+
     if (Canonical(address, bytes, &canonical))
         RetireNativeResourceOwner(canonical, bytes, producer);
     else if (address < 0xe0000000u || uint64_t(address) + bytes > 0xe0004000ull)
         throw std::runtime_error("Native write is outside RAM/locked cache");
 }
+
 void PrepareWrite(uint32_t address, uint32_t bytes, NativeSourceEpochProducer producer) {
     RecompMod::CheckExecutableWrite(address, bytes, 0);
     RetireWrite(address, bytes, producer);
 }
+
 void CopyBlocks(uint32_t destination, uint32_t source, uint32_t bytes) {
     Checked(mh3_lifetime_validate_copy32(destination, source, bytes));
+
     if (!bytes)
         return;
+
     void* dst = Memory::GetPointer(destination, bytes);
     const void* src = Memory::GetPointer(source, bytes);
     RecompMod::CheckExecutableWrite(destination, bytes, 0);
     uint32_t canonical_dst, canonical_src;
     const bool ram_dst = Canonical(destination, bytes, &canonical_dst);
     const bool ram_src = Canonical(source, bytes, &canonical_src);
+
     if (ram_dst && ram_src) {
         mh3_lifetime_copy_kind kind;
         Checked(mh3_lifetime_forward_copy_kind(canonical_dst, canonical_src, bytes, &kind));
+
         if (kind == MH3_LIFETIME_COPY_SOURCE)
             RecordNativeResourceCopy(canonical_dst, canonical_src, bytes, NativeSourceEpochProducer::Copy32);
         else if (kind == MH3_LIFETIME_COPY_UNKNOWN)
             RetireNativeResourceOwner(canonical_dst, bytes, NativeSourceEpochProducer::Copy32Unknown);
     } else
         RetireWrite(destination, bytes, NativeSourceEpochProducer::Copy32Unknown);
+
     Checked(mh3_lifetime_copy32(dst, bytes, src, bytes, bytes));
 }
+
 void Fill(uint32_t destination, uint8_t value, uint32_t bytes) {
     if (!bytes)
         return;
+
     void* pointer = Memory::GetPointer(destination, bytes);
     PrepareWrite(destination, bytes, NativeSourceEpochProducer::Fill);
     Checked(mh3_lifetime_fill(pointer, bytes, value, bytes));
 }
+
 uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t options) {
     mh3_lifetime_range region;
     Checked(mh3_lifetime_expheap_create_plan(address, bytes, &region));
+
     if (!region.bytes)
         return 0;
+
     Memory::GetPointer(region.address, region.bytes);
     RamAddress(region.address, region.bytes);
     PrepareWrite(region.address, region.bytes, NativeSourceEpochProducer::HeapCreate);
@@ -138,6 +169,7 @@ uint32_t CreateHeap(CpuContext* cpu, uint32_t address, uint32_t bytes, uint32_t 
     Checked(mh3_lifetime_expheap_initialize(Memory::GetPointer(region.address, 80), 80, Memory::GetPointer(begin, 16), 16, begin, end));
     return region.address;
 }
+
 uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     const auto heap = ReadHeap(address);
     PrepareWrite(heap.address, heap.end - heap.address, NativeSourceEpochProducer::HeapDestroy);
@@ -145,27 +177,33 @@ uint32_t DestroyHeap(CpuContext* cpu, uint32_t address) {
     GuestCall{cpu}(0x804C20E0, {address});
     return address;
 }
+
 uint32_t Allocate(CpuContext* cpu, uint32_t address, uint32_t bytes, int32_t alignment) {
     GuestFrame frame(cpu, 0x60);
     HeapLock lock(cpu, address);
     GuestCall call{cpu};
     ReadHeap(address);
     const uint32_t result = call(alignment < 0 ? 0x804C2560 : 0x804C2480, {address, mh3_lifetime_expheap_request_size(bytes), mh3_lifetime_alignment_magnitude(alignment)});
+
     if (result) {
         const auto heap = ReadHeap(address);
         const uint32_t payload = RamAddress(result, 1);
         const auto block = ReadBlock(payload - 16);
         mh3_lifetime_range region;
         Checked(mh3_lifetime_expblock_extent(&heap, payload, &block, &region));
+
         // The allocator may absorb a short fragment: retire its actual extent,
         // including the header/alignment padding, rather than the request size.
         RetireNativeResourceOwner(region.address, region.bytes, NativeSourceEpochProducer::HeapAllocate);
     }
+
     return result;
 }
+
 void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     if (!payload)
         return;
+
     GuestFrame frame(cpu, 0x60);
     HeapLock lock(cpu, address);
     GuestCall call{cpu};
@@ -174,6 +212,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     const auto block = ReadBlock(canonical_payload - 16);
     mh3_lifetime_free_plan plan;
     Checked(mh3_lifetime_expheap_free_plan(&heap, canonical_payload, &block, &plan));
+
     // Addresses are canonical for bounds/retirement; compatibility link values
     // retain the original cached/uncached/physical pointer bits.
     const uint32_t previous = Memory::Read32(payload - 8), next = Memory::Read32(payload - 4);
@@ -187,6 +226,7 @@ void Free(CpuContext* cpu, uint32_t address, uint32_t payload) {
     Memory::Write32(frame[0x24], payload + block.size);
     call(0x804C2630, {address + 60, frame[0x20]});
 }
+
 uint32_t Available(CpuContext* cpu, uint32_t address, int32_t alignment) {
     GuestFrame frame(cpu, 0x40);
     HeapLock lock(cpu, address);
@@ -195,17 +235,21 @@ uint32_t Available(CpuContext* cpu, uint32_t address, int32_t alignment) {
     Checked(mh3_lifetime_expheap_available(&heap, alignment, ReadBlockCallback, nullptr, &bytes));
     return bytes;
 }
+
 uint32_t AllocatorAllocate(CpuContext* cpu, uint32_t allocator, uint32_t bytes) {
     GuestFrame frame(cpu, 0x40);
     return GuestCall{cpu}(Memory::Read32(Memory::Read32(allocator)), {allocator, bytes});
 }
+
 void AllocatorFree(CpuContext* cpu, uint32_t allocator, uint32_t payload) {
     GuestFrame frame(cpu, 0x40);
     GuestCall{cpu}(Memory::Read32(Memory::Read32(allocator) + 4), {allocator, payload});
 }
+
 uint32_t SystemAllocate(CpuContext* cpu, uint32_t bytes) {
     return bytes ? Allocate(cpu, Memory::Read32(0x80796C48), bytes, 8) : 0;
 }
+
 void SystemFree(CpuContext* cpu, uint32_t payload) {
     if (payload)
         Free(cpu, Memory::Read32(0x80796C48), payload);
@@ -215,71 +259,91 @@ void SystemFree(CpuContext* cpu, uint32_t payload) {
 void FillNativeGuestMemory(uint32_t destination, uint8_t value, uint32_t bytes) {
     Fill(destination, value, bytes);
 }
+
 extern "C" void MH3_Copy32Blocks(CpuContext* cpu) {
     CopyBlocks(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
+
 extern "C" void MH3_Zero32Blocks(CpuContext* cpu) {
     const uint32_t destination = cpu->gpr[3], bytes = cpu->gpr[4];
     Checked(mh3_lifetime_validate_zero32(destination, bytes));
+
     if (bytes && (cpu->gqr[0] & 7))
         throw std::runtime_error("ZeroMemory32ByteBlocks requires GQR0 float store format");
+
     Fill(destination, 0, bytes);
 }
+
 extern "C" void MH3_FillMemory(CpuContext* cpu) {
     Fill(cpu->gpr[3], uint8_t(cpu->gpr[4]), cpu->gpr[5]);
 }
+
 extern "C" void MH3_Memset(CpuContext* cpu) {
     const uint32_t destination = cpu->gpr[3];
     Fill(destination, uint8_t(cpu->gpr[4]), cpu->gpr[5]);
     cpu->gpr[3] = destination;
 }
+
 extern "C" void MH3_CreateExpHeap(CpuContext* cpu) {
     cpu->gpr[3] = CreateHeap(cpu, cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
+
 extern "C" void MH3_DestroyExpHeap(CpuContext* cpu) {
     cpu->gpr[3] = DestroyHeap(cpu, cpu->gpr[3]);
 }
+
 extern "C" void MH3_AllocExpHeap(CpuContext* cpu) {
     cpu->gpr[3] = Allocate(cpu, cpu->gpr[3], cpu->gpr[4], int32_t(cpu->gpr[5]));
 }
+
 extern "C" void MH3_FreeExpHeap(CpuContext* cpu) {
     Free(cpu, cpu->gpr[3], cpu->gpr[4]);
 }
+
 extern "C" void MH3_AvailableExpHeap(CpuContext* cpu) {
     cpu->gpr[3] = Available(cpu, cpu->gpr[3], int32_t(cpu->gpr[4]));
 }
+
 extern "C" void MH3_AllocatorAllocThunk(CpuContext* cpu) {
     const uint32_t allocator = cpu->gpr[3], bytes = cpu->gpr[4];
     cpu->gpr[3] = Allocate(cpu, Memory::Read32(allocator + 4), bytes, int32_t(Memory::Read32(allocator + 8)));
 }
+
 extern "C" void MH3_AllocatorFreeThunk(CpuContext* cpu) {
     const uint32_t allocator = cpu->gpr[3], payload = cpu->gpr[4];
     Free(cpu, Memory::Read32(allocator + 4), payload);
 }
+
 extern "C" void MH3_AllocatorAlloc(CpuContext* cpu) {
     cpu->gpr[3] = AllocatorAllocate(cpu, cpu->gpr[3], cpu->gpr[4]);
 }
+
 extern "C" void MH3_AllocatorFree(CpuContext* cpu) {
     AllocatorFree(cpu, cpu->gpr[3], cpu->gpr[4]);
 }
+
 extern "C" void MH3_WorkMemFree(CpuContext* cpu) {
     const uint32_t payload = cpu->gpr[3];
     GuestFrame frame(cpu, 0x40);
     AllocatorFree(cpu, 0x8065AAF4, payload);
     Memory::Write32(0x8065AAC8, Available(cpu, Memory::Read32(0x8065AAF0), 4));
 }
+
 extern "C" void MH3_ResMemFree(CpuContext* cpu) {
     const uint32_t payload = cpu->gpr[3], service = Memory::Read32(0x80796E30);
     GuestFrame frame(cpu, 0x40);
     AllocatorFree(cpu, service + 0x38, payload);
     Memory::Write32(service + 0x14, Available(cpu, Memory::Read32(service + 0x2c), 4));
 }
+
 extern "C" void MH3_HeapAvailable4(CpuContext* cpu) {
     cpu->gpr[3] = Available(cpu, cpu->gpr[3], 4);
 }
+
 extern "C" void MH3_SystemAlloc(CpuContext* cpu) {
     cpu->gpr[3] = SystemAllocate(cpu, cpu->gpr[3]);
 }
+
 extern "C" void MH3_SystemFree(CpuContext* cpu) {
     SystemFree(cpu, cpu->gpr[3]);
 }

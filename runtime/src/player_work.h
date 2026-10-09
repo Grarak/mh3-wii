@@ -23,6 +23,7 @@ enum : uint32_t {
     kPlayer = 0xB6, // u16: the player's index (low byte)
     kChar = 0x13C,  // MHchar*
 };
+
 constexpr uint32_t kMotionHold = 0xF5;   // MHchar u8: 0x8026A334 / 0x8026A340
 constexpr uint32_t kMotionNumber = 0x54; // MHchar u16 (Get_motion_no 0x8026A36C)
 
@@ -49,21 +50,26 @@ struct Player {
         Timer(Timer() - int32_t(GameStep::Ticks()));
         return Timer() <= 0;
     }
+
     // The originals take 1 a step while it is above 0.
     void CountDownToZero() const {
         if (Timer() > 0)
             Timer(std::max(Timer() - int32_t(GameStep::Ticks()), 0));
     }
+
     // The originals add 1 a step.
     void CountUp() const { Timer(Timer() + int32_t(GameStep::Ticks())); }
     // The originals' `steps % n == 0` on the step counter, which runs a tick
     // at a time: true on the step whose ticks passed a multiple of n.
     bool Every(int32_t n) const {
         int32_t rest = int32_t(Memory::Read32(plw + kSteps)) % n;
+
         if (rest < 0)
             rest += n;
+
         return rest < int32_t(GameStep::Ticks());
     }
+
     uint32_t Index() const { return Memory::Read16(plw + kPlayer) & 0xFF; }
     uint32_t Char() const { return Memory::Read32(plw + kChar); }
     uint32_t Motion() const { return Memory::Read16(Char() + kMotionNumber); }

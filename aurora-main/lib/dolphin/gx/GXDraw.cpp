@@ -235,6 +235,7 @@ static u32 CmpNormal32(f32 n1[3], f32 n2[3]) {
         if (n1[i] != n2[i])
             return FALSE;
     }
+
     return TRUE;
 }
 
@@ -249,6 +250,7 @@ static void AddNormal(f32 n[3]) {
         if (CmpNormal32(n, &nrm_tab[i * 3]))
             return;
     }
+
     indx = nrm_cnt * 3;
     nrm_tab[indx + 0] = n[0];
     nrm_tab[indx + 1] = n[1];

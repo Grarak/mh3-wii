@@ -21,19 +21,24 @@ PipelineRef find_pipeline_impl(ShaderType type, const Config& config, NewPipelin
   const PipelineRef hash = xxh3_hash(config, static_cast<HashType>(type));
   {
     std::lock_guard lock{g_pipelineMutex};
+
     if (g_pipelines.contains(hash)) {
       return hash;
     }
   }
+
   auto pipeline = cb();
+
   if (!pipeline) {
     Log.error("Failed to create pipeline {:x}", hash);
     return hash;
   }
+
   if (pipeline->program) {
     // Compile ahead of the frame that first draws with it.
     gl::post([program = pipeline->program] { program->get(); });
   }
+
   std::lock_guard lock{g_pipelineMutex};
   g_pipelines.try_emplace(hash, std::move(pipeline));
   ++g_stats.createdPipelines;

@@ -3,7 +3,7 @@
 
 /* Portable C resource accessors. No PPC register emulation, guest pointers,
  * allocations, GX calls, or embedded assets. The caller owns every byte span.
- * See docs/vita-model-inspection.md for guest address mapping and validation. */
+ * See docs/optimizations/assets/load-time-asset-conversion.md for guest address mapping and validation. */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -24,15 +24,18 @@ typedef struct {
     const uint8_t *data;
     size_t size;
 } mh3_res_span;
+
 typedef struct {
     uint8_t *data;
     size_t size;
 } mh3_res_mut_span;
+
 typedef struct {
     mh3_res_span container;
     size_t offset, size;
     uint32_t version;
 } mh3_res_model;
+
 typedef enum {
     MH3_RES_BYTECODE,
     MH3_RES_NODES,
@@ -48,16 +51,19 @@ typedef enum {
     MH3_RES_FUR_VECTORS,
     MH3_RES_FUR_POSITIONS
 } mh3_res_kind;
+
 typedef struct {
     uint32_t id;
     size_t offset;
     const char *name;
 } mh3_res_entry;
+
 typedef struct {
     size_t tag_offset, offset;
     uint32_t buffer_size, command_size;
     mh3_res_span commands;
 } mh3_res_display_list;
+
 typedef struct {
     mh3_res_entry entry;
     uint32_t size, flags, vertex_count, triangle_count;
@@ -65,6 +71,7 @@ typedef struct {
     int16_t array_ids[12]; /* position, normal, color0/1, texcoord0..7 */
     mh3_res_display_list setup, primitives;
 } mh3_res_shape;
+
 typedef struct {
     uint16_t material_id, shape_id, node_id;
     uint8_t priority;

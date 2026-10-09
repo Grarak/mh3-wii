@@ -55,8 +55,10 @@ void SinCosRadHost(double radians, float& sine, float& cosine) {
     constexpr uint32_t kTable = 0x805744A0;
     const float index = float(radians) * MemoryInline::FlatReadFloat32(0x8079FF60 - 31528); // 256 / 2 pi
     float magnitude = std::fabs(index);
+
     while (magnitude >= 65536.0f)
         magnitude -= 65536.0f;
+
     const uint32_t whole = uint32_t(magnitude);
     const float fraction = magnitude - float(whole & 0xFFFF);
     const uint32_t entry = kTable + 16 * (whole & 0xFF);
@@ -64,12 +66,14 @@ void SinCosRadHost(double radians, float& sine, float& cosine) {
     cosine = float(PPC_Fmadds(MemoryInline::FlatReadFloat32(entry + 12), fraction, MemoryInline::FlatReadFloat32(entry + 4)));
     sine = index < 0.0f ? -s : s;
 }
+
 static void SinCosRadPort(CpuContext* ctx) {
     float sine, cosine;
     SinCosRadHost(ctx->fpr[1].d, sine, cosine);
     Memory::WriteFloat32(ctx->gpr[4], cosine);
     Memory::WriteFloat32(ctx->gpr[3], sine);
 }
+
 extern "C" void func_8009C7C4(CpuContext* ctx);
 extern "C" void MH3_SinCosRad(CpuContext* ctx) {
     PortCheck::Call(ctx, "SinCosRad", func_8009C7C4, SinCosRadPort);
@@ -94,13 +98,16 @@ constexpr uint32_t kIndexPeriod = 0x80798430;
 struct SinCos {
     float s, c;
 };
+
 SinCos LookUp(float index, float period) {
     float magnitude = std::fabs(index);
+
     if (magnitude > period) {
         do
             magnitude -= period;
         while (magnitude >= period);
     }
+
     const uint32_t whole = magnitude >= 65535.0f ? 65535u : magnitude > 0.0f ? uint32_t(magnitude) : 0u;
     const float fraction = magnitude - float(whole);
     const uint32_t entry = kSinCosTable + 16 * (whole & 0xFF);
@@ -126,6 +133,7 @@ uint32_t RotationYAxis(uint32_t angles, uint32_t out) {
         std::snprintf(text, sizeof text, "NW4R panic (ef_util.cpp:934): Pointer Error pOut(=%08x) is not valid", out);
         throw std::runtime_error(text);
     }
+
     const float k = MemoryInline::FlatReadFloat32(kRad2Index), period = MemoryInline::FlatReadFloat32(kIndexPeriod);
     const SinCos x = LookUp(MemoryInline::FlatReadFloat32(angles) * k, period);
     const SinCos y = LookUp(MemoryInline::FlatReadFloat32(angles + 4) * k, period);
@@ -145,6 +153,7 @@ void RotationYAxisPort(CpuContext* ctx) {
 uint32_t RotationYAxisChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
     const bool check = PortCheck::Enabled("RotationYAxis");
+
     if (check && ValidOut(r4)) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;

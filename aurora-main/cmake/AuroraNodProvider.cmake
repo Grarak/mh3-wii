@@ -11,9 +11,11 @@ include_guard(GLOBAL)
 
 # ── Auto: resolve provider based on platform availability ──
 set(_aurora_nod_provider "${AURORA_NOD_PROVIDER}")
+
 if (_aurora_nod_provider STREQUAL "auto")
   # Prebuilt nod packages available for: windows-x86_64, linux-x86_64, macos-arm64
   set(_has_package FALSE)
+
   if (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64)$")
     set(_has_package TRUE)
   elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64)$")
@@ -26,12 +28,14 @@ if (_aurora_nod_provider STREQUAL "auto")
     set(_aurora_nod_provider "package")
   else ()
     find_package(nod QUIET CONFIG)
+
     if (nod_FOUND)
       set(_aurora_nod_provider "system")
     else ()
       set(_aurora_nod_provider "vendor")
     endif ()
   endif ()
+
   set(AURORA_NOD_PROVIDER "${_aurora_nod_provider}" CACHE STRING "" FORCE)
   message(STATUS "aurora: nod auto-resolved provider: ${_aurora_nod_provider}")
 endif ()
@@ -53,6 +57,7 @@ if (_aurora_nod_provider STREQUAL "vendor")
     # Control whether nod builds shared, static, or both.
     # Save/restore BUILD_SHARED_LIBS to avoid leaking into other subdirectories.
     set(_aurora_nod_saved_bsl "${BUILD_SHARED_LIBS}")
+
     if (AURORA_NOD_LINKAGE STREQUAL "static")
       set(BUILD_SHARED_LIBS OFF)
     else ()
@@ -70,6 +75,7 @@ if (_aurora_nod_provider STREQUAL "vendor")
     FetchContent_MakeAvailable(aurora_nod)
     set(BUILD_SHARED_LIBS "${_aurora_nod_saved_bsl}")
     unset(_aurora_nod_saved_bsl)
+
     if (NOT TARGET nod::nod)
       message(FATAL_ERROR "Failed to make nod available")
     endif ()
@@ -83,6 +89,7 @@ elseif (_aurora_nod_provider STREQUAL "system")
 
   if (NOT nod_FOUND)
     set(_aurora_nod_saved_bsl "${BUILD_SHARED_LIBS}")
+
     if (AURORA_NOD_LINKAGE STREQUAL "static")
       set(BUILD_SHARED_LIBS OFF)
     else ()
@@ -93,9 +100,11 @@ elseif (_aurora_nod_provider STREQUAL "system")
     set(BUILD_SHARED_LIBS "${_aurora_nod_saved_bsl}")
     unset(_aurora_nod_saved_bsl)
   endif ()
+
   if (NOT TARGET nod::nod)
     message(FATAL_ERROR "find_package(nod) succeeded but nod::nod target not found")
   endif ()
+
   message(STATUS "aurora: Found nod via find_package(nod)")
 
 elseif (_aurora_nod_provider STREQUAL "package")
@@ -112,9 +121,11 @@ elseif (_aurora_nod_provider STREQUAL "package")
         "AURORA_NOD_PROVIDER=package requires AURORA_NOD_PACKAGE_URL on this platform.\n"
         "Prebuilt packages: https://github.com/encounter/nod/releases")
     endif ()
+
     set(AURORA_NOD_PACKAGE_URL
       "https://github.com/encounter/nod/releases/download/${AURORA_NOD_VERSION}/libnod-${_nod_platform}.tar.gz")
   endif ()
+
   message(STATUS "aurora: Fetching prebuilt nod package (provider=package, linkage=${AURORA_NOD_LINKAGE})")
 
   include(FetchContent)
@@ -129,17 +140,20 @@ elseif (_aurora_nod_provider STREQUAL "package")
   # nod::nod_static, and a default nod::nod (based on BUILD_SHARED_LIBS).
   # Set BUILD_SHARED_LIBS so the config selects the right default target.
   set(_aurora_nod_saved_bsl "${BUILD_SHARED_LIBS}")
+
   if (AURORA_NOD_LINKAGE STREQUAL "static")
     set(BUILD_SHARED_LIBS OFF)
   else ()
     set(BUILD_SHARED_LIBS ON)
   endif ()
+
   find_package(nod REQUIRED CONFIG
     PATHS "${nod_prebuilt_SOURCE_DIR}"
     NO_DEFAULT_PATH
   )
   set(BUILD_SHARED_LIBS "${_aurora_nod_saved_bsl}")
   unset(_aurora_nod_saved_bsl)
+
   if (NOT TARGET nod::nod)
     message(FATAL_ERROR "Prebuilt nod package did not provide nod::nod target")
   endif ()

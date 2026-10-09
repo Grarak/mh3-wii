@@ -68,8 +68,10 @@ void ResetEntry(uint32_t entry) {
 uint32_t Alloc(uint32_t group) {
     const uint32_t g = group & 0xFF;
     const uint32_t used = FlatRead32(kUsed + 4 * g);
+
     if (used >= FlatRead16(kCapacity + 2 * g))
         return 0;
+
     const uint32_t entry = FlatRead32(kEntries + 4 * g) + used * kEntryBytes;
     FlatWrite32(kUsed + 4 * g, used + 1);
     ResetEntry(entry);
@@ -81,11 +83,14 @@ void ResetGroup(uint32_t group) {
     const uint32_t entries = FlatRead32(kEntries + 4 * g);
     FlatWrite32(kUsed + 4 * g, 0);
     const uint32_t count = FlatRead16(kCapacity + 2 * g);
+
     if (!count)
         return;
+
     uint8_t floats[8];
     ResetFloats(floats);
     uint8_t* p = GuestFlat::Host(entries);
+
     for (uint32_t i = 0; i < count; ++i, p += kEntryBytes)
         Reset(p, floats);
 }
@@ -98,12 +103,15 @@ void ResetAll() {
 void ResetEntryPort(CpuContext* ctx) {
     ResetEntry(ctx->gpr[3]);
 }
+
 void AllocPort(CpuContext* ctx) {
     ctx->gpr[3] = Alloc(ctx->gpr[3]);
 }
+
 void ResetGroupPort(CpuContext* ctx) {
     ResetGroup(ctx->gpr[3]);
 }
+
 void ResetAllPort(CpuContext*) {
     ResetAll();
 }
@@ -113,6 +121,7 @@ void ResetAllPort(CpuContext*) {
 // registers the bodies read.
 bool Check(uint32_t r1, uint32_t r3, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
     const bool check = PortCheck::Enabled("PrimBuffers");
+
     if (!check) [[likely]]
         return false;
     CpuContext* c = TryGetCpuContext();
@@ -132,14 +141,17 @@ void ResetEntryChecked(uint32_t r1, uint32_t r3) {
     MH3_PRIM_CHECK(func_800E3CF4, ResetEntryPort, )
     ResetEntry(r3);
 }
+
 uint32_t AllocChecked(uint32_t r1, uint32_t r3) {
     MH3_PRIM_CHECK(func_800E3C80, AllocPort, TryGetCpuContext()->gpr[3])
     return Alloc(r3);
 }
+
 void ResetGroupChecked(uint32_t r1, uint32_t r3) {
     MH3_PRIM_CHECK(func_800E3D20, ResetGroupPort, )
     ResetGroup(r3);
 }
+
 void ResetAllChecked(uint32_t r1, uint32_t r3) {
     MH3_PRIM_CHECK(func_800E3DA4, ResetAllPort, )
     (void)r3;

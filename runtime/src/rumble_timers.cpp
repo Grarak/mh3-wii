@@ -24,15 +24,20 @@ static void TickSystemTimersPort(CpuContext* ctx) {
     const CpuContext saved = *ctx;
     GuestCall game{ctx};
     const uint32_t ticks = GameStep::Ticks();
+
     for (uint32_t i = 0; i < 4; ++i) {
         const int8_t steps = int8_t(Memory::Read8(kSystem + kRumbleSteps + i));
+
         if (steps > 0)
             Memory::Write8(kSystem + kRumbleSteps + i, uint8_t(steps - int8_t(std::min<uint32_t>(ticks, steps))));
+
         if (Memory::Read8(kSystem + kRumbleOn + i) == 1 && int8_t(Memory::Read8(kSystem + kRumbleSteps + i)) < 1)
             game.Call<RumbleStop>({i});
     }
+
     *ctx = saved;
 }
+
 extern "C" void func_80044AF4(CpuContext* ctx);
 extern "C" void MH3_TickSystemTimers(CpuContext* ctx) {
     PortCheck::Call(ctx, "TickSystemTimers", func_80044AF4, TickSystemTimersPort);

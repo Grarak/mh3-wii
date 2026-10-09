@@ -22,6 +22,7 @@ static u8* aramToHost(u32 aramAddr) {
   if (!sAramBuffer || aramAddr >= aurora::g_config.mem2Size) {
     return nullptr;
   }
+
   return sAramBuffer + aramAddr;
 }
 
@@ -42,9 +43,11 @@ u32 ARAlloc(u32 length) {
 
 u32 ARFree(u32* length) {
   AR_BlockLength -= 1;
+
   if (length) {
     *length = *AR_BlockLength;
   }
+
   AR_StackPointer -= *AR_BlockLength;
   AR_FreeBlocks += 1;
   return AR_StackPointer;
@@ -63,6 +66,7 @@ u32 ARInit(u32* stack_index_addr, u32 num_entries) {
   }
 
   sAramBuffer = (u8*)calloc(1, aurora::g_config.mem2Size);
+
   if (sAramBuffer) {
     Log.debug("Initialized 0x{:X} bytes of ARAM!", aurora::g_config.mem2Size);
   } else {
@@ -88,6 +92,7 @@ void ARQPostRequest(ARQRequest* request, u32 owner, u32 type, u32 priority, uint
     // Main RAM -> ARAM: source is a host pointer (cast to u32), dest is an ARAM offset
     u8* hostSrc = (u8*)(uintptr_t)source;
     u8* aramDst = aramToHost(dest);
+
     if (aramDst && hostSrc) {
       memcpy(aramDst, hostSrc, length);
     }
@@ -95,6 +100,7 @@ void ARQPostRequest(ARQRequest* request, u32 owner, u32 type, u32 priority, uint
     // ARAM -> Main RAM: source is an ARAM offset, dest is a host pointer (cast to u32)
     u8* aramSrc = aramToHost(source);
     u8* hostDst = (u8*)(uintptr_t)dest;
+
     if (aramSrc && hostDst) {
       memcpy(hostDst, aramSrc, length);
     }

@@ -70,22 +70,28 @@ static void SwingEffectUpdatePort(CpuContext* ctx) {
     const uint32_t list = Memory::Read32(work + kWorkList);
     const uint32_t ticks = GameStep::Ticks();
     const double fraction = GameStep::Fraction();
+
     for (int32_t i = 0; i < int32_t(Memory::Read32(list + kCount)); ++i) {
         const uint32_t model = Memory::Read32(list + kModels + 4 * i);
         const uint32_t params = Memory::Read32(list + kParams + 4 * i);
         const uint32_t phaseAt = list + kPhase + 2 * i, frameAt = list + kFrame + 2 * i, holdAt = list + kHold + 2 * i;
         const uint32_t shift = Memory::Read8(params + kPhaseShift);
+
         for (uint32_t t = 0; t < ticks; ++t) {
             const int16_t first = int16_t(Memory::Read8(params + kFirstFrame));
             int16_t flip = int16_t(Memory::Read16(frameAt) + 1);
+
             if (int32_t(first) + Memory::Read8(params + kFrames) <= flip)
                 flip = first;
+
             Memory::Write16(frameAt, uint16_t(flip));
             Memory::Write32(work + kWorkSteps, Memory::Read32(work + kWorkSteps) + 1);
             int16_t phase = int16_t(Memory::Read16(phaseAt) + 1);
             const float s = SwingSin(game, double((uint32_t(int32_t(phase)) << shift) & 0xFFFF) / (1u << shift), shift);
+
             if ((s >= 1.0f || s <= -1.0f) && int16_t(Memory::Read16(params + kHoldSteps)) > 0) {
                 const int16_t hold = int16_t(Memory::Read16(holdAt) + 1);
+
                 if (int16_t(Memory::Read16(params + kHoldSteps)) < hold) {
                     Memory::Write16(holdAt, 0);
                 } else {
@@ -93,10 +99,13 @@ static void SwingEffectUpdatePort(CpuContext* ctx) {
                     --phase;
                 }
             }
+
             Memory::Write16(phaseAt, uint16_t(phase));
         }
+
         const int16_t flip = int16_t(Memory::Read16(frameAt));
         const uint32_t joints = game.Call<JointCount>({model});
+
         for (uint32_t joint = 0; joint < joints; ++joint)
             game.Call<SetVisibility>({model, joint, joint == uint32_t(int32_t(flip)) ? 1u : 0u});
         // While held at an end the stored phase is one short of the end shown.

@@ -13,6 +13,7 @@ enum {
     MH3_PREPARE_MAX_GPU = 32u << 20,
     MH3_PREPARE_MAX_INDEX = 4u << 20
 };
+
 typedef enum {
     MH3_PREPARE_OK = 0,
     MH3_PREPARE_INVALID = -1,
@@ -20,6 +21,7 @@ typedef enum {
     MH3_PREPARE_IO = -3,
     MH3_PREPARE_ROLLBACK = -4
 } mh3_prepare_status;
+
 typedef struct {
     void *context;
     /* Return zero only after completing the whole requested operation. Writes
@@ -27,10 +29,12 @@ typedef struct {
     int (*write)(void *, uint64_t, const uint8_t *, size_t);
     int (*truncate)(void *, uint64_t);
 } mh3_prepare_sink;
+
 typedef struct {
     void *context;
     int (*read)(void *, uint64_t, uint8_t *, size_t);
 } mh3_prepare_input;
+
 typedef struct {
     uint8_t *data;
     size_t capacity;
@@ -38,6 +42,7 @@ typedef struct {
     mh3_prepare_sink gpu;
     uint32_t gpu_bytes;
 } mh3_prepare_writer;
+
 /* CPU buffers are caller-owned. Successful begin clears only reserved tables.
  * No later operation may grow beyond its buffer or the subsystem cap. Record
  * words are host numeric values (float fields use float_bits), explicitly
@@ -66,10 +71,12 @@ typedef struct {
     const char *path;
     uint32_t metadata_bytes, identity_bytes, gpu_bytes, file_bytes;
 } mh3_prepare_index_pack;
+
 typedef struct {
     uint64_t partition_offset;
     uint32_t source_bytes, pack_index;
 } mh3_prepare_index_source;
+
 /* Packs are strictly path-sorted; sources are strictly extent-sorted/disjoint.
  * Input tables/paths remain stable and must not overlap output. All bounds,
  * paths and references are checked before touching output or size. */

@@ -38,15 +38,19 @@ static inline void SETVCDATTR(GXAttr attr, GXAttrType type) {
     break;
   case GX_VA_NRM:
     __gx->hasNrms = (type != 0);
+
     if (type != GX_NONE) {
       __gx->nrmType = type;
     }
+
     break;
   case GX_VA_NBT:
     __gx->hasBiNrms = (type != 0);
+
     if (type != GX_NONE) {
       __gx->nrmType = type;
     }
+
     break;
   case GX_VA_CLR0:
     SET_REG_FIELD(0, __gx->vcdLo, 2, 13, type);
@@ -93,6 +97,7 @@ static inline void SETVAT(u32* va, u32* vb, u32* vc, GXAttr attr, GXCompCnt cnt,
   case GX_VA_NRM:
   case GX_VA_NBT:
     SET_REG_FIELD(0, *va, 3, 10, type);
+
     if (cnt == GX_NRM_NBT3) {
       SET_REG_FIELD(0, *va, 1, 9, 1);
       SET_REG_FIELD(0, *va, 1, 31, 1);
@@ -100,6 +105,7 @@ static inline void SETVAT(u32* va, u32* vb, u32* vc, GXAttr attr, GXCompCnt cnt,
       SET_REG_FIELD(0, *va, 1, 9, cnt);
       SET_REG_FIELD(0, *va, 1, 31, 0);
     }
+
     break;
   case GX_VA_CLR0:
     SET_REG_FIELD(0, *va, 1, 13, cnt);
@@ -162,6 +168,7 @@ static inline bool AuroraVtxAttrFmtDiffers(GXVtxFmt vtxfmt, GXAttr attr, GXCompC
   if (vtxfmt < GX_VTXFMT0 || vtxfmt >= GX_MAX_VTXFMT || attr < GX_VA_POS || attr >= GX_VA_MAX_ATTR) {
     return true;
   }
+
   const auto& fmt = g_gxState.vtxFmts[vtxfmt].attrs[attr];
   return fmt.cnt != cnt || fmt.type != type || fmt.frac != frac;
 }

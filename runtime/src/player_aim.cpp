@@ -10,7 +10,7 @@
 //     (mode 0: s8 +0x64F), 0x8027A0A8 (mode 1: s16 +0x5E8, the amount * 64)
 //     or 0x8027A0F0 (mode 2: s8 +0x583).
 // Diagonals scale both by the factor at 0x8079C5B0 (the pitch at least 1).
-// Those amounts are per step, so at the VM's 500-700 steps a second the aim
+// Those amounts are per step, so at 500-700 steps a second the aim
 // swung 15-20 times as fast as on the Wii. Here each is GameStep::Share of the
 // amount (the amount times the step's length in ticks); at the stock 1/30 s
 // step that is the amount: the original.
@@ -66,25 +66,32 @@ static void PlAimInputPort(CpuContext* ctx) {
     GuestCall game{ctx};
     const uint32_t plw = frame.Arg(3), motion = frame.Arg(4) & 0xFFFF, mode = frame.Arg(5) & 0xFF;
     uint32_t yaw = Memory::Read32(plw + kWantedYaw);
+
     if (game.Call<MasterCheck>({plw}) == 0 || (game.Call<MotionNo>({plw}) & 0xFFFF) != motion || int8_t(Memory::Read8(plw + kAimBlocked)) != 0)
         return;
+
     const auto aiming = [&] {
         return Memory::Read8(plw + kAiming) != 0 || Memory::Read8(plw + kScoped) != 0;
     };
+
     if (aiming())
         Memory::Write8(plw + kAiming, 10);
 
     bool up = false, down = false, right = false, left = false;
     int32_t pitchStep = 0, yawStep = 0;
+
     // The directions as the options (u8 2 for the d-pad, 9 for the stick) turn
     // them: 1 or 3 swaps up and down, 2 or 3 right and left.
     const auto option = [&](uint32_t index) {
         const uint32_t value = game.Call<OptionConfig>({Memory::Read8(plw + kPlayer), index}) & 0xFF;
+
         if (value == 1 || value == 3)
             std::swap(up, down);
+
         if (value == 2 || value == 3)
             std::swap(right, left);
     };
+
     const auto dpad = [&](uint32_t fn, uint32_t first) {
         up = game(fn, {plw, first}) != 0;
         down = !up && game(fn, {plw, first + 1}) != 0;
@@ -96,6 +103,7 @@ static void PlAimInputPort(CpuContext* ctx) {
 
     bool apply = true; // false: straight to storing the aim unchanged
     bool scale = false;
+
     if (!aiming()) {
         if (game.Call<CommandTest>({plw, 11}) == 1)
             apply = false;
@@ -104,10 +112,13 @@ static void PlAimInputPort(CpuContext* ctx) {
         else if (mode == 2 && game.Call<CommandBitE0>({plw, 55}) == 0)
             apply = false;
     }
+
     if (apply) {
         bool stick = true;
+
         if (mode == 0 && (game.Call<TurnLocked>({plw}) != 0 || (Memory::Read8(plw + kScoped) == 0 && game.Call<AimReady>({plw, 0}) == 1))) {
             stick = false;
+
             if (dpad(CommandBit, 0)) {
                 pitchStep = 5;
                 yawStep = 384;
@@ -117,6 +128,7 @@ static void PlAimInputPort(CpuContext* ctx) {
             }
         } else if (mode == 2 && Memory::Read8(plw + kScoped) == 0) {
             stick = false;
+
             if (dpad(CommandBitE0, 56)) {
                 pitchStep = 5;
                 yawStep = 512;
@@ -125,9 +137,11 @@ static void PlAimInputPort(CpuContext* ctx) {
                 apply = false;
             }
         }
+
         if (stick) {
             scale = true;
             const uint32_t dirs = Memory::Read16(plw + kStickDirs);
+
             if (aiming() && (dirs & 0x3C00) != 0 && Memory::Read16(plw + kStickTilt) >= 50) {
                 up = dirs & 0x2000;
                 down = !up && (dirs & 0x1000);
@@ -141,14 +155,17 @@ static void PlAimInputPort(CpuContext* ctx) {
                 pitchStep = 1;
                 yawStep = 76;
                 const int32_t tilt = Memory::Read16(plw + kStickTilt);
+
                 for (uint32_t entry = kStickTable; int32_t(Memory::Read32(entry)) != -1; entry += 20) {
                     if (tilt < int32_t(Memory::Read32(entry)))
                         continue;
+
                     const auto lerp = [&](uint32_t lo) {
                         const float a = float(int32_t(Memory::Read32(entry + lo)));
                         const float b = float(int32_t(Memory::Read32(entry + lo + 4)));
                         return int32_t(a + f * (b - a));
                     };
+
                     pitchStep = lerp(4);
                     yawStep = lerp(12);
                     break;
@@ -158,24 +175,30 @@ static void PlAimInputPort(CpuContext* ctx) {
     }
 
     int32_t pitch = 0;
+
     if (apply && scale) {
         const bool vertical = up || down;
+
         if (vertical && (right || left)) {
             const float k = Memory::ReadFloat32(kDiagonalScale);
             yawStep = int32_t(k * float(yawStep));
             pitchStep = int32_t(k * float(pitchStep));
+
             if (pitchStep < 1)
                 pitchStep = 1;
         }
+
         if (vertical) {
             const int32_t step = GameStep::Share(pitchStep);
             pitch = up ? step : -step;
             Memory::Write8(plw + kAiming, 5);
         }
+
         if (right) {
             Memory::Write8(plw + kAiming, 10);
             yaw += uint32_t(GameStep::Share(yawStep));
         }
+
         if (left) {
             Memory::Write8(plw + kAiming, 10);
             yaw -= uint32_t(GameStep::Share(yawStep));
@@ -186,10 +209,12 @@ static void PlAimInputPort(CpuContext* ctx) {
     case 0:
         Memory::Write32(plw + kWantedYaw, yaw);
         game.Call<AimPitch64F>({plw, uint32_t(pitch)});
+
         if (motion == 1001)
             game.Call<AimMotion>({plw, 1030, 1031});
         else if (motion == 1050)
             game.Call<AimMotion>({plw, 1080, 1081});
+
         break;
     case 1:
         Memory::Write32(plw + kWantedYaw, yaw);
@@ -199,10 +224,12 @@ static void PlAimInputPort(CpuContext* ctx) {
         Memory::Write32(plw + kWantedYaw, yaw);
         const uint32_t base = Memory::Read16(plw + kYawBase);
         const uint32_t offset = (yaw - base) & 0xFFFF;
+
         if (offset - 0x4001 <= 0x3FFF)
             Memory::Write32(plw + kWantedYaw, base + 0x4000);
         else if (offset - 0x8000 <= 0x3FFF)
             Memory::Write32(plw + kWantedYaw, base - 0x4000);
+
         game.Call<AimPitch583>({plw, uint32_t(int32_t(int8_t(uint8_t(pitch))))});
         break;
     }

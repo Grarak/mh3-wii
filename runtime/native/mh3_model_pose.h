@@ -12,6 +12,7 @@ typedef struct mh3_model_pose_owner {
     uint8_t views, current_view;
     uint64_t revision[16];
 } mh3_model_pose_owner;
+
 mh3_res_status mh3_model_pose_owner_read(const mh3_res_memory *memory, uint32_t scene, mh3_model_pose_owner *out);
 /* Pure getter ports80080BC0/80080C0C/80080C68 and8007FD0C. The optional
  * arrays retain null; every address calculation is checked before output. */
@@ -32,6 +33,7 @@ void mh3_model_pose_retire(mh3_model_pose_owner *owner, uint32_t address, uint32
 typedef struct mh3_model_matrix_selectors {
     uint8_t row[8], known, dual_known, dual_enabled;
 } mh3_model_matrix_selectors;
+
 mh3_res_status mh3_model_matrix_select(mh3_model_matrix_selectors *state, const uint32_t rows[8]);
 void mh3_model_matrix_reset(mh3_model_matrix_selectors *state);
 mh3_res_status mh3_model_matrix_dual(mh3_model_matrix_selectors *state, int enabled);

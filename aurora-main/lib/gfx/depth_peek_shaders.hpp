@@ -1,6 +1,6 @@
 #pragma once
 // Depth peek shaders. Standard library only: the GXM shader bank generator
-// compiles this program (docs/vita-shader-bank.md).
+// compiles this program (docs/optimizations/rendering/offline-shader-bank.md).
 #include "../gx/reversed_z.hpp"
 #include <string>
 #include <string_view>
@@ -32,6 +32,7 @@ void main() {
     frag_color = vec4(uvec4(z & 0xffu, (z >> 8u) & 0xffu, z >> 16u, 255u)) / 255.0;
 }
 )";
+
 // Each destination pixel packs its 24-bit GX depth into RGB bytes.
 inline std::string fragment_body() {
   std::string source(FragmentShader);

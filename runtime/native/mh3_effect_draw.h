@@ -19,6 +19,7 @@ typedef struct mh3_effect_material {
     int8_t indirect_exponent;
     uint8_t rgb_sources[8], alpha_sources[8];
 } mh3_effect_material;
+
 /* Reads the 0xAC-byte emitter draw settings; rejects impossible counts/selectors.
  * Output is untouched on failure. Alpha reference/colour channels are live
  * particle inputs, set separately after resource setup. */
@@ -36,21 +37,25 @@ typedef struct mh3_effect_texture_transform {
     float scale[2], translation[2], tile[2], offset[2], rotation;
     uint8_t flip_s, flip_t, position_source;
 } mh3_effect_texture_transform;
+
 /* sin/cos retain the game's table lookup; the caller supplies their values. */
 void mh3_effect_texture_matrix(const mh3_effect_texture_transform *input, float sine, float cosine, const float position_post_matrix[12], float out[12]);
 
 typedef struct mh3_effect_quad {
     float position[4][3];
 } mh3_effect_quad;
+
 typedef struct mh3_effect_billboard {
     float matrix[12], pivot[2], axis_x[2], axis_y[2];
 } mh3_effect_billboard;
+
 void mh3_effect_billboard_axes(mh3_effect_billboard *out, const float matrix[12], const float view[12], const float pivot[2], uint8_t facing_kind);
 void mh3_effect_billboard_quad(const mh3_effect_billboard *draw, const float position[3], float width, float height, float angle, float sine, float cosine, mh3_effect_quad *out);
 typedef struct mh3_effect_directional_inputs {
     float view_local[12], size_matrix[12], position[3], direction[3], history[3], fallback[3];
     uint8_t screen_facing;
 } mh3_effect_directional_inputs;
+
 void mh3_effect_directional_matrix(const mh3_effect_directional_inputs *input, float history_out[3], float matrix_out[12]);
 void mh3_effect_quad_axes(const float center[3], const float diagonal_a[3], const float diagonal_b[3], mh3_effect_quad *out);
 void mh3_effect_quad_transform(const float matrix[12], const mh3_effect_quad *input, mh3_effect_quad *out);
@@ -62,6 +67,7 @@ typedef struct mh3_effect_particle {
     float position[3], size[2], scale[2], manager_scale[2], rotation, sine, cosine;
     uint16_t emitter_flags;
 } mh3_effect_particle;
+
 typedef struct mh3_effect_billboard_source {
     void *context;
     uint32_t (*first)(void *context);
@@ -72,6 +78,7 @@ typedef struct mh3_effect_billboard_source {
     void (*submit)(void *context, const mh3_effect_quad *quad);
     uint8_t width_only;
 } mh3_effect_billboard_source;
+
 typedef void (*mh3_effect_particle_draw)(void *context, uint32_t particle, const mh3_effect_particle *values, float width, float height);
 void mh3_effect_draw_particles(float minimum_size, const mh3_effect_billboard_source *source, mh3_effect_particle_draw draw);
 void mh3_effect_draw_billboards(const mh3_effect_billboard *draw, float minimum_size, const mh3_effect_billboard_source *source);
@@ -81,6 +88,7 @@ typedef struct mh3_effect_vertex_inputs {
     /* Bit n set: no stage reads texture coordinate n; it is written as zero. */
     uint8_t unused_coordinates;
 } mh3_effect_vertex_inputs;
+
 void mh3_effect_material_vertices(const mh3_draw_state *draw, const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, AuroraNativeMaterialVertex out[4]);
 void mh3_effect_expand_point(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_expand_line(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);
@@ -94,21 +102,25 @@ typedef struct mh3_effect_ribbon_source {
     uint32_t count;
     uint8_t closure, reverse, individual_uv;
 } mh3_effect_ribbon_source;
+
 void mh3_effect_draw_ribbon(const mh3_effect_ribbon_source *source);
 typedef struct mh3_effect_ribbon_pair {
     float position[2][3], texture_t;
 } mh3_effect_ribbon_pair;
+
 typedef struct mh3_effect_smooth_ribbon_source {
     mh3_effect_ribbon_source ribbon;
     uint32_t subdivisions;
     float origin_delta[3];
 } mh3_effect_smooth_ribbon_source;
+
 void mh3_effect_spline_weights(float t, float out[3]);
 void mh3_effect_spline_pair(const mh3_effect_ribbon_pair frames[3], const float weights[3], mh3_effect_ribbon_pair *out);
 void mh3_effect_draw_smooth_ribbon(const mh3_effect_smooth_ribbon_source *source);
 typedef struct mh3_effect_tube_frame {
     float center[3], axis_y[3], axis_z[3], texture_t;
 } mh3_effect_tube_frame;
+
 void mh3_effect_spline_tube(const mh3_effect_tube_frame frames[3], const float weights[3], mh3_effect_tube_frame *out);
 void mh3_effect_tube_quad(const mh3_effect_tube_frame frames[2], const float angles[2][2], uint32_t sample, uint32_t segments, int reverse, mh3_effect_quad *out, float uv[4][2]);
 void mh3_effect_strip_indices(uint16_t vertex_count, uint16_t *out);

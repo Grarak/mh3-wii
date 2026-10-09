@@ -113,6 +113,7 @@ class GuestFiberManager {
     static std::mutex s_mutex;
     static std::unordered_map<uint32_t, GuestFiber> s_fibers;
     static std::vector<void*> s_fibersPendingDelete;
+
     // The scheduler's own host context. Its opaque handle is supplied by the
     // active HostContext backend, so one field serves every supported host.
     static void* s_schedulerFiber;

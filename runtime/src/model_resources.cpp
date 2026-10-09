@@ -19,12 +19,14 @@ const mh3_res_memory liveMemory{{GuestFlat::Host(Memory::kMem1CachedBase), Memor
 const mh3_res_memory& ResourceMemory() {
     return liveMemory;
 }
+
 uint32_t Result(mh3_res_status status, uint32_t value) {
     if (status != MH3_RES_OK) {
         char message[96];
         std::snprintf(message, sizeof message, "Native model resource access failed (%d)", int(status));
         throw std::runtime_error(message);
     }
+
     return value;
 }
 
@@ -38,12 +40,15 @@ template <void (*Original)(CpuContext*), void (*Port)(CpuContext*)>
 uint32_t Accessor(const char* name, uint32_t r1, uint32_t r3, const uint32_t* r4 = nullptr) {
 #ifdef MH3_DEVELOPMENT
     const bool check = PortCheck::Enabled(name);
+
     if (check) [[unlikely]] {
         CpuContext* cpu = TryGetCpuContext();
         cpu->gpr[1] = r1;
         cpu->gpr[3] = r3;
+
         if (r4)
             cpu->gpr[4] = *r4;
+
         PortCheck::RunPure(cpu, name, PortCheck::Returns::Gpr3, Original, Port);
         return cpu->gpr[3];
     }
@@ -56,11 +61,13 @@ uint32_t Accessor(const char* name, uint32_t r1, uint32_t r3, const uint32_t* r4
     Port(&local);
     return local.gpr[3];
 }
+
 template <void (*Original)(CpuContext*), void (*Port)(CpuContext*)>
 uint32_t Accessor(const char* name, uint32_t r1, uint32_t r3, uint32_t r4) {
     return Accessor<Original, Port>(name, r1, r3, &r4);
 }
 } // namespace
+
 const mh3_res_memory& MH3NativeResourceMemory() {
     return ResourceMemory();
 }
@@ -84,6 +91,7 @@ static void MdlNodePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_NODES, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNode(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80097F14, MdlNodePort>("MdlNode", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -95,6 +103,7 @@ static void MdlPositionIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlPositionInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009802C, MdlPositionIntPort>("MdlPositionInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -106,6 +115,7 @@ static void MdlPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlPosition(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098094, MdlPositionPort>("MdlPosition", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -117,6 +127,7 @@ static void MdlNormalIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_NORMALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNormalInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098144, MdlNormalIntPort>("MdlNormalInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -128,6 +139,7 @@ static void MdlNormalPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_NORMALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNormal(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800981AC, MdlNormalPort>("MdlNormal", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -139,6 +151,7 @@ static void MdlColorIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_COLORS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlColorInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009825C, MdlColorIntPort>("MdlColorInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -150,6 +163,7 @@ static void MdlColorPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_COLORS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlColor(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800982C4, MdlColorPort>("MdlColor", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -161,6 +175,7 @@ static void MdlTexCoordIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_TEXCOORDS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlTexCoordInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800983E0, MdlTexCoordIntPort>("MdlTexCoordInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -172,6 +187,7 @@ static void MdlTexCoordPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_TEXCOORDS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlTexCoord(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098448, MdlTexCoordPort>("MdlTexCoord", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -183,6 +199,7 @@ static void MdlFurPositionIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurPositionInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098680, MdlFurPositionIntPort>("MdlFurPositionInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -194,6 +211,7 @@ static void MdlFurPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_POSITIONS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurPosition(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800986E8, MdlFurPositionPort>("MdlFurPosition", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -205,6 +223,7 @@ static void MdlMaterialIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_MATERIALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlMaterialInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800987FC, MdlMaterialIntPort>("MdlMaterialInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -216,6 +235,7 @@ static void MdlMaterialPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_MATERIALS, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlMaterial(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098864, MdlMaterialPort>("MdlMaterial", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -227,6 +247,7 @@ static void MdlShapeIntPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_SHAPES, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlShapeInt(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098914, MdlShapeIntPort>("MdlShapeInt", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -238,6 +259,7 @@ static void MdlShapePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model(&ResourceMemory(), cpu->gpr[3], MH3_RES_SHAPES, std::bit_cast<int32_t>(cpu->gpr[4]), &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlShape(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009897C, MdlShapePort>("MdlShape", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -249,6 +271,7 @@ static void MdlNodeCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_NODES, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNodeCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80097FE4, MdlNodeCountPort>("MdlNodeCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -260,6 +283,7 @@ static void MdlPositionCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_POSITIONS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlPositionCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800980FC, MdlPositionCountPort>("MdlPositionCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -271,6 +295,7 @@ static void MdlNormalCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_NORMALS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlNormalCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098214, MdlNormalCountPort>("MdlNormalCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -282,6 +307,7 @@ static void MdlColorCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_COLORS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlColorCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009832C, MdlColorCountPort>("MdlColorCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -293,6 +319,7 @@ static void MdlTexCoordCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_TEXCOORDS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlTexCoordCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800984B0, MdlTexCoordCountPort>("MdlTexCoordCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -304,6 +331,7 @@ static void MdlFurVectorCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_VECTORS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurVectorCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800985CC, MdlFurVectorCountPort>("MdlFurVectorCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -315,6 +343,7 @@ static void MdlFurPositionCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_FUR_POSITIONS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlFurPositionCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80098750, MdlFurPositionCountPort>("MdlFurPositionCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -326,6 +355,7 @@ static void MdlMaterialCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_MATERIALS, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlMaterialCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800988CC, MdlMaterialCountPort>("MdlMaterialCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -337,6 +367,7 @@ static void MdlShapeCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_model_count(&ResourceMemory(), cpu->gpr[3], MH3_RES_SHAPES, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MdlShapeCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800989E4, MdlShapeCountPort>("MdlShapeCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -348,6 +379,7 @@ static void ShpRefPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpRef(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800773FC, ShpRefPort>("ShpRef", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -359,6 +391,7 @@ static void ShpRefConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpRefConst(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800776D8, ShpRefConstPort>("ShpRefConst", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -370,6 +403,7 @@ static void MatRefConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MatRefConst(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80077630, MatRefConstPort>("MatRefConst", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -381,6 +415,7 @@ static void TagRefConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRefConst(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099578, TagRefConstPort>("TagRefConst", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -392,6 +427,7 @@ static void TagRefPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRef(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800997A4, TagRefPort>("TagRef", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -403,6 +439,7 @@ static void ResDictionaryCountPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_dictionary_count(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ResDictionaryCount(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800696C8, ResDictionaryCountPort>("ResDictionaryCount", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -414,6 +451,7 @@ static void ShpVisiblePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_visible(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpVisible(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800776A8, ShpVisiblePort>("ShpVisible", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -425,6 +463,7 @@ static void NodeVisiblePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_node_visible(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_NodeVisible(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80078968, NodeVisiblePort>("NodeVisible", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -436,6 +475,7 @@ static void NodeIdPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_word(&ResourceMemory(), cpu->gpr[3], 0x0c, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_NodeId(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8005D0B4, NodeIdPort>("NodeId", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -447,6 +487,7 @@ static void ShpParentPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_parent(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpParent(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099464, ShpParentPort>("ShpParent", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -458,6 +499,7 @@ static void ShpPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_array(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpPosition(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800999D8, ShpPositionPort>("ShpPosition", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -469,6 +511,7 @@ static void ShpNormalPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_array(&ResourceMemory(), cpu->gpr[3], 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpNormal(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099A4C, ShpNormalPort>("ShpNormal", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -480,6 +523,7 @@ static void ShpColorPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_color(&ResourceMemory(), cpu->gpr[3], cpu->gpr[4], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpColor(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099ABC, ShpColorPort>("ShpColor", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -491,6 +535,7 @@ static void ShpTexCoordPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_texcoord(&ResourceMemory(), cpu->gpr[3], cpu->gpr[4], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpTexCoord(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099B74, ShpTexCoordPort>("ShpTexCoord", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -502,6 +547,7 @@ static void ShpFurPositionPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_array(&ResourceMemory(), cpu->gpr[3], 13, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpFurPosition(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099C14, ShpFurPositionPort>("ShpFurPosition", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -513,6 +559,7 @@ static void ShpSetupTagConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 0, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpSetupTagConst(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099604, ShpSetupTagConstPort>("ShpSetupTagConst", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -524,6 +571,7 @@ static void ShpSetupTagPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 0, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpSetupTag(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099810, ShpSetupTagPort>("ShpSetupTag", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -535,6 +583,7 @@ static void ShpPrimitiveTagConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 1, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpPrimitiveTagConst(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009A15C, ShpPrimitiveTagConstPort>("ShpPrimitiveTagConst", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -546,6 +595,7 @@ static void ShpPrimitiveTagPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_tag(&ResourceMemory(), cpu->gpr[3], 1, 1, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpPrimitiveTag(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099E5C, ShpPrimitiveTagPort>("ShpPrimitiveTag", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -557,6 +607,7 @@ static void TagDisplayListPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_tag_list(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagDisplayList(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009974C, TagDisplayListPort>("TagDisplayList", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -568,6 +619,7 @@ static void ShpSetupDisplayListPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_shape_setup(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpSetupDisplayList(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099710, ShpSetupDisplayListPort>("ShpSetupDisplayList", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -579,6 +631,7 @@ static void TagBufferSizePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_word(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagBufferSize(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099E38, TagBufferSizePort>("TagBufferSize", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -590,6 +643,7 @@ static void TagCommandSizePort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_word(&ResourceMemory(), cpu->gpr[3], 4, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagCommandSize(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_8009A07C, TagCommandSizePort>("TagCommandSize", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -601,6 +655,7 @@ static void ShpRelativeModelPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_offset(&ResourceMemory(), cpu->gpr[3], std::bit_cast<int32_t>(cpu->gpr[4]), 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ShpRelativeModel(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800994A0, ShpRelativeModelPort>("ShpRelativeModel", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -612,6 +667,7 @@ static void TagRelativeBytesPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_offset(&ResourceMemory(), cpu->gpr[3], std::bit_cast<int32_t>(cpu->gpr[4]), 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRelativeBytes(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099788, TagRelativeBytesPort>("TagRelativeBytes", cpu->gpr[1], cpu->gpr[3], cpu->gpr[4]);
 }
@@ -623,6 +679,7 @@ static void ResDictionaryValidPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_valid(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_ResDictionaryValid(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80062918, ResDictionaryValidPort>("ResDictionaryValid", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -634,6 +691,7 @@ static void MatValidPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_valid(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_MatValid(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80077744, MatValidPort>("MatValid", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -645,6 +703,7 @@ static void TagValidPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_valid(&ResourceMemory(), cpu->gpr[3], &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagValid(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800995F0, TagValidPort>("TagValid", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -656,6 +715,7 @@ static void TagRefUncheckedConstPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRefUncheckedConst(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_800995DC, TagRefUncheckedConstPort>("TagRefUncheckedConst", cpu->gpr[1], cpu->gpr[3]);
 }
@@ -667,6 +727,7 @@ static void TagRefUncheckedPort(CpuContext* cpu) {
     const auto status = mh3_res_runtime_reference(&ResourceMemory(), cpu->gpr[3], 0, &value);
     cpu->gpr[3] = Result(status, value);
 }
+
 extern "C" void MH3_TagRefUnchecked(CpuContext* cpu) {
     cpu->gpr[3] = Accessor<func_80099808, TagRefUncheckedPort>("TagRefUnchecked", cpu->gpr[1], cpu->gpr[3]);
 }

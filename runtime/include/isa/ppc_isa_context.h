@@ -60,12 +60,14 @@ class CpuContextScope {
         PpcThread::state.context = ctx;
 
         savedMxcsr_ = MkwGetHostFpControl();
+
         if (ctx != nullptr)
             MkwApplyHostNiMode(ctx->fpscr);
     }
 
     ~CpuContextScope() {
         PpcThread::state.context = previous_;
+
         if (previous_ != nullptr)
             MkwApplyHostNiMode(previous_->fpscr);
         else
@@ -86,6 +88,7 @@ inline CpuContext* TryGetCpuContext() noexcept {
 
 inline CpuContext* CurrentCpuContext() {
     CpuContext* cpu = TryGetCpuContext();
+
     if (!cpu) {
         std::cerr << "[runtime] CRITICAL: CurrentCpuContext is NULL. " << "Did you forget to create a CpuContextScope?" << std::endl;
         ShowRuntimeFatalPopup("Runtime context failure", "The game stopped because a translated function tried to run without a CPU context.");
@@ -97,6 +100,7 @@ inline CpuContext* CurrentCpuContext() {
         ShowRuntimeFatalPopup("Guest execution failure", "The game stopped because the guest stack pointer became null while translated code was running.");
         std::abort(); // Stop immediately so you can debug the cause.
     }
+
     return cpu;
 }
 
@@ -125,6 +129,7 @@ void MarkFatalErrorReported();
 // Helper to set CR bits (Signed)
 inline void SetCR(CpuContext* cpu, int field, int32_t a, int32_t b) {
     uint32_t crField = 0;
+
     if (a < b)
         crField |= 0x8; // LT
     if (a > b)
@@ -141,6 +146,7 @@ inline void SetCR(CpuContext* cpu, int field, int32_t a, int32_t b) {
 // Helper to set CR bits (Unsigned)
 inline void SetCR(CpuContext* cpu, int field, uint32_t a, uint32_t b) {
     uint32_t crField = 0;
+
     if (a < b)
         crField |= 0x8; // LT
     if (a > b)
@@ -157,6 +163,7 @@ inline void SetCR(CpuContext* cpu, int field, uint32_t a, uint32_t b) {
 // Helper to set CR bits (Floating-point)
 inline void SetCRFloat(CpuContext* cpu, int field, double a, double b) {
     uint32_t crField = 0;
+
     if (std::isnan(a) || std::isnan(b)) {
         // Unordered: LT/GT/EQ clear, SO set.
         crField = 0x1;

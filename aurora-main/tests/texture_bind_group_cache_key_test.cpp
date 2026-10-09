@@ -21,6 +21,7 @@ TEST(TextureBindGroupCacheKeyTest, DistinctViewsDoNotAliasWhenWrapperStorageIsRe
   TextureBindGroupCacheKey first{
       .sampledTextures = 1,
   };
+
   TextureBindGroupCacheKey second = first;
   auto* firstWrapper = new (wrapperStorage.data()) SimulatedTextureRef{&firstView};
   const void* const reusedWrapperAddress = firstWrapper;

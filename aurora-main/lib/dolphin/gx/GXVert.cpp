@@ -133,11 +133,13 @@ static ActiveAttrFmt active_attr_fmt(GXVtxFmt fmt, GXAttr attr) {
     break;
   case GX_VA_NRM:
     out.type = static_cast<GXCompType>(GET_REG_FIELD(va, 3, 10));
+
     if (GET_REG_FIELD(va, 1, 31)) {
       out.cnt = GX_NRM_NBT3;
     } else {
       out.cnt = GET_REG_FIELD(va, 1, 9) ? GX_NRM_NBT : GX_NRM_XYZ;
     }
+
     out.frac = normal_frac_bits(out.type);
     break;
   case GX_VA_CLR0:
@@ -193,6 +195,7 @@ static ActiveAttrFmt active_attr_fmt(GXVtxFmt fmt, GXAttr attr) {
   default:
     break;
   }
+
   return out;
 }
 
@@ -200,18 +203,23 @@ static u32 expected_component_count(GXAttr attr, const ActiveAttrFmt& fmt, GXAtt
   if (is_matrix_index_attr(attr) || is_color_attr(attr)) {
     return 1;
   }
+
   if (type == GX_INDEX8 || type == GX_INDEX16) {
     return (attr == GX_VA_NRM && fmt.cnt == GX_NRM_NBT3) ? 3u : 1u;
   }
+
   if (attr == GX_VA_POS) {
     return fmt.cnt == GX_POS_XY ? 2u : 3u;
   }
+
   if (attr == GX_VA_NRM) {
     return (fmt.cnt == GX_NRM_NBT || fmt.cnt == GX_NRM_NBT3) ? 9u : 3u;
   }
+
   if (is_tex_attr(attr)) {
     return fmt.cnt == GX_TEX_S ? 1u : 2u;
   }
+
   return 1;
 }
 
@@ -260,12 +268,15 @@ static void rebuild_vtx_cache(GXVtxFmt vtxFmt) {
   }
 
   GXAttr running = GX_VA_NULL;
+
   for (int i = GX_VA_TEX7; i >= GX_VA_PNMTXIDX; --i) {
     sVtxCache.attrs[i].next = running;
+
     if (sVtxCache.attrs[i].type != GX_NONE) {
       running = static_cast<GXAttr>(i);
     }
   }
+
   sVtxCache.first = running;
 }
 
@@ -276,6 +287,7 @@ static inline void ensure_vtx_cache(GXVtxFmt vtxFmt) {
       sVtxCache.hasNrms == __gx->hasNrms && sVtxCache.hasBiNrms == __gx->hasBiNrms) {
     return;
   }
+
   rebuild_vtx_cache(vtxFmt);
 }
 
@@ -294,9 +306,11 @@ static GXAttr select_implicit_attr(GXAttr first, GXAttr last) {
   if (sInBegin && sWriteAttr >= first && sWriteAttr <= last && attr_cache(sWriteAttr).type != GX_NONE) {
     return sWriteAttr;
   }
+
   if (sInBegin) {
     for (int i = static_cast<int>(sWriteAttr); i <= static_cast<int>(last); ++i) {
       const auto attr = static_cast<GXAttr>(i);
+
       if (attr >= first && attr_cache(attr).type != GX_NONE) {
         sWriteAttr = attr;
         sWriteAttrComps = 0;
@@ -304,14 +318,17 @@ static GXAttr select_implicit_attr(GXAttr first, GXAttr last) {
       }
     }
   }
+
   for (int i = static_cast<int>(first); i <= static_cast<int>(last); ++i) {
     const auto attr = static_cast<GXAttr>(i);
+
     if (attr_cache(attr).type != GX_NONE) {
       sWriteAttr = attr;
       sWriteAttrComps = 0;
       return attr;
     }
   }
+
   return first;
 }
 
@@ -319,6 +336,7 @@ static void align_explicit_attr(GXAttr attr) {
   if (!sInBegin || sWriteAttr == attr) {
     return;
   }
+
   sWriteAttr = attr;
   sWriteAttrComps = 0;
 }
@@ -327,13 +345,17 @@ static void advance_attr(GXAttr attr, u32 compsWritten) {
   if (!sInBegin) {
     return;
   }
+
   const AttrCacheEntry& entry = attr_cache(attr);
   sWriteAttrComps += compsWritten;
+
   if (sWriteAttrComps < entry.expected) {
     return;
   }
+
   sWriteAttr = entry.next;
   sWriteAttrComps = 0;
+
   if (sWriteAttr == GX_VA_NULL) {
     reset_attr_writer();
   }
@@ -343,13 +365,16 @@ static int64_t encode_float_component(float value, bool isSigned, u8 bits, u8 fr
   if (!std::isfinite(value)) {
     value = 0.0f;
   }
+
   const double scaled = static_cast<double>(value) * static_cast<double>(uint64_t{1} << frac);
   const double rounded = std::round(scaled);
+
   if (isSigned) {
     const int64_t minVal = -(int64_t{1} << (bits - 1));
     const int64_t maxVal = (int64_t{1} << (bits - 1)) - 1;
     return std::clamp(static_cast<int64_t>(rounded), minVal, maxVal);
   }
+
   const int64_t maxVal = (int64_t{1} << bits) - 1;
   return std::clamp(static_cast<int64_t>(rounded), int64_t{0}, maxVal);
 }
@@ -358,6 +383,7 @@ static int64_t scalar_to_signed_raw(const Scalar& value, u8 bits, u8 frac) {
   if (value.kind == ScalarKind::Float) {
     return encode_float_component(value.f, true, bits, frac);
   }
+
   const int64_t raw = value.kind == ScalarKind::Signed ? value.s : static_cast<int64_t>(value.u);
   const int64_t minVal = -(int64_t{1} << (bits - 1));
   const int64_t maxVal = (int64_t{1} << (bits - 1)) - 1;
@@ -368,6 +394,7 @@ static uint64_t scalar_to_unsigned_raw(const Scalar& value, u8 bits, u8 frac) {
   if (value.kind == ScalarKind::Float) {
     return static_cast<uint64_t>(encode_float_component(value.f, false, bits, frac));
   }
+
   const uint64_t raw = value.kind == ScalarKind::Signed ? static_cast<uint64_t>(std::max(value.s, int32_t{0})) : value.u;
   const uint64_t maxVal = (uint64_t{1} << bits) - 1;
   return std::min(raw, maxVal);
@@ -377,9 +404,11 @@ static float scalar_to_float(const Scalar& value) {
   if (value.kind == ScalarKind::Float) {
     return value.f;
   }
+
   if (value.kind == ScalarKind::Signed) {
     return static_cast<float>(value.s);
   }
+
   return static_cast<float>(value.u);
 }
 
@@ -409,18 +438,23 @@ static void write_numeric_attr(GXAttr attr, const std::array<Scalar, N>& values)
   ensure_vtx_cache(sBeginVtxFmt);
   align_explicit_attr(attr);
   const AttrCacheEntry& entry = attr_cache(attr);
+
   if (entry.type == GX_NONE) {
     return;
   }
+
   if (entry.type == GX_INDEX8 || entry.type == GX_INDEX16) {
     return;
   }
+
   const u32 expected = entry.expected;
   const u32 remaining = expected > sWriteAttrComps ? expected - sWriteAttrComps : expected;
   const u32 count = std::min<u32>(static_cast<u32>(values.size()), remaining);
+
   for (u32 i = 0; i < count; ++i) {
     write_numeric_component(entry.fmt, values[i]);
   }
+
   advance_attr(attr, count);
 }
 
@@ -428,6 +462,7 @@ static u8 clamp_color_float(float value) {
   if (!std::isfinite(value)) {
     return 0;
   }
+
   return static_cast<u8>(std::clamp(std::round(value * 255.0f), 0.0f, 255.0f));
 }
 
@@ -440,14 +475,17 @@ static void write_color_attr(u8 r, u8 g, u8 b, u8 a) {
   ensure_vtx_cache(sBeginVtxFmt);
   const GXAttr attr = select_implicit_attr(GX_VA_CLR0, GX_VA_CLR1);
   const AttrCacheEntry& entry = attr_cache(attr);
+
   if (entry.type == GX_NONE) {
     return;
   }
+
   if (entry.type == GX_INDEX8 || entry.type == GX_INDEX16) {
     return;
   }
 
   const ActiveAttrFmt& fmt = entry.fmt;
+
   switch (fmt.type) {
   case GX_RGB565: {
     const u16 packed = static_cast<u16>((quantize_unorm(r, 5) << 11) | (quantize_unorm(g, 6) << 5) |
@@ -488,6 +526,7 @@ static void write_color_attr(u8 r, u8 g, u8 b, u8 a) {
     GX_WRITE_U8(a);
     break;
   }
+
   advance_attr(attr, 1);
 }
 
@@ -500,6 +539,7 @@ static void write_tex_attr(const std::array<Scalar, N>& values) {
 
 static void write_index_attr(GXAttr attr, u16 index, bool index16) {
   ensure_vtx_cache(sBeginVtxFmt);
+
   if (attr == GX_VA_TEX0) {
     attr = select_implicit_attr(GX_VA_TEX0, GX_VA_TEX7);
   } else if (attr == GX_VA_CLR0) {
@@ -509,11 +549,13 @@ static void write_index_attr(GXAttr attr, u16 index, bool index16) {
   }
 
   const GXAttrType type = attr_cache(attr).type;
+
   if (type == GX_INDEX16 || (type != GX_INDEX8 && index16)) {
     GX_WRITE_U16(index);
   } else {
     GX_WRITE_U8(static_cast<u8>(index));
   }
+
   advance_attr(attr, 1);
 }
 
@@ -688,12 +730,15 @@ void GXMatrixIndex1u8(GXAttr attr, u8 index) {
 void GXCmd1u8(const u8 x) {
   aurora_legacy_gx_panic("GXCmd1u8");
 }
+
 void GXCmd1u16(const u16 x) {
   aurora_legacy_gx_panic("GXCmd1u16");
 }
+
 void GXCmd1u32(const u32 x) {
   aurora_legacy_gx_panic("GXCmd1u32");
 }
+
 void GXCmd1u64(const u64 x) {
   aurora_legacy_gx_panic("GXCmd1u64");
 }
@@ -701,27 +746,35 @@ void GXCmd1u64(const u64 x) {
 void GXParam1u8(const u8 x) {
   aurora_legacy_gx_panic("GXParam1u8");
 }
+
 void GXParam1u16(const u16 x) {
   aurora_legacy_gx_panic("GXParam1u16");
 }
+
 void GXParam1u32(const u32 x) {
   aurora_legacy_gx_panic("GXParam1u32");
 }
+
 void GXParam1s8(const s8 x) {
   aurora_legacy_gx_panic("GXParam1s8");
 }
+
 void GXParam1s16(const s16 x) {
   aurora_legacy_gx_panic("GXParam1s16");
 }
+
 void GXParam1s32(const s32 x) {
   aurora_legacy_gx_panic("GXParam1s32");
 }
+
 void GXParam1f32(const f32 x) {
   aurora_legacy_gx_panic("GXParam1f32");
 }
+
 void GXParam3f32(const f32 x, const f32 y, const f32 z) {
   aurora_legacy_gx_panic("GXParam3f32");
 }
+
 void GXParam4f32(const f32 x, const f32 y, const f32 z, const f32 w) {
   aurora_legacy_gx_panic("GXParam4f32");
 }

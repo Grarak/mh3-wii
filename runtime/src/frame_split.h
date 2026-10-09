@@ -36,6 +36,7 @@ enum MH3SplitFamily : unsigned {
     MH3_SPLIT_EFFECT_CALC,
     MH3_SPLIT_FAMILIES
 };
+
 // The split's clock. On the Vita steady_clock reads gettimeofday through a
 // system call (6 us); the process time is a 0.7 us microsecond counter.
 struct MH3SplitClock {
@@ -52,6 +53,7 @@ struct MH3SplitClock {
 #endif
     }
 };
+
 void MH3FrameSplitCall(unsigned kind);
 void MH3FrameSplitTime(unsigned family, MH3SplitClock::duration elapsed);
 extern uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
@@ -63,11 +65,13 @@ struct MH3FrameSplitScope {
         if (!mh3SplitDepth[family]++)
             start = MH3SplitClock::now();
     }
+
     ~MH3FrameSplitScope() {
         if (!--mh3SplitDepth[family])
             MH3FrameSplitTime(family, MH3SplitClock::now() - start);
     }
 };
+
 // Per-draw parts (material/shape preparation, packet record) run about a
 // hundred times per frame; MH3_PROFILE=split times them (two clock reads
 // each, ~1.5 ms/frame on the Vita).
@@ -80,6 +84,7 @@ struct MH3FrameSplitDetailScope {
         if (active && !mh3SplitDepth[family]++)
             start = MH3SplitClock::now();
     }
+
     ~MH3FrameSplitDetailScope() {
         if (active && !--mh3SplitDepth[family])
             MH3FrameSplitTime(family, MH3SplitClock::now() - start);

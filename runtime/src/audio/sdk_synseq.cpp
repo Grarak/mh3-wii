@@ -28,6 +28,7 @@ extern "C" {
 void MH3_SEQInit(CpuContext*) {
     if (FlatRead32(kSeqInitialized))
         return;
+
     FlatWrite32(kSeqList, 0);
     FlatWrite32(kSeqInitialized, 1);
 }
@@ -48,11 +49,14 @@ void MH3_SEQRunAudioFrame(CpuContext*) {
 void MH3_SYNInit(CpuContext*) {
     if (FlatRead32(kAxInitialized) == 0 || FlatRead32(kSynInitialized) != 0)
         return;
+
     const uint32_t count = FlatRead32(kAxVoiceCount);
     FlatWrite32(kSynVoiceCount, count);
     FlatWrite32(kSynVoices, kSynVoiceStorage);
+
     for (uint32_t i = 0; i < count; ++i)
         FlatWrite32(kSynVoiceStorage + i * kSynVoiceSize + kSynVoiceSynth, 0);
+
     FlatWrite32(kSynList, 0);
     FlatWrite32(kSynInitialized, 1);
 }

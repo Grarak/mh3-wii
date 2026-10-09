@@ -18,6 +18,7 @@ enum {
     MH3_CURSOR_VERTICAL,
     MH3_CURSOR_WIDESCREEN
 };
+
 typedef struct {
     void *user;
     void (*raster_read)(void *, mh3_raster_state *);

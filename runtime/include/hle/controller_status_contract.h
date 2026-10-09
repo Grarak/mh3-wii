@@ -61,14 +61,17 @@ class State {
         if (chan >= kChannelCount) {
             return kErrorBadChannel;
         }
+
         return m_initialized ? 0 : kErrorNotReady;
     }
 
     int32_t SetDataFormat(uint32_t chan, int32_t format) const {
         (void)format;
+
         if (chan >= kChannelCount) {
             return kErrorBadChannel;
         }
+
         return m_initialized ? kErrorNoController : kErrorNotReady;
     }
 

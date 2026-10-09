@@ -14,6 +14,7 @@ int exec(sqlite3* db, const char* sql, T callback, char** errmsg = nullptr) {
       db, sql,
       [](void* cb, int argc, char** argv, char** columns) -> int {
         auto& fp = *static_cast<T*>(cb);
+
         if constexpr (std::is_same_v<decltype(fp(0, 0, 0)), void>) {
           fp(argc, argv, columns);
           return 0;
@@ -29,10 +30,12 @@ public:
   Transaction(sqlite3* db, Module& log, bool immediate = false) : m_db(db), m_log(log) {
     const auto type = immediate ? "BEGIN IMMEDIATE" : "BEGIN";
     const auto ret = sqlite3_exec(m_db, type, nullptr, nullptr, nullptr);
+
     if (ret != SQLITE_OK) {
       m_log.error("Failed to start transaction: {}", sqlite3_errmsg(m_db));
       return;
     }
+
     m_active = true;
   }
 
@@ -47,6 +50,7 @@ public:
     }
 
     const auto ret = sqlite3_exec(m_db, "ROLLBACK", nullptr, nullptr, nullptr);
+
     if (ret != SQLITE_OK) {
       m_log.error("Failed to roll back transaction (uh oh?): {}", sqlite3_errmsg(m_db));
     }
@@ -58,6 +62,7 @@ public:
     }
 
     const auto ret = sqlite3_exec(m_db, "COMMIT", nullptr, nullptr, nullptr);
+
     if (ret != SQLITE_OK) {
       m_log.error("Failed to commit transaction: {}", sqlite3_errmsg(m_db));
       return;

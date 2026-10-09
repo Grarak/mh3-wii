@@ -41,6 +41,7 @@ uint aur_word(highp usampler2D b, uint i) { return texelFetch(b, ivec2(int(i & 2
 )";
 
 }
+
 std::string_view glsl_prelude() noexcept {
   return Prelude;
 }

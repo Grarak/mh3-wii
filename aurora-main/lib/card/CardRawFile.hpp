@@ -33,8 +33,10 @@ class CardRawFile : public ICard {
         uint16_t m_checksum;
         uint16_t m_checksumInv;
       };
+
       std::array<uint8_t, BlockSize> raw;
     };
+
     void _swapEndian();
   };
 #pragma pack(pop)

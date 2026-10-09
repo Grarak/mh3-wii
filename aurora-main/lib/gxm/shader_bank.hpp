@@ -1,5 +1,5 @@
 #pragma once
-// The embedded GXM shader bank (docs/vita-shader-bank.md): every program the
+// The embedded GXM shader bank (docs/optimizations/rendering/offline-shader-bank.md): every program the
 // Vita build can bind, compiled offline by psp2cgc at build time. Programs are
 // zstd frames over a shared dictionary, decompressed at their first use and
 // kept for the process lifetime (the shader patcher holds their addresses).
@@ -16,6 +16,7 @@ struct Program {
   uint64_t key;                  // XXH3-64 of the program source, or a fixed utility ID
   uint32_t offset, packed, size; // zstd frame in Blob, decompressed GXP size
 };
+
 extern const unsigned char* const Blob; // dictionary, then the frames
 extern const uint32_t DictionaryBytes;
 extern const Program VertexPrograms[];
@@ -26,10 +27,8 @@ extern const size_t FragmentProgramCount;
 extern const size_t FragmentScalarProgramCount;
 
 bool contains(uint64_t key, ShaderStage stage) noexcept;
+
 // The banked program, or nullptr when the bank has none. Graphics owner only.
 const SceGxmProgram* find(uint64_t key, ShaderStage stage);
-// Decompresses and validates every program through one scratch buffer
-// (hardware preflight); returns the count, throws on a corrupt program.
-size_t check_all();
 } // namespace shader_bank
 } // namespace aurora::gxm

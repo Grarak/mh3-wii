@@ -8,11 +8,13 @@ inline void SetCRResident(uint32_t& cr, uint32_t xer, int field, int32_t a, int3
     const int shift = (7 - field) * 4;
     cr = (cr & ~(0xFu << shift)) | (value << shift);
 }
+
 inline void SetCRResident(uint32_t& cr, uint32_t xer, int field, uint32_t a, uint32_t b) noexcept {
     uint32_t value = (a < b ? 0x8u : 0u) | (a > b ? 0x4u : 0u) | (a == b ? 0x2u : 0u) | ((xer >> 31) & 1u);
     const int shift = (7 - field) * 4;
     cr = (cr & ~(0xFu << shift)) | (value << shift);
 }
+
 inline void SetCRFloatResident(uint32_t& cr, int field, double a, double b) noexcept {
     uint32_t value = (std::isnan(a) || std::isnan(b)) ? 0x1u : ((a < b ? 0x8u : 0u) | (a > b ? 0x4u : 0u) | (a == b ? 0x2u : 0u));
     const int shift = (7 - field) * 4;
@@ -33,9 +35,11 @@ inline uint32_t PpcCrLogicalResident(uint32_t cr, uint32_t op, uint32_t bt, uint
     const auto readBit = [cr](uint32_t index) noexcept {
         return (cr >> (31u - (index & 31u))) & 1u;
     };
+
     const uint32_t a = readBit(ba);
     const uint32_t b = readBit(bb);
     uint32_t result = 0;
+
     switch (op & 7u) {
     case 0:
         result = ~(a | b) & 1u;
@@ -62,6 +66,7 @@ inline uint32_t PpcCrLogicalResident(uint32_t cr, uint32_t op, uint32_t bt, uint
         result = a | b;
         break;
     }
+
     return PpcCrSetBitResident(cr, bt, result);
 }
 
