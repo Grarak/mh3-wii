@@ -164,7 +164,8 @@ GLuint g_meshVao = 0, g_meshUniformBuffer = 0;
 GLuint g_materialVao = 0, g_materialVertexBuffer = 0, g_materialIndexBuffer = 0, g_materialUniformBuffer = 0;
 // Fixed shading programs: per-draw Draw+Shade and Palette blocks, Scene on revision.
 GLuint g_shadeMeshVao = 0, g_shadeGeometryVao = 0, g_shadeGeometryVertexBuffer = 0, g_shadeGeometryIndexBuffer = 0;
-GLuint g_shadeDrawBuffer = 0, g_shadePaletteBuffer = 0, g_shadeSceneBuffer = 0;
+GLuint g_shadeDrawBuffer = 0, g_shadeSceneBuffer = 0;
+std::array<uint8_t, 3> g_shadeGeometryCoordinates{};
 uint64_t g_shadeSceneRevision = UINT64_MAX;
 // Program -> sampler units currently assigned to u_texture0..2 and their locations.
 struct ShadedSamplers {
@@ -347,12 +348,12 @@ void shutdown() noexcept {
     for (GLuint vao : shadeVaos)
       if (vao)
         glDeleteVertexArrays(1, &vao);
-    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeDrawBuffer, g_shadePaletteBuffer, g_shadeSceneBuffer};
+    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeDrawBuffer, g_shadeSceneBuffer};
     for (GLuint buffer : shadeBuffers)
       if (buffer)
         glDeleteBuffers(1, &buffer);
     g_shadeMeshVao = g_shadeGeometryVao = g_shadeGeometryVertexBuffer = g_shadeGeometryIndexBuffer = 0;
-    g_shadeDrawBuffer = g_shadePaletteBuffer = g_shadeSceneBuffer = 0;
+    g_shadeDrawBuffer = g_shadeSceneBuffer = 0;
     g_shadeSceneRevision = UINT64_MAX;
     g_shadedSamplers.clear();
     for (auto& [_, fbo] : g_framebuffers) {
@@ -1277,15 +1278,14 @@ GLuint shade_buffer(GLuint& buffer) {
 void bind_shaded_blocks(const ShadedBlocks& blocks) {
   if (blocks.shadeOffset % uint32_t(std::max(g_caps.uniformOffsetAlignment, 1)) != 0)
     throw std::runtime_error("Shade block offset violates the uniform buffer alignment");
+  if (blocks.paletteBytes && blocks.paletteOffset % uint32_t(std::max(g_caps.uniformOffsetAlignment, 1)) != 0)
+    throw std::runtime_error("Palette block offset violates the uniform buffer alignment");
   glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeDrawBuffer));
   glBufferData(GL_UNIFORM_BUFFER, blocks.drawBytes, blocks.draw, GL_STREAM_DRAW);
   bind_uniform_range(0, g_shadeDrawBuffer, 0, blocks.shadeOffset);
   bind_uniform_range(3, g_shadeDrawBuffer, blocks.shadeOffset, blocks.shadeBytes);
-  if (blocks.palette) {
-    glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadePaletteBuffer));
-    glBufferData(GL_UNIFORM_BUFFER, blocks.paletteBytes, blocks.palette, GL_STREAM_DRAW);
-    bind_uniform_range(2, g_shadePaletteBuffer, 0, blocks.paletteBytes);
-  }
+  if (blocks.paletteBytes)
+    bind_uniform_range(2, g_shadeDrawBuffer, blocks.paletteOffset, blocks.paletteBytes);
   if (blocks.sceneRevision != g_shadeSceneRevision || !g_shadeSceneBuffer) {
     glBindBuffer(GL_UNIFORM_BUFFER, shade_buffer(g_shadeSceneBuffer));
     glBufferData(GL_UNIFORM_BUFFER, blocks.sceneBytes, blocks.scene, GL_STREAM_DRAW);
@@ -1314,7 +1314,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   if (!aurora::native_frame_drawing_allowed() || !indexCount)
     return;
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
-  if (!blocks.draw || !blocks.palette || !blocks.scene)
+  if (!blocks.draw || !blocks.paletteBytes || !blocks.scene)
     throw std::runtime_error("Shaded mesh has no uniform blocks");
   use_program(program);
   bind_shaded_samplers(program, textureUnits);
@@ -1376,24 +1376,34 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
     return;
   use_program(program);
   bind_shaded_samplers(program, textureUnits);
-  if (!g_shadeGeometryVao) {
-    glGenVertexArrays(1, &g_shadeGeometryVao);
-    glGenBuffers(1, &g_shadeGeometryVertexBuffer);
-    glGenBuffers(1, &g_shadeGeometryIndexBuffer);
-  }
-  glBindVertexArray(g_shadeGeometryVao);
-  glBindBuffer(GL_ARRAY_BUFFER, g_shadeGeometryVertexBuffer);
-  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(*geometry.vertices), geometry.vertices, GL_STREAM_DRAW);
   const auto attribute = [](unsigned location, int components, GLenum type, bool normalized, size_t offset) {
     glVertexAttribPointer(location, components, type, normalized, sizeof(AuroraNativeMaterialVertex), reinterpret_cast<void*>(offset));
     glEnableVertexAttribArray(location);
   };
-  attribute(0, 4, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, position));
-  attribute(1, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, view_position));
-  attribute(2, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, normal));
-  attribute(3, 4, GL_UNSIGNED_BYTE, true, offsetof(AuroraNativeMaterialVertex, color));
-  for (unsigned role = 0; role < 3; ++role)
-    attribute(4 + role, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, texcoord) + std::min<unsigned>(coordinates[role], 7) * 12);
+  // The VAO keeps the fixed attributes; only role coordinates change per draw.
+  // Orphaning glBufferData keeps the buffer name the pointers refer to.
+  if (!g_shadeGeometryVao) {
+    glGenVertexArrays(1, &g_shadeGeometryVao);
+    glGenBuffers(1, &g_shadeGeometryVertexBuffer);
+    glGenBuffers(1, &g_shadeGeometryIndexBuffer);
+    glBindVertexArray(g_shadeGeometryVao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_shadeGeometryVertexBuffer);
+    attribute(0, 4, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, position));
+    attribute(1, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, view_position));
+    attribute(2, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, normal));
+    attribute(3, 4, GL_UNSIGNED_BYTE, true, offsetof(AuroraNativeMaterialVertex, color));
+    g_shadeGeometryCoordinates.fill(0xff);
+  } else
+    glBindVertexArray(g_shadeGeometryVao);
+  glBindBuffer(GL_ARRAY_BUFFER, g_shadeGeometryVertexBuffer);
+  glBufferData(GL_ARRAY_BUFFER, size_t(geometry.vertex_count) * sizeof(*geometry.vertices), geometry.vertices, GL_STREAM_DRAW);
+  for (unsigned role = 0; role < 3; ++role) {
+    const uint8_t coordinate = std::min<uint8_t>(coordinates[role], 7);
+    if (g_shadeGeometryCoordinates[role] != coordinate) {
+      attribute(4 + role, 3, GL_FLOAT, false, offsetof(AuroraNativeMaterialVertex, texcoord) + coordinate * 12);
+      g_shadeGeometryCoordinates[role] = coordinate;
+    }
+  }
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_shadeGeometryIndexBuffer);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_t(geometry.index_count) * 2, geometry.indices, GL_STREAM_DRAW);
   bind_shaded_blocks(blocks);

@@ -1303,16 +1303,28 @@ bool ShadeSceneMemory(uint64_t& upload) {
     shade.sceneMemoryUpload = upload;
     return true;
 }
-std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& draw, uint8_t model, const AuroraNativeUniforms* palette) {
+// One per-draw allocation holds Draw, Shade and (mesh draws) the palette at
+// ShadePaletteOffset; it is filled in place and uploaded/bound once.
+constexpr uint32_t ShadePaletteOffset(uint8_t model) {
+    return (MH3_SHADE_DRAW_BYTES(model) + 255u) & ~255u;
+}
+mh3_shade_draw* ShadeDrawMemory(uint8_t model, bool palette, AuroraNativeUniforms& memory) {
+    if (!aurora_allocate_native_uniforms(palette ? ShadePaletteOffset(model) + uint32_t(sizeof(mh3_shade_palette)) : MH3_SHADE_DRAW_BYTES(model), &memory))
+        return nullptr;
+    auto* block = static_cast<mh3_shade_draw*>(memory.data);
+    std::memset(block, 0, MH3_SHADE_FRAGMENT_OFFSET);
+    return block;
+}
+std::optional<aurora::gl::ShadedBlocks> ShadeBlocks(const AuroraNativeUniforms& draw, uint8_t model, bool palette) {
     aurora::gl::ShadedBlocks blocks;
     if (!ShadeSceneMemory(blocks.sceneRevision))
         return std::nullopt;
     blocks.draw = draw.data;
-    blocks.drawBytes = MH3_SHADE_DRAW_BYTES(model);
+    blocks.drawBytes = draw.size;
     blocks.shadeOffset = MH3_SHADE_FRAGMENT_OFFSET;
     blocks.shadeBytes = MH3_SHADE_FRAGMENT_BYTES(model);
     if (palette) {
-        blocks.palette = palette->data;
+        blocks.paletteOffset = ShadePaletteOffset(model);
         blocks.paletteBytes = sizeof(mh3_shade_palette);
     }
     blocks.scene = shade.sceneMemory.data;
@@ -1334,9 +1346,11 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
     const auto& shading = ShadeMaterial();
     RequireEarlyDepth(shading);
-    mh3_shade_draw block;
-    std::memset(&block, 0, MH3_SHADE_FRAGMENT_OFFSET);
-    auto& vertex = block.vertex;
+    AuroraNativeUniforms memory{};
+    auto* const block = ShadeDrawMemory(shading.model, true, memory);
+    if (!block)
+        return;
+    auto& vertex = block->vertex;
     const auto lighting = ShadeChannels(shading, vertex);
     uint8_t coordinates = 0;
     for (unsigned role = 0; role < shading.textures; ++role)
@@ -1391,20 +1405,16 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
             bind.lane[7 + role] = int8_t(packed % 4);
         }
     }
-    const auto units = ShadeTextures(shading, block.fragment);
-    mh3_shade_fill(&shading, &material, &block);
+    const auto units = ShadeTextures(shading, block->fragment);
+    mh3_shade_fill(&shading, &material, block);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Mesh, lighting);
     std::copy(kinds.begin(), kinds.end(), variant.texgen);
     const GLuint program = ShadeProgram(variant)->get();
-    AuroraNativeUniforms drawMemory{}, paletteMemory{};
-    if (!aurora_allocate_native_uniforms(MH3_SHADE_DRAW_BYTES(shading.model), &drawMemory) || !aurora_allocate_native_uniforms(sizeof(mh3_shade_palette), &paletteMemory))
-        return;
-    std::memcpy(drawMemory.data, &block, MH3_SHADE_DRAW_BYTES(shading.model));
-    auto& palette = *static_cast<mh3_shade_palette*>(paletteMemory.data);
+    auto& palette = *reinterpret_cast<mh3_shade_palette*>(static_cast<char*>(memory.data) + ShadePaletteOffset(shading.model));
     std::memcpy(palette.position[0], inputs.position_palette, sizeof inputs.position_palette);
     std::memcpy(palette.position[10], inputs.texture_palette, sizeof inputs.texture_palette);
     std::memcpy(palette.normal[0], inputs.normal_palette, sizeof inputs.normal_palette);
-    const auto blocks = ShadeBlocks(drawMemory, shading.model, &paletteMemory);
+    const auto blocks = ShadeBlocks(memory, shading.model, true);
     if (!blocks)
         return;
     aurora::gl::draw_shaded_mesh(*resident.buffer, layout, bind, resident.mesh->vertex_offset, resident.mesh->vertex_count, resident.mesh->index_offset + mesh.first_index * 2, mesh.index_count,
@@ -1418,20 +1428,18 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
 void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     const auto& shading = ShadeMaterial();
     RequireEarlyDepth(shading);
-    mh3_shade_draw block;
-    std::memset(&block, 0, MH3_SHADE_FRAGMENT_OFFSET);
-    const auto lighting = ShadeChannels(shading, block.vertex);
+    AuroraNativeUniforms memory{};
+    auto* const block = ShadeDrawMemory(shading.model, false, memory);
+    if (!block)
+        return;
+    const auto lighting = ShadeChannels(shading, block->vertex);
     std::array<uint8_t, 3> coordinates{};
     for (unsigned role = 0; role < shading.textures; ++role)
         coordinates[role] = shading.texture_coordinate[role] < 8 ? shading.texture_coordinate[role] : 0;
-    const auto units = ShadeTextures(shading, block.fragment);
-    mh3_shade_fill(&shading, &material, &block);
+    const auto units = ShadeTextures(shading, block->fragment);
+    mh3_shade_fill(&shading, &material, block);
     const GLuint program = ShadeProgram(ShadeVariant(shading, NativeShaderVertex::Geometry, lighting))->get();
-    AuroraNativeUniforms drawMemory{};
-    if (!aurora_allocate_native_uniforms(MH3_SHADE_DRAW_BYTES(shading.model), &drawMemory))
-        return;
-    std::memcpy(drawMemory.data, &block, MH3_SHADE_DRAW_BYTES(shading.model));
-    const auto blocks = ShadeBlocks(drawMemory, shading.model, nullptr);
+    const auto blocks = ShadeBlocks(memory, shading.model, false);
     if (!blocks)
         return;
     aurora::gl::draw_shaded_geometry(geometry, coordinates, program, *blocks, units);
@@ -1543,10 +1551,12 @@ void SetNativeFog(const mh3_native_fog& source) {
     auto next = preparedFog;
     Check(mh3_material_prepare_fog(&source, GetNativeDrawState().viewport[2], &next), "Native fog producer");
     const bool structural = !fogKnown || fogSource.type != source.type || fogSource.range_enabled != source.range_enabled;
+    // Producers republish per model; the scene block changes only with content.
+    if (!fogKnown || std::memcmp(&fogSource, &source, sizeof source) || std::memcmp(&preparedFog, &next, sizeof next))
+        ++shade.revision;
     fogSource = source;
     preparedFog = next;
     fogKnown = true;
-    ++shade.revision;
     if (structural)
         preparedKnown = false;
 }
@@ -1556,9 +1566,10 @@ void SetNativeModelLights(const mh3_native_light_slots& source) {
     for (unsigned i = 0; i < 8; ++i)
         if (source.valid_mask & (1u << i))
             Check(mh3_material_prepare_light(&source.lights[i], &next[i]), "Native light producer");
+    if (lightSlots.valid_mask != source.valid_mask || std::memcmp(&preparedLights, &next, sizeof next))
+        ++shade.revision;
     lightSlots = source;
     preparedLights = next;
-    ++shade.revision;
 }
 void SetNativeTextureMatrix(uint32_t selector, const float matrix[12], bool matrix3x4) {
     Owner();

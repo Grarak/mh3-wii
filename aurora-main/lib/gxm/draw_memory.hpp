@@ -18,9 +18,9 @@ public:
   void bind(const void* uniforms, size_t uniformBytes, const void* indices, size_t indexBytes, const void* vertices, size_t vertexBytes, const void* attributes, size_t attributeBytes);
   SceGxmNotification completion_fence();
   void bind_uniform_range(uint32_t offset, uint32_t bytes);
-  // Shaded draws: vertex BUFFER[0] draw, [1] scene, [2] palette (optional);
-  // fragment BUFFER[0] draw + shadeOffset, [1] scene. All within the slot.
-  void bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shadeOffset, const void* palette, uint32_t paletteBytes, const void* scene, uint32_t sceneBytes);
+  // Shaded draws: vertex BUFFER[0] draw, [1] scene, [2] draw + paletteOffset
+  // (paletteBytes 0 = none); fragment BUFFER[0] draw + shadeOffset, [1] scene.
+  void bind_shaded(const void* draw, uint32_t drawBytes, uint32_t shadeOffset, uint32_t paletteOffset, uint32_t paletteBytes, const void* scene, uint32_t sceneBytes);
   void draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instances);
 
 private:

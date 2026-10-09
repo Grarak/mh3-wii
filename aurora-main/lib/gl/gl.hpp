@@ -326,11 +326,12 @@ void uniform4(GLuint program, const char* name, float x, float y, float z, float
 // Draw 0 (vertex), Scene 1, Palette 2 (mesh vertex), Shade 3 (fragment). Draw
 // and Shade share one allocation; Shade starts at shadeOffset. Scene is
 // re-uploaded only when its revision changes.
+// One per-draw allocation: Draw at 0, Shade at shadeOffset and (mesh draws)
+// Palette at paletteOffset (paletteBytes 0 = none); drawBytes covers all.
 struct ShadedBlocks {
   const void* draw = nullptr;
   uint32_t drawBytes = 0, shadeOffset = 0, shadeBytes = 0;
-  const void* palette = nullptr;
-  uint32_t paletteBytes = 0;
+  uint32_t paletteOffset = 0, paletteBytes = 0;
   const void* scene = nullptr;
   uint32_t sceneBytes = 0;
   uint64_t sceneRevision = 0;

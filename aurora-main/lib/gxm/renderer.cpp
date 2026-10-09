@@ -301,7 +301,7 @@ public:
     if (!state.display && !state.color)
       blend.colorMask = SCE_GXM_COLOR_MASK_NONE;
     program.bind(blend, output_format());
-    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.palette, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
+    draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes);
     for (const auto& [samplerName, slot] : native.samplers) {
       const auto& bound = state.textures.at(units.at(slot));
       if (!bound.texture)
@@ -1081,7 +1081,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   if (!aurora::native_frame_drawing_allowed() || !indexCount)
     return;
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
-  if (!blocks.draw || !blocks.palette || !blocks.scene)
+  if (!blocks.draw || !blocks.paletteBytes || !blocks.scene)
     throw std::runtime_error("Shaded mesh has no uniform blocks");
   auto& r = renderer();
   const auto found = r.meshes.find(buffer.get());
