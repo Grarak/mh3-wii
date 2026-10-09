@@ -743,7 +743,7 @@ void LoadSettings(const std::filesystem::path& base) {
         else if (key == "framelimit")
             SetFrameLimitSetting(on);
         else if (key == "msaa")
-            SetMsaaSetting(on);
+            SetMsaaSetting(value == "2x" ? 2 : value == "4x" || on ? 4 : 1);
         else if (key == "online_skip_tls")
             SetSkipTlsSetting(on);
     }
@@ -762,7 +762,7 @@ Status SaveSettings(const std::filesystem::path& base) {
         std::ofstream file(temporary, std::ios::trunc);
         const auto onOff = [](bool on) { return on ? "on" : "off"; };
         file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << onOff(FrameLimitSetting())
-             << "\nmsaa=" << onOff(MsaaSetting())
+             << "\nmsaa=" << (MsaaSetting() == 1 ? "off" : MsaaSetting() == 2 ? "2x" : "4x")
              << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
         file.close();
 
@@ -841,7 +841,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
     bool frameLimit = FrameLimitSetting();
-    bool msaa = MsaaSetting();
+    uint32_t msaa = MsaaSetting();
     std::string onlineServer = OnlineServerSetting();
     bool skipTls = SkipTlsSetting();
 
@@ -942,7 +942,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
                     std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
                     std::string("Framelimit: ") + (frameLimit ? "ON" : "OFF"),
-                    std::string("MSAA: ") + (msaa ? "4x" : "OFF"),
+                    std::string("MSAA: ") + (msaa == 1 ? "OFF" : msaa == 2 ? "2x" : "4x"),
                     std::string("Language: ") + languages[language].name,
                     "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
             const std::string cheats = ActiveCheats();
@@ -957,7 +957,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
                                            frameLimit ? "The game waits for each frame to be drawn before the next: every frame is shown."
                                                       : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
-                                           msaa ? "4x multisample antialiasing: smoother edges, more GPU work." : "No antialiasing.",
+                                           msaa == 1   ? "No antialiasing. MSAA smooths edges but can reduce performance: about 5% fewer fps at 2x and 15% at 4x in big fights."
+                                           : msaa == 2 ? "2x multisample antialiasing: smoother edges. Can reduce performance: about 5% fewer fps in big fights (4x: about 15%)."
+                                                       : "4x multisample antialiasing: the smoothest edges. Can reduce performance: about 15% fewer fps in big fights (2x: about 5%).",
                                            "The game's text, menus and keyboard: English, French, German, Italian or Spanish.",
                                            "The server the game's City mode connects to."};
             detail = details[std::min<size_t>(selected, 11)];
@@ -1301,6 +1303,15 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
             }
 
+            if (page == Page::Main && selected == 9 && (accept || direction)) {
+                constexpr uint32_t modes[] = {1, 2, 4};
+                const int index = msaa == 1 ? 0 : msaa == 2 ? 1 : 2;
+                msaa = modes[(index + 3 + (direction ? direction : 1)) % 3];
+                SetMsaaSetting(msaa);
+                Log("msaa %ux", unsigned(msaa));
+                return SaveSettings(base);
+            }
+
             if (page == Page::Main && selected == 10 && (accept || direction)) {
                 language = (language + languages.size() + (direction ? direction : 1)) % languages.size();
                 SetLanguageSetting(languages[language].system);
@@ -1371,14 +1382,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     frameLimit = !frameLimit;
                     SetFrameLimitSetting(frameLimit);
                     Log("framelimit %s", frameLimit ? "on" : "off");
-                } else if (selected == 9) {
-                    msaa = !msaa;
-                    SetMsaaSetting(msaa);
-                    Log("msaa %s", msaa ? "4x" : "off");
                 } else
                     enter(Page::Online);
 
-                if (selected >= 6 && selected <= 9)
+                if (selected >= 6 && selected <= 8)
                     return SaveSettings(base);
 
                 break;

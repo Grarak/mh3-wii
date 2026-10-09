@@ -46,9 +46,10 @@ private:
 
 class TextureStorage {
 public:
-  // samples 4 (RGBA8 and Depth32F render targets only): a 4x MSAA target.
-  // The colour surface downscales into the texture's own pixels; the depth
-  // keeps every sample, as a 2x wide and high image that sampling reads.
+  // samples 2 or 4 (RGBA8 and Depth32F render targets only): an MSAA
+  // target. The colour surface downscales into the texture's own pixels; the
+  // depth keeps every sample, as a 2x wide (and, at 4x, 2x high) image that
+  // sampling reads.
   TextureStorage(TexturePool& pool, uint32_t width, uint32_t height, uint32_t mips, gl::Format format, uint32_t samples = 1);
   ~TextureStorage();
   TextureStorage(const TextureStorage&) = delete;
@@ -56,7 +57,16 @@ public:
   void upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* source, uint32_t sourcePitch);
   const SceGxmTexture& sampled() const noexcept { return m_sampled; }
   const SceGxmColorSurface* color_surface() const;
+
+  // The colour as a single-sampled surface (a multisampled target's resolved
+  // pixels; the colour surface itself otherwise).
+  const SceGxmColorSurface* resolved_color_surface() const;
   const SceGxmDepthStencilSurface* depth_surface() const;
+
+  // The depth's memory as a single-sampled surface that loads and stores
+  // only in partial renders (a multisampled target's; the depth surface
+  // otherwise). Its contents replace the depth.
+  const SceGxmDepthStencilSurface* single_depth_surface() const;
   SceGxmOutputRegisterFormat output_format() const noexcept;
   bool in_cdram() const noexcept;
   bool has_gpu_use() const noexcept { return m_lastUse.address || m_gpuWritten; }
@@ -92,8 +102,8 @@ private:
   std::list<TextureStorage*>::iterator m_lru;
   std::vector<Level> m_levels;
   SceGxmTexture m_sampled{};
-  SceGxmColorSurface m_color{};
-  SceGxmDepthStencilSurface m_depth{};
+  SceGxmColorSurface m_color{}, m_resolved{};
+  SceGxmDepthStencilSurface m_depth{}, m_single{};
 };
 
 // Native texture control words allow MIRROR on LINEAR textures. These bits

@@ -89,10 +89,10 @@ public:
   bool scene_active() const noexcept { return m_inScene; }
   using DepthScene = gxm::DepthScene;
 
-  // multisample: a 4x MSAA scene (the surfaces are a 4x target's).
+  // multisample: an MSAA scene's mode (the surfaces are a 2x or 4x target's).
   void begin(uint32_t width, uint32_t height, const SceGxmColorSurface* color, const SceGxmDepthStencilSurface* depth, SceGxmSyncObject* sync = nullptr,
-             DepthScene depthScene = {}, bool multisample = false);
-  bool scene_multisample() const noexcept { return m_multisample; }
+             DepthScene depthScene = {}, SceGxmMultisampleMode multisample = SCE_GXM_MULTISAMPLE_NONE);
+  SceGxmMultisampleMode scene_multisample() const noexcept { return m_multisample; }
   void end();
   void finish();
   SceGxmNotification current_fence() const noexcept { return {m_notification, m_sceneSerial + unsigned(m_inScene)}; }
@@ -120,7 +120,8 @@ public:
 
 private:
   void release() noexcept;
-  bool m_initialized = false, m_inScene = false, m_multisample = false;
+  bool m_initialized = false, m_inScene = false;
+  SceGxmMultisampleMode m_multisample = SCE_GXM_MULTISAMPLE_NONE;
 
   // Slot 0 is owned by this application context for ordered scene retirement.
   volatile unsigned* m_notification = nullptr;
@@ -131,7 +132,7 @@ private:
   void* m_host = nullptr;
   std::vector<MappedMemory> m_memory;
   std::unique_ptr<CdramArena> m_arena;
-  std::map<std::tuple<uint32_t, uint32_t, bool>, SceGxmRenderTarget*> m_targets;
+  std::map<std::tuple<uint32_t, uint32_t, SceGxmMultisampleMode>, SceGxmRenderTarget*> m_targets;
   void* m_displayData[aurora::GpuFrameRing::BufferCount]{};
   SceGxmColorSurface m_display[aurora::GpuFrameRing::BufferCount]{};
   SceGxmSyncObject* m_sync[aurora::GpuFrameRing::BufferCount]{};

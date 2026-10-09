@@ -268,12 +268,12 @@ void TexturePool::touch(TextureStorage& texture) {
 
 TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t height_, uint32_t mips_, gl::Format format_, uint32_t samples_)
     : width(width_), height(height_), mips(mips_), format(format_), samples(samples_), m_pool(pool) {
-  if (samples != 1 && (samples != 4 || mips != 1 || (format != gl::Format::RGBA8 && format != gl::Format::Depth32F)))
-    AURORA_THROW(std::runtime_error("Native multisampling needs a 4x RGBA8 or depth render target"));
+  if (samples != 1 && ((samples != 2 && samples != 4) || mips != 1 || (format != gl::Format::RGBA8 && format != gl::Format::Depth32F)))
+    AURORA_THROW(std::runtime_error("Native multisampling needs a 2x or 4x RGBA8 or depth render target"));
 
   m_pixelBytes = native_format(format).bytes;
-  const uint32_t scale = samples == 4 && format == gl::Format::Depth32F ? 2 : 1;
-  auto layout = gfx::native_texture_layout(width * scale, height * scale, mips, format);
+  const bool sampledDepth = samples > 1 && format == gl::Format::Depth32F;
+  auto layout = gfx::native_texture_layout(sampledDepth ? width * 2 : width, sampledDepth && samples == 4 ? height * 2 : height, mips, format);
   m_levels = std::move(layout.levels);
   m_imageBytes = layout.image_bytes;
   m_paletteOffset = layout.palette_offset;
@@ -313,23 +313,43 @@ void TextureStorage::refresh_views() {
     if (m_paletteBytes)
       check(sceGxmTextureSetPalette(&m_sampled, static_cast<uint8_t*>(m_data) + m_paletteOffset), "initialize native CDRAM palette");
   } else if (format == gl::Format::Depth32F) {
-    // A 4x target's samples: each pixel's four are the 2x2 block at twice its
-    // coordinates, so nearest sampling at the same coordinates reads one.
-    const uint32_t scale = samples == 4 ? 2 : 1;
-    check(sceGxmTextureInitLinearStrided(&m_sampled, m_data, native.sampled, width * scale, height * scale, m_levels[0].pitch), "initialize sampled depth view");
+    // A multisampled target's samples: each pixel's are the 2x2 (4x) or 2x1
+    // (2x) block at its scaled coordinates, so nearest sampling at the same
+    // normalized coordinates reads one.
+    check(sceGxmTextureInitLinearStrided(&m_sampled, m_data, native.sampled, samples > 1 ? width * 2 : width, samples == 4 ? height * 2 : height,
+                                         m_levels[0].pitch),
+          "initialize sampled depth view");
     check(sceGxmDepthStencilSurfaceInit(&m_depth, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32M, SCE_GXM_DEPTH_STENCIL_SURFACE_LINEAR, m_levels[0].pitch / 4, m_data, nullptr), "initialize native depth surface");
     sceGxmDepthStencilSurfaceSetForceStoreMode(&m_depth, SCE_GXM_DEPTH_STENCIL_FORCE_STORE_ENABLED);
     sceGxmDepthStencilSurfaceSetForceLoadMode(&m_depth, SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED);
     sceGxmDepthStencilSurfaceSetBackgroundMask(&m_depth, SCE_TRUE);
+
+    // A multisampled depth's memory as one sample per pixel (it holds twice
+    // or four times that), for single-sampled scenes that leave the depth
+    // dead: they test no depth but may update the mask (the pixel clip),
+    // which needs a surface with mask data. Only a partial render touches it.
+    m_single = m_depth;
+
+    if (samples > 1) {
+      check(sceGxmDepthStencilSurfaceInit(&m_single, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32M, SCE_GXM_DEPTH_STENCIL_SURFACE_LINEAR, (width + 31) & ~31u, m_data, nullptr),
+            "initialize single-sampled depth surface");
+      sceGxmDepthStencilSurfaceSetBackgroundMask(&m_single, SCE_TRUE);
+    }
   } else {
     check(sceGxmTextureInitLinear(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native linear texture");
 
     if (format >= gl::Format::U8_RRRR)
       return; // Explicit asset formats are sample-only.
     check(sceGxmColorSurfaceInit(&m_color, native.color, SCE_GXM_COLOR_SURFACE_LINEAR,
-                                 samples == 4 ? SCE_GXM_COLOR_SURFACE_SCALE_MSAA_DOWNSCALE : SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
+                                 samples > 1 ? SCE_GXM_COLOR_SURFACE_SCALE_MSAA_DOWNSCALE : SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
                                  width, height, m_levels[0].pitch / m_pixelBytes, m_data),
           "initialize native color surface");
+
+    // The resolved pixels as a single-sampled target, for scenes that need
+    // no samples.
+    check(sceGxmColorSurfaceInit(&m_resolved, native.color, SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
+                                 width, height, m_levels[0].pitch / m_pixelBytes, m_data),
+          "initialize native resolved color surface");
   }
 }
 
@@ -340,11 +360,21 @@ const SceGxmColorSurface* TextureStorage::color_surface() const {
   return &m_color;
 }
 
+const SceGxmColorSurface* TextureStorage::resolved_color_surface() const {
+  color_surface();
+  return &m_resolved;
+}
+
 const SceGxmDepthStencilSurface* TextureStorage::depth_surface() const {
   if (format != gl::Format::Depth32F)
     AURORA_THROW(std::runtime_error("Color texture used as depth target"));
 
   return &m_depth;
+}
+
+const SceGxmDepthStencilSurface* TextureStorage::single_depth_surface() const {
+  depth_surface();
+  return &m_single;
 }
 
 SceGxmOutputRegisterFormat TextureStorage::output_format() const noexcept {

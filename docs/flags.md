@@ -14,7 +14,7 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_NATIVE_ASSET_DIR` | a whole-disc converted texture/model set (`native-textures.bin`, `native-texture-map.bin`, `native-models/`) to use instead of the load-time cache | all |
 | `MH3_WIDESCREEN` | `0`: the console's 4:3 setting; default 16:9 ([widescreen](vita-widescreen.md)) | all |
 | `MH3_FRAME_LIMIT` | `off` turns the game thread limiter off (and on the Vita flips without VSync), as the launcher's `Framelimit: OFF` does, for runs started without the launcher: benchmarks show the real speed | all |
-| `MH3_MSAA` | `4` renders the EFB with 4x multisampling (the Vita's GXM renderer; the others stay single-sampled), `off` without, as the launcher's `MSAA` row does, for runs started without the launcher | development |
+| `MH3_MSAA` | `2` or `4` renders the EFB with 2x or 4x multisampling (the Vita's GXM renderer, and the GL one where the driver offers it), `off` without, as the launcher's `MSAA` row does, for runs started without the launcher | development |
 | `MH3_STATS` | `0` turns off the once-per-second statistics lines (default on; [profiling](profiling.md#statistics-lines)); set to anything, it also prints the material-GPU counters | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
 | `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution (448·n rows); overrides the launcher's `Upscaling` ([launcher](vita-launcher.md)) | development |

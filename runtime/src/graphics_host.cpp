@@ -114,7 +114,7 @@ bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 bool displayWidescreen = false;
 bool upscaling = true;
-bool msaa = false;
+uint32_t msaa = 1;
 
 // Every host renders for the Vita's display; other hosts scale it into their window.
 constexpr uint32_t DisplayWidth = 960, DisplayHeight = 544;
@@ -344,13 +344,13 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
         }
     }
 #endif
-    // MH3_MSAA=4 or off: the launcher's MSAA setting for runs started without it.
-    bool multisample = msaa;
+    // MH3_MSAA=2, 4 or off: the launcher's MSAA setting for runs started without it.
+    uint32_t samples = msaa;
 #ifdef MH3_DEVELOPMENT
     if (const char* v = std::getenv("MH3_MSAA"))
-        multisample = std::strcmp(v, "4") == 0;
+        samples = std::strcmp(v, "4") == 0 ? 4 : std::strcmp(v, "2") == 0 ? 2 : 1;
 #endif
-    config.msaa = multisample ? 4 : 1;
+    config.msaa = samples;
     config.maxTextureAnisotropy = 1;
     const auto info = aurora_initialize(argc, argv, &config);
 
@@ -501,12 +501,12 @@ void SetUpscalingSetting(bool enabled) {
     upscaling = enabled;
 }
 
-bool MsaaSetting() {
+uint32_t MsaaSetting() {
     return msaa;
 }
 
-void SetMsaaSetting(bool enabled) {
-    msaa = enabled;
+void SetMsaaSetting(uint32_t samples) {
+    msaa = samples == 2 || samples == 4 ? samples : 1;
 }
 
 void SetNativeDisplayWidescreen(bool widescreen) {

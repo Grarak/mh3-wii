@@ -65,7 +65,7 @@ bool initialize(SDL_Window* window) {
   g_graphicsConfig = GraphicsConfig{
       .width = size.native_fb_width,
       .height = size.native_fb_height,
-      .msaaSamples = g_config.msaa >= 4 && caps.maxRenderTargetSamples >= 4 ? 4u : 1u,
+      .msaaSamples = (g_config.msaa == 2 || g_config.msaa == 4) && caps.maxRenderTargetSamples >= g_config.msaa ? uint32_t(g_config.msaa) : 1u,
       .textureAnisotropy = static_cast<uint16_t>(std::clamp<int32_t>(g_config.maxTextureAnisotropy, 1, std::max(caps.maxAnisotropy, 1))),
       .maxTextureDimension2D = static_cast<uint32_t>(std::max(caps.maxTextureSize, 1)),
   };

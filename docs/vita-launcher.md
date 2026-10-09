@@ -231,17 +231,21 @@ Off, the game thread runs ahead, the render thread draws the newest frame
 and skips the others, and motion can judder. The game's render thread start,
 after the hand-off, applies it.
 
-`MSAA` (off by default; `SetMsaaSetting`, `runtime/include/msaa.h`) reads
-`MSAA: 4x` or `OFF`. On, the game's EFB is a 4x multisampled GXM target: the
+`MSAA` (off by default; `SetMsaaSetting`, `runtime/include/msaa.h`) cycles
+`OFF`, `2x` and `4x`. On, the game's EFB is a multisampled GXM target: the
 colour resolves into the EFB's pixels as each scene stores it, and the depth
-keeps all four samples (four times the memory) for depth tests and the
-nearest reads of depth copies. The game's graphics startup applies it; the
-development `MH3_MSAA=4` (runtime.env) turns it on for runs started without
-the launcher. It costs GPU time and CDRAM, not CPU: on the devkit (frame
-limit off, 2026-10-08) the village walk went from 64 to 59 fps (the GPU
-became the limit) and the Alatreon intro and fight start from 64 to 53 fps
-(about 3 ms more GPU per frame), and the 4-sample depth takes 6 MiB more
-CDRAM (Alatreon 36 of 47 MiB instead of 30).
+keeps every sample (twice or four times the memory; 2x stores each pixel's
+two samples side by side) for depth tests and the nearest reads of depth
+copies. A scene whose depth no later draw reads (depth liveness: the HUD and
+2D layers after the 3D scene) draws single-sampled into the resolved colour,
+with a one-sample view of the dead depth's memory for the pixel clip's mask.
+The game's graphics startup applies it; the development `MH3_MSAA=2` or `4`
+(runtime.env) sets it for runs started without the launcher. It costs GPU
+time and CDRAM, not CPU. On the devkit (Alatreon, frame limit off, camera
+turning, 2026-10-08) the game drew 67.9 fps without MSAA, 64.3 at 2x (-5%)
+and 58.6 at 4x (-14%; 56.5 before the single-sampled scenes); the launcher's
+detail line gives these estimates. The 4-sample depth takes 6 MiB more CDRAM
+(Alatreon 36 of 47 MiB instead of 30).
 
 `Start game` goes through the game's own intro movie and title. Only the
 Classic Controller's A (the Vita's Circle) skips the intro: Plus (Start) does

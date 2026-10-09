@@ -11,7 +11,6 @@
 #ifdef MH3_DEVELOPMENT
 #include "runtime_shader.hpp"
 #endif
-#include "razor.hpp"
 #include <aurora/native_frame_gate.hpp>
 #include "draw_memory.hpp"
 #include "raster.hpp"
@@ -165,7 +164,7 @@ SceGxmTexture build_sampling_view(const TextureStorage& texture, const SamplerDe
   uint32_t words[4];
   std::memcpy(words, &result, sizeof(words));
 
-  // These fields are measured on hardware in sgx_texture_hw.md. Changing
+  // These fields were measured on hardware (SGX texture control words). Changing
   // the clamp retains the actual chain's storage layout and backing address.
   words[0] = (words[0] & ~0x001e0000u) | (uint32_t(maxLod) << 17);
   words[2] = (words[2] & ~3u) | (uint32_t(minLod) >> 2);
@@ -353,11 +352,22 @@ public:
         if (state.color && state.depth && texture(state.depth).samples != samples)
           AURORA_THROW(std::runtime_error("Native framebuffer attachments differ in samples"));
 
-        device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr,
-                     nullptr, state.depth ? depth_scene(clearDepth) : Device::DepthScene{}, samples == 4);
+        // A multisampled scene whose depth no later draw reads (depth
+        // liveness: the 2D layers after the 3D scene) gains nothing from its
+        // samples but pays their binning and resolve: it draws single-sampled
+        // into the resolved colour. Its depth surface is the dead depth's
+        // memory, one sample per pixel: GXM needs one with mask data for the
+        // pixel clip's mask updates.
+        if (samples > 1 && state.color && state.depth == liveness.depth && !liveness.reads && !liveness.broken) {
+          liveness.unstored = state.depth;
+          device.begin(width, height, texture(state.color).resolved_color_surface(), texture(state.depth).single_depth_surface());
+        } else
+          device.begin(width, height, state.color ? texture(state.color).color_surface() : nullptr, state.depth ? texture(state.depth).depth_surface() : nullptr,
+                       nullptr, state.depth ? depth_scene(clearDepth) : Device::DepthScene{},
+                       samples == 4   ? SCE_GXM_MULTISAMPLE_4X
+                       : samples == 2 ? SCE_GXM_MULTISAMPLE_2X
+                                      : SCE_GXM_MULTISAMPLE_NONE);
       }
-
-      razor_scene_begin(gfx::current_frame(), device.current_fence().value, width, height, state.color, state.depth, state.display);
 
       // Stored DF32M contains coverage from the previous scene. Recreate the
       // current coverage even when the logical scissor has not changed.
@@ -927,13 +937,6 @@ public:
     if (state.color && r.colorMask[3] && !preservesAlphaOne)
       entry(state.color).alpha.draw(r.colorMask[3]);
 
-    if (razor_scene_tracing()) {
-      const auto found = programs.find(program);
-      const auto* native = found == programs.end() ? nullptr : &found->second;
-      razor_scene_draw(kind, native ? std::string_view(native->label) : kind, vertices, indices, instances, r.blend,
-                       native && native->usesDiscard, native && native->replacesDepth);
-    }
-
     using namespace gfx::port_capture;
 
     if (!enabled())
@@ -1501,9 +1504,6 @@ GLuint Program::get() noexcept {
     m_replacesDepth = sceGxmProgramIsDepthReplaceUsed(binary);
     NativeProgram native;
 
-    if (razor_scene_tracing())
-      native.label = m_desc.label;
-
     native.usesDiscard = m_usesDiscard;
     native.replacesDepth = m_replacesDepth;
     native.nativeMaterialVertices = m_desc.nativeMaterialVertices;
@@ -1686,66 +1686,6 @@ void invalidate_state() noexcept {
 }
 
 void bind_draw_vao(GLuint) noexcept { /* Active mapped indices belong to DrawMemory. */ }
-
-// GPU measurement (docs/vita-razor.md), development builds:
-// AURORA_SKIP_DRAWS=quads,geometry,blended-meshes,opaque-meshes leaves those
-// draws out, and program:TEXT items the draws whose program label contains
-// TEXT (labels need MH3_RAZOR's scenes), so a Razor run shows what they cost.
-// Read at first use (the Vita applies runtime.env after static
-// initialization).
-enum SkipKind : uint32_t { SkipQuads = 1, SkipGeometry = 2, SkipBlendedMeshes = 4, SkipOpaqueMeshes = 8 };
-
-bool skip_draws(uint32_t kind, GLuint program) {
-#ifdef MH3_DEVELOPMENT
-  struct Skips {
-    uint32_t kinds = 0;
-    std::vector<std::string> programs;
-  };
-
-  static const Skips skips = [] {
-    Skips result;
-    const char* value = std::getenv("AURORA_SKIP_DRAWS");
-    std::string_view rest = value ? value : "";
-
-    while (!rest.empty()) {
-      const auto comma = rest.find(',');
-      const std::string_view item = rest.substr(0, comma);
-      rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
-
-      if (item.starts_with("program:"))
-        result.programs.emplace_back(item.substr(8));
-
-      for (const auto& [name, bit] : {std::pair{"quads", SkipQuads}, {"geometry", SkipGeometry}, {"blended-meshes", SkipBlendedMeshes}, {"opaque-meshes", SkipOpaqueMeshes}})
-        if (item == name)
-          result.kinds |= bit;
-    }
-
-    return result;
-  }();
-
-  if (!skips.kinds && skips.programs.empty())
-    return false;
-
-  auto& r = renderer();
-
-  if (kind & (SkipBlendedMeshes | SkipOpaqueMeshes))
-    kind = r.state.raster.blend ? SkipBlendedMeshes : SkipOpaqueMeshes;
-
-  if (skips.kinds & kind)
-    return true;
-
-  if (const auto found = r.programs.find(program); found != r.programs.end())
-    for (const auto& text : skips.programs)
-      if (found->second.label.find(text) != std::string::npos)
-        return true;
-
-  return false;
-#else
-  (void)kind;
-  (void)program;
-  return false;
-#endif
-}
 
 void draw_fullscreen(GLuint id) noexcept {
   if (!aurora::native_frame_drawing_allowed())
@@ -1969,7 +1909,7 @@ void draw_native_geometry(const AuroraNativeGeometry& geometry, bool textured) n
 }
 
 void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry, GLuint program, const AuroraNativeUniforms& uniforms) noexcept {
-  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count || skip_draws(SkipGeometry, program))
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
     return;
 
   guarded([&] {
@@ -1990,7 +1930,7 @@ void draw_native_material_geometry(const AuroraNativeMaterialGeometry& geometry,
 
 void draw_native_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount, GLuint program,
                       const AuroraNativeUniforms& uniforms) {
-  if (!aurora::native_frame_drawing_allowed() || !indexCount || skip_draws(SkipBlendedMeshes, program))
+  if (!aurora::native_frame_drawing_allowed() || !indexCount)
     return;
 
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
@@ -2042,7 +1982,7 @@ SceGxmAttributeFormat attribute_format(MeshAttributeFormat format, unsigned& com
 
 void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
                       GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
-  if (!aurora::native_frame_drawing_allowed() || !indexCount || skip_draws(SkipBlendedMeshes, program))
+  if (!aurora::native_frame_drawing_allowed() || !indexCount)
     return;
 
   gfx::validate_mesh_draw(buffer, layout, vertexOffset, vertexCount, indexOffset, indexCount);
@@ -2093,7 +2033,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
                           const std::array<uint8_t, 3>& textureUnits) noexcept {
-  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count || skip_draws(SkipGeometry, program))
+  if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
     return;
 
   guarded([&] {
@@ -2120,9 +2060,6 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
 
 void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
-    return;
-
-  if (skip_draws(SkipQuads, program))
     return;
 
   guarded([&] {
