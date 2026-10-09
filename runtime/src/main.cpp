@@ -167,6 +167,27 @@ void StartQuestBoot(int argc, char** argv) {
     StartVillageBoot();
 }
 
+#if defined(__vita__) && defined(MH3_DEVELOPMENT)
+void PrepareVitaGameData() {
+    const char* dir = std::getenv("MH3_DISC_DIR");
+    if (!dir)
+        return;
+    const std::filesystem::path data = dir;
+    if (VitaLauncher::DiscReady(data))
+        return;
+    std::filesystem::path image;
+    for (const auto& entry : std::filesystem::directory_iterator(data.parent_path()))
+        if (entry.is_regular_file() && (entry.path().extension() == ".iso" || entry.path().extension() == ".rvz" || entry.path().extension() == ".wia")) {
+            if (!image.empty())
+                throw std::runtime_error("More than one disc image in " + data.parent_path().string());
+            image = entry.path();
+        }
+    if (image.empty())
+        throw std::runtime_error("No game data in " + data.string() + " and no disc image beside it");
+    VitaLauncher::ProcessDisc(image, data, [](const std::string& stage, uint64_t, uint64_t) { std::fprintf(stderr, "MH3 prepare: %s\n", stage.c_str()); });
+}
+#endif
+
 int main(int argc, char** argv) {
     InstallLegacyGxPanicHandler();
 #ifdef __vita__
@@ -179,6 +200,12 @@ int main(int argc, char** argv) {
 #ifdef __vita__
         if (argc == 1 && !VitaLauncher::Run())
             return 0;
+#endif
+#if defined(__vita__) && defined(MH3_DEVELOPMENT)
+        // Development launches skip the launcher: prepare MH3_DISC_DIR from
+        // the one disc image in its parent directory.
+        if (argc > 1)
+            PrepareVitaGameData();
 #endif
 #ifndef __vita__
         // --rom <image> goes with any other option.

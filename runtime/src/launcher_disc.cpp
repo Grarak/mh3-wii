@@ -47,7 +47,12 @@ bool DiscReady(const std::filesystem::path& output) {
     }
 }
 void ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path& output, const Progress& progress) {
+#ifdef __vita__
+    // libstdc++'s POSIX absolute() treats the Vita mount prefix as relative.
+    const auto image = iso;
+#else
     const auto image = std::filesystem::absolute(iso);
+#endif
     if (DiscReady(output) && (!std::filesystem::exists(output / "rom.txt") || RecordedRom(output) == image.string()))
         return;
     if (std::filesystem::exists(output) && !std::filesystem::exists(output / "disc-layout.txt"))

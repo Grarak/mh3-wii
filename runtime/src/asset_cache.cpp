@@ -23,8 +23,15 @@ using namespace VitaLauncher;
 constexpr const char* Version = "mh3-asset-cache 1\n";
 constexpr uint32_t RecordMagic = 0x5243334d; // "M3CR"
 constexpr unsigned Workers = 3;
+#ifdef __vita__
+// A model workspace is ~30 MiB of the 112 MiB newlib heap: one at a time.
+constexpr unsigned ModelWorkers = 1;
 // The game thread waits once this much indexed file data awaits conversion.
+constexpr size_t MaxPendingBytes = 16u << 20;
+#else
+constexpr unsigned ModelWorkers = Workers;
 constexpr size_t MaxPendingBytes = 48u << 20;
+#endif
 
 uint32_t Le32(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
@@ -101,6 +108,7 @@ struct AssetCache::Impl {
     std::condition_variable changed;
     std::deque<Job> jobs;
     size_t pendingBytes = 0;
+    unsigned modelJobs = 0;
     bool stopping = false;
     std::vector<pthread_t> threads;
 
@@ -292,11 +300,17 @@ struct AssetCache::Impl {
         for (;;) {
             if (jobs.empty())
                 converter.reset(); // Return the model workspace while idle.
-            changed.wait(guard, [&] { return stopping || !jobs.empty(); });
+            auto next = jobs.end();
+            changed.wait(guard, [&] {
+                next = std::find_if(jobs.begin(), jobs.end(), [&](const Job& j) { return j.kind == Kind::Textures || modelJobs < ModelWorkers; });
+                return stopping || next != jobs.end();
+            });
             if (stopping)
                 return;
-            const Job job = jobs.front();
-            jobs.pop_front();
+            const Job job = *next;
+            jobs.erase(next);
+            if (job.kind == Kind::Models)
+                ++modelJobs;
             auto& s = *job.source;
             const auto data = s.data;
             guard.unlock();
@@ -321,6 +335,7 @@ struct AssetCache::Impl {
             else {
                 s.modelsDone = true;
                 s.modelsUsable = usable;
+                --modelJobs;
             }
             if (s.texturesDone && s.modelsDone && s.data) {
                 pendingBytes -= s.data->size();
