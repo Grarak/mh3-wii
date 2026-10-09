@@ -22,10 +22,18 @@ const SceGxmProgram* fragment_scalar_binary(uint64_t hash);
 
 // Read on the graphics owner. Callback retirement releases display-queue
 // bookkeeping; presented counts successful VBlank flips (SetFrameBuf + Wait).
+// Pacing, for flips whose frame carries a game time (set_present_game_time):
+// paced_flips counts them, pacing_error_us adds |flip interval - game time the
+// frame advanced| over them, pacing_error_max_us is the largest since the
+// previous call, and flip_vblanks counts flip intervals of 1, 2, 3 and 4 or
+// more VBlanks.
 struct DisplayStatistics {
   uint32_t queued = 0, retired = 0, presented = 0, failures = 0;
   uint32_t backlog = 0, pending_scenes = 0;
   uint64_t callback_wait_us = 0;
+  uint64_t paced_flips = 0, pacing_error_us = 0;
+  uint32_t pacing_error_max_us = 0;
+  uint64_t flip_vblanks[4]{};
 };
 
 DisplayStatistics display_statistics() noexcept;
@@ -66,6 +74,9 @@ public:
   unsigned frame_slot() const noexcept { return m_frames.slot(); }
   void begin_display();
   void flip();
+
+  // Game time (microseconds, 0 = none) of the frame the next flip() shows.
+  void set_present_game_time(uint64_t us) noexcept { m_presentGameUs = us; }
   const void* display_pixels() const noexcept { return m_displayData[m_frames.slot()]; }
   static constexpr uint32_t Width = 960, Height = 544, Stride = 960;
 
@@ -88,6 +99,7 @@ private:
   SceGxmColorSurface m_display[aurora::GpuFrameRing::BufferCount]{};
   SceGxmSyncObject* m_sync[aurora::GpuFrameRing::BufferCount]{};
   unsigned m_front = aurora::GpuFrameRing::BufferCount - 1;
+  uint64_t m_presentGameUs = 0;
 };
 
 // Reflection supplies the vertex-ID / instance-ID stream register indices.

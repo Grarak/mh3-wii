@@ -59,6 +59,9 @@ void StopNativeRenderThread();
 bool NativeRenderThreadRunning();
 
 // Begins the next packet; it records draws only when render is true.
+// Game thread, before a frame: waits until the render thread has taken the
+// last packet, so the next one does not replace it (MH3_PROFILE=unpaced: no wait).
+void PaceNativeFramePacket();
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();
 void CancelNativeFramePacket();
@@ -96,6 +99,10 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept;
 // colours) the records, captures (revision advanced) and stored copies since
 // the last call; resets them.
 void TakeNativePacketSnapshotCounts(uint32_t out[3][6]);
+
+// Game thread: time spent waiting for the render thread to take the last
+// packet (pacing) since the previous call, and how many frames waited.
+void TakeNativePacingWait(uint64_t& ns, uint32_t& waits);
 
 // Game thread: material geometry submissions and those joined to the draw
 // before them (same state, adjacent in draw order) since the last call.

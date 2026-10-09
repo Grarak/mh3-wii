@@ -9,6 +9,7 @@
 #include <aurora/thread_role.hpp>
 #include <psp2/display.h>
 #include <psp2/common_dialog.h>
+#include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
 #include <array>
@@ -30,6 +31,8 @@ std::atomic<Device*> g_frameDevice{nullptr};
 std::atomic<uint32_t> g_displayQueued{0}, g_displayCompleted{0};
 std::atomic<uint32_t> g_displayPresented{0}, g_displayFailures{0};
 std::atomic<uint64_t> g_displayWaitMicros{0};
+std::atomic<uint64_t> g_pacedFlips{0}, g_pacingErrorMicros{0}, g_flipVblanks[4]{};
+std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 bool g_commonDialogActive = false;
 
@@ -55,7 +58,36 @@ void trace_shader_abi(const SceGxmProgram* program, uint64_t hash, char stage) {
 
 struct DisplayData {
   void* address;
+  uint64_t game_us; // game time of the frame, 0 = unknown
 };
+
+// Display callback only: compares each flip's interval with the game time its
+// frame advanced over the previous flipped frame. Equal intervals are smooth
+// motion; the difference is the judder the viewer sees.
+void record_pacing(uint64_t gameUs) {
+  static uint64_t lastFlip = 0, lastGame = 0;
+
+  if (!gameUs)
+    return;
+
+  const uint64_t now = sceKernelGetProcessTimeWide();
+
+  if (lastGame && gameUs > lastGame) {
+    const int64_t flip = int64_t(now - lastFlip), game = int64_t(gameUs - lastGame);
+    const uint32_t error = uint32_t(std::min<int64_t>(flip > game ? flip - game : game - flip, UINT32_MAX));
+    g_pacedFlips.fetch_add(1, std::memory_order_relaxed);
+    g_pacingErrorMicros.fetch_add(error, std::memory_order_relaxed);
+
+    if (error > g_pacingErrorMaxMicros.load(std::memory_order_relaxed))
+      g_pacingErrorMaxMicros.store(error, std::memory_order_relaxed);
+
+    const int64_t vblanks = (flip + 8341) / 16683;
+    g_flipVblanks[std::clamp<int64_t>(vblanks, 1, 4) - 1].fetch_add(1, std::memory_order_relaxed);
+  }
+
+  lastFlip = now;
+  lastGame = gameUs;
+}
 
 void display_callback(const void* data) {
   aurora::pin_current_thread(aurora::ThreadRole::Worker);
@@ -80,9 +112,10 @@ void display_callback(const void* data) {
     g_displayWaitMicros.fetch_add(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
   }
 
-  if (setResult >= 0 && waitResult >= 0)
+  if (setResult >= 0 && waitResult >= 0) {
     g_displayPresented.fetch_add(1, std::memory_order_relaxed);
-  else
+    record_pacing(display.game_us);
+  } else
     g_displayFailures.fetch_add(1, std::memory_order_relaxed);
 
   g_displayCompleted.fetch_add(1, std::memory_order_release);
@@ -404,6 +437,13 @@ DisplayStatistics display_statistics() noexcept {
   result.failures = g_displayFailures.load(std::memory_order_relaxed);
   result.callback_wait_us = g_displayWaitMicros.load(std::memory_order_relaxed);
   result.backlog = result.queued - result.retired;
+  result.paced_flips = g_pacedFlips.load(std::memory_order_relaxed);
+  result.pacing_error_us = g_pacingErrorMicros.load(std::memory_order_relaxed);
+  result.pacing_error_max_us = g_pacingErrorMaxMicros.exchange(0, std::memory_order_relaxed);
+
+  for (unsigned i = 0; i < 4; ++i)
+    result.flip_vblanks[i] = g_flipVblanks[i].load(std::memory_order_relaxed);
+
   const auto* device = g_frameDevice.load(std::memory_order_acquire);
 
   if (device)
@@ -430,7 +470,7 @@ void Device::flip() {
 
   check(sceGxmPadHeartbeat(&m_display[back], m_sync[back]), "display heartbeat");
   razor_frame();
-  const DisplayData display{m_displayData[back]};
+  const DisplayData display{m_displayData[back], m_presentGameUs};
   g_displayQueued.fetch_add(1, std::memory_order_release);
   check(sceGxmDisplayQueueAddEntry(m_sync[m_front], m_sync[back], &display), "queue display");
   m_front = back;

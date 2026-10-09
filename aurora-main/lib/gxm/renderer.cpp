@@ -1452,6 +1452,10 @@ void set_depth_liveness(GLuint depth, bool reads, bool readsAfterScene) noexcept
   });
 }
 
+void set_present_game_time(uint64_t us) noexcept {
+  guarded([&] { renderer().device.set_present_game_time(us); });
+}
+
 void clear_depth_full_target(float depth) noexcept {
   if (!aurora::native_frame_drawing_allowed())
     return;

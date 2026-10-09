@@ -352,6 +352,10 @@ void clear_depth_full_target(float depth) noexcept;
 // (at the next render target switch). GXM then neither loads nor stores depth
 // that nothing reads; GLES ignores it. depth 0 forgets the hint.
 void set_depth_liveness(GLuint depth, bool reads, bool readsAfterScene) noexcept;
+
+// Game time in microseconds (0 = none) of the frame the next present shows,
+// for GXM's pacing statistics; GLES ignores it.
+void set_present_game_time(uint64_t us) noexcept;
 void draw_indexed(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) noexcept;
 
 // Direct interleaved attributes and U16 triangles. GXM consumes the admitted

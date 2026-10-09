@@ -419,7 +419,8 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
 bool BeginNativeGraphicsFrame() {
     if (!initialized)
         throw std::runtime_error("Native frame began before graphics startup");
-
+    // Before the frame's statistics: the wait is not game-thread work.
+    PaceNativeFramePacket();
     MH3_STAT(BeginNativeFrameStatistics();)
 #ifdef __vita__
     // Include admission and logical work on skipped frames. Razor is opt-in;
@@ -544,6 +545,11 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  work.window_ns ? 1e9 * double(work.rendered_frames) / double(work.window_ns) : 0.0, work.measured_frames ? work.frame_wall_ns / (1e6 * work.measured_frames) : 0.0,
                  work.frame_wall_max_ns / 1e6, work.rendered_measured_frames ? work.rendered_wall_ns / (1e6 * work.rendered_measured_frames) : 0.0, work.rendered_wall_max_ns / 1e6,
                  static_cast<unsigned long long>(work.rendered_frames), static_cast<unsigned long long>(work.logical_frames));
+    uint64_t pacingWaitNs = 0;
+    uint32_t pacingWaits = 0;
+    TakeNativePacingWait(pacingWaitNs, pacingWaits);
+    std::fprintf(stderr, "MH3 native work: game waited for the render thread to take its packet %.2f ms/s (%u frames)\n", pacingWaitNs / (1e6 * seconds), pacingWaits);
+
     if (work.owner_running_available && work.window_ns)
         std::fprintf(stderr, "MH3 native work: owner CPU %.1f%%, thread %d core %d affinity %x (scheduled execution; window %.3f s)\n", 1e5 * double(work.owner_running_us) / double(work.window_ns),
                      work.owner_thread, work.owner_core, unsigned(work.owner_affinity), double(work.window_ns) / 1e9);
@@ -604,6 +610,15 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     std::fprintf(stderr, "MH3 native work: displayed %.1f fps, backlog %u, scenes_pending %u, display_errors %u, callback wait %.2f ms/s (core0)\n",
                  uint32_t(display.presented - previousDisplay.presented) / seconds, display.backlog, display.pending_scenes, display.failures,
                  (display.callback_wait_us - previousDisplay.callback_wait_us) / (1000.0 * seconds));
+    // Pacing: how much each flip interval differs from the game time its frame
+    // advanced (0 = even motion), and the flip intervals in VBlanks.
+    if (const uint64_t flips = display.paced_flips - previousDisplay.paced_flips)
+        std::fprintf(stderr, "MH3 native work: pacing error %.2f ms avg/%.2f max over %llu flips; flip intervals 1/2/3/4+ VBlanks %llu/%llu/%llu/%llu\n",
+                     (display.pacing_error_us - previousDisplay.pacing_error_us) / (1000.0 * double(flips)), display.pacing_error_max_us / 1000.0,
+                     static_cast<unsigned long long>(flips), static_cast<unsigned long long>(display.flip_vblanks[0] - previousDisplay.flip_vblanks[0]),
+                     static_cast<unsigned long long>(display.flip_vblanks[1] - previousDisplay.flip_vblanks[1]),
+                     static_cast<unsigned long long>(display.flip_vblanks[2] - previousDisplay.flip_vblanks[2]),
+                     static_cast<unsigned long long>(display.flip_vblanks[3] - previousDisplay.flip_vblanks[3]));
     previousDisplay = display;
     const auto residency = aurora::gxm::residency_statistics();
     std::fprintf(stderr,

@@ -4,9 +4,11 @@
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
 #include "frame_split.h"
+#include "game_step.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_frame_state_exchange.h"
 #include "model_render_prep.h"
+#include "spin_signal.h"
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
 #include "port_check.h"
@@ -97,6 +99,7 @@ struct Packet {
     size_t vertexCursor = 0, indexCursor = 0;
 #ifdef MH3_DEVELOPMENT
     uint64_t publishedNs = 0; // RenderMonotonicNs at publication
+    uint64_t gameUs = 0;      // game time of the frame (GameStep::Elapsed), for pacing statistics
 #endif
     void Reset(uint64_t next, bool admitted) {
         sequence = next;
@@ -133,8 +136,11 @@ std::exception_ptr failure;
 
 // published: packets handed over (render thread waits on it); completed: the
 // sequence of the last packet the render thread finished (game waits on it).
-std::atomic<uint32_t> published{0};
+SpinSignal published;
 std::atomic<uint64_t> completed{0};
+
+// taken: the sequence of the newest packet the render thread took (pacing).
+std::atomic<uint64_t> taken{0};
 #ifdef MH3_DEVELOPMENT
 struct RenderCounters {
     std::atomic<uint32_t> revision{0};
@@ -243,12 +249,21 @@ void Stage(RenderStage stage, uint32_t step = 0) noexcept {
 #define MH3_RENDER_STAGE(...)
 #endif
 bool synchronous = false;
+
+// Pacing (MH3_PROFILE=unpaced turns it off): at most one packet waits for the
+// render thread; see PaceNativeFramePacket.
+bool paced = true;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
 
 // Game thread.
 Packet* recording = nullptr;
 uint64_t sequence = 0;
+uint64_t lastPublished = 0;
+#ifdef MH3_DEVELOPMENT
+uint64_t pacingWaitNs = 0;
+uint32_t pacingWaits = 0;
+#endif
 struct FeedbackTarget {
     uint32_t width, height;
     uint64_t revision;
@@ -753,6 +768,9 @@ void Execute(const Packet& p) {
             aurora_request_frame_capture(aurora::gfx::current_frame() + 1, p.capture.c_str());
 
         MH3_RENDER_STAGE(RenderStage::End);
+#ifdef MH3_DEVELOPMENT
+        aurora::gl::set_present_game_time(p.gameUs);
+#endif
         aurora_end_native_frame();
     }
 
@@ -761,33 +779,11 @@ void Execute(const Packet& p) {
     MH3_RENDER_STAGE(RenderStage::Waiting);
 }
 
-// Microseconds on a cheap clock (the Vita's steady_clock is a system call).
-uint64_t PacketWaitClockUs() noexcept {
-#ifdef __vita__
-    return sceKernelGetProcessTimeWide();
-#else
-    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-#endif
-}
-
 // Waits until a packet after `ticket` is published (or the thread stops,
-// which also publishes). Packets come in bursts: poll for a millisecond
-// first, then block. On the Vita, std::atomic::wait sits on a pthread
-// condition variable that can lose wakeups (there is no futex), so it sleeps
-// in short steps there instead.
+// which also publishes). Packets come in bursts: SpinSignal spins for a
+// millisecond, then sleeps on its condition variable.
 void WaitForPacket(uint32_t ticket) {
-    constexpr uint64_t SpinUs = 1000;
-    const uint64_t spinEnd = PacketWaitClockUs() + SpinUs;
-
-    while (published.load(std::memory_order_acquire) == ticket) {
-        if (PacketWaitClockUs() < spinEnd)
-            continue;
-#ifdef __vita__
-        sceKernelDelayThread(100);
-#else
-        published.wait(ticket, std::memory_order_acquire);
-#endif
-    }
+    published.AwaitChange(ticket);
 }
 
 void RenderLoop() {
@@ -814,7 +810,7 @@ void RenderLoop() {
 #endif
 #endif
         for (;;) {
-            const uint32_t ticket = published.load(std::memory_order_acquire);
+            const uint32_t ticket = published.Load();
             const auto status = mh3_frame_state_acquire(&consumer);
 
             if (status == MH3_FRAME_STATE_EMPTY) {
@@ -839,6 +835,7 @@ void RenderLoop() {
                 throw std::runtime_error("Frame packet exchange has no consumer buffer");
 
             const auto& p = *static_cast<const Packet*>(data);
+            taken.store(p.sequence, std::memory_order_release);
 #ifdef MH3_DEVELOPMENT
             const auto replayStart = RenderMonotonicNs();
 
@@ -1084,6 +1081,7 @@ void StartNativeRenderThread() {
 #endif
     // MH3_PROFILE=sync: wait for every packet to render (serial frames).
     synchronous = ProfileOptions().Has("sync");
+    paced = !ProfileOptions().Has("unpaced");
 #endif
     gameThread = std::this_thread::get_id();
     stopping = false;
@@ -1092,6 +1090,8 @@ void StartNativeRenderThread() {
     // A restart (the launcher's renderer, then the game's) continues the
     // packet sequence; the previous thread left completed at its maximum.
     completed.store(sequence, std::memory_order_relaxed);
+    taken.store(sequence, std::memory_order_relaxed);
+    lastPublished = sequence;
     aurora::gl::release_context();
     running = true;
     renderThread = std::thread(RenderLoop);
@@ -1102,8 +1102,7 @@ void StopNativeRenderThread() {
         return;
 
     stopping.store(true, std::memory_order_release);
-    published.fetch_add(1, std::memory_order_release);
-    published.notify_all();
+    published.Advance();
     renderThread.join();
     running = false;
     recording = nullptr;
@@ -1182,17 +1181,66 @@ void TakeNativePacketSnapshotCounts(uint32_t out[3][6]) {
     std::memset(snapshotCounts, 0, sizeof snapshotCounts);
 }
 
+void TakeNativePacingWait(uint64_t& ns, uint32_t& waits) {
+    ns = pacingWaitNs;
+    waits = pacingWaits;
+    pacingWaitNs = 0;
+    pacingWaits = 0;
+}
+
 void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged) {
     submitted = geometrySubmitted;
     merged = geometryMerged;
     geometrySubmitted = geometryMerged = 0;
 }
 #endif
+// A packet the render thread has not taken yet is replaced by the next one
+// published: its draw work is lost, and the frames shown then sample game time
+// unevenly (judder; variable steps follow the game thread's rate, not the
+// display's). So the game thread waits until the render thread takes the last
+// packet before it records the next one: the game runs at most one packet
+// ahead, at the rate frames are shown. Short sleeps: the Vita has no
+// reliable untimed wait (see WaitForPacket).
+void PaceNativeFramePacket() {
+    if (!paced || synchronous || !running.load(std::memory_order_relaxed))
+        return;
+
+    if (taken.load(std::memory_order_acquire) >= lastPublished)
+        return;
+#ifdef MH3_DEVELOPMENT
+    const uint64_t start = RenderMonotonicNs();
+    uint64_t report = start + 2'000'000'000;
+#endif
+    while (taken.load(std::memory_order_acquire) < lastPublished && !failed.load(std::memory_order_acquire)) {
+#ifdef __vita__
+        sceKernelDelayThread(100);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+#endif
+#ifdef MH3_DEVELOPMENT
+        // The statistics come from this thread, so a stall reports itself.
+        if (const uint64_t now = RenderMonotonicNs(); now >= report) {
+            report = now + 2'000'000'000;
+            std::fprintf(stderr, "MH3 pacing: game waited %.1f s for packet %llu; render took %llu, completed %llu, stage %u step %u of packet %llu\n", (now - start) / 1e9,
+                         static_cast<unsigned long long>(lastPublished), static_cast<unsigned long long>(taken.load()), static_cast<unsigned long long>(completed.load()),
+                         renderStage.load(), renderStep.load(), static_cast<unsigned long long>(renderPacket.load()));
+        }
+#endif
+    }
+#ifdef MH3_DEVELOPMENT
+    pacingWaitNs += RenderMonotonicNs() - start;
+    ++pacingWaits;
+#endif
+}
+
 void BeginNativeFramePacket(bool render) {
     RequireGame();
     RethrowFailure();
     auto& p = ProducerPacket();
     p.Reset(++sequence, render);
+#ifdef MH3_DEVELOPMENT
+    p.gameUs = uint64_t(GameStep::Elapsed() * (1e6 / 30.0));
+#endif
     recording = &p;
 }
 
@@ -1222,8 +1270,8 @@ void PublishNativeFramePacket(std::string capture) {
     if (mh3_frame_state_publish(&producer, p.sequence, &replaced) != MH3_FRAME_STATE_OK)
         throw std::runtime_error("Frame packet exchange publish failed");
 
-    published.fetch_add(1, std::memory_order_release);
-    published.notify_one();
+    lastPublished = p.sequence;
+    published.Advance();
 
     if (wait)
         WaitCompleted(p.sequence);
