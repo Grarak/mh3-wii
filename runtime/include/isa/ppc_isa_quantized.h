@@ -175,3 +175,9 @@ namespace MemoryHw {
 #include "ppc_isa_quantized_access.inc"
 #undef MKW_PSQ_MEM
 } // namespace MemoryHw
+
+namespace MemoryAlias {
+#define MKW_PSQ_MEM MemoryAlias
+#include "ppc_isa_quantized_access.inc"
+#undef MKW_PSQ_MEM
+} // namespace MemoryAlias

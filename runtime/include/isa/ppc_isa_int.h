@@ -20,7 +20,6 @@ extern "C" uint32_t OSSystemCall();
 // dcbz: zero one 32-byte block of guest memory (the translator aligns the
 // address). Never used on hardware.
 inline int32_t memset_zero_32(int32_t address) {
-    MH3_NOTE_GUEST_ALIAS(static_cast<uint32_t>(address));
     std::memset(GuestFlat::Host(static_cast<uint32_t>(address)), 0, 32);
     return 0;
 }

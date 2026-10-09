@@ -164,11 +164,32 @@ void RecordWatchedWrite(uint32_t address, uint32_t size, uint64_t value, const v
 MKW_MEMORY_NO_INLINE MKW_MEMORY_COLD void NoteWatchedWrite(uint32_t address, uint32_t size, uint64_t value);
 #endif
 
+// Translated code addresses cached MEM1 and MEM2 (GuestFlat::HostCached, one
+// add); the functions listed in runtime/src/alias_access.inc, which also use
+// the uncached, physical or locked-cache aliases, use the Alias forms
+// (MemoryAlias, MemoryHw), which GuestFlat::Host folds.
+template <typename T>
+MKW_MEMORY_FORCE_INLINE T FlatLoadAlias(uint32_t address) {
+    T value{};
+    std::memcpy(&value, GuestFlat::Host(address), sizeof(T));
+    return MaybeByteSwap(value);
+}
+
+template <typename T>
+MKW_MEMORY_FORCE_INLINE void FlatStoreAlias(uint32_t address, T value) {
+#ifdef MH3_WRITE_WATCH
+    if (WriteWatched(address) || WriteWatched(address + sizeof(T) - 1)) [[unlikely]]
+        NoteWatchedWrite(address, sizeof(T), static_cast<uint64_t>(value));
+#endif
+    const T swapped = MaybeByteSwap(value);
+    std::memcpy(GuestFlat::Host(address), &swapped, sizeof(T));
+}
+
 template <typename T>
 MKW_MEMORY_FORCE_INLINE T FlatLoad(uint32_t address) {
     MH3_NOTE_GUEST_ALIAS(address);
     T value{};
-    std::memcpy(&value, GuestFlat::Host(address), sizeof(T));
+    std::memcpy(&value, GuestFlat::HostCached(address), sizeof(T));
     return MaybeByteSwap(value);
 }
 
@@ -180,7 +201,13 @@ MKW_MEMORY_FORCE_INLINE void FlatStore(uint32_t address, T value) {
         NoteWatchedWrite(address, sizeof(T), static_cast<uint64_t>(value));
 #endif
     const T swapped = MaybeByteSwap(value);
-    std::memcpy(GuestFlat::Host(address), &swapped, sizeof(T));
+    std::memcpy(GuestFlat::HostCached(address), &swapped, sizeof(T));
+}
+
+// The host address of a paired-single access (ppc_isa_quantized_access.inc).
+MKW_MEMORY_FORCE_INLINE uint8_t* PsqHost(uint32_t address) {
+    MH3_NOTE_GUEST_ALIAS(address);
+    return GuestFlat::HostCached(address);
 }
 
 MKW_MEMORY_FORCE_INLINE uint8_t FlatRead8(uint32_t a) {
@@ -311,7 +338,6 @@ MKW_MEMORY_FORCE_INLINE uint8_t* ResolveRangeHost(uint32_t base, int32_t minOffs
 
     if (length == 0 || guestStart > UINT32_MAX - (length - 1)) [[unlikely]]
         return nullptr;
-    MH3_NOTE_GUEST_ALIAS(guestStart);
     return GuestFlat::Host(guestStart);
 }
 
@@ -475,7 +501,7 @@ template <typename T>
 MKW_MEMORY_FORCE_INLINE T Load(uint32_t address) {
     if (GuestFlat::IsHardwareAddress(address)) [[unlikely]]
         return HardwareRead<T>(address);
-    return MemoryInline::FlatLoad<T>(address);
+    return MemoryInline::FlatLoadAlias<T>(address);
 }
 
 template <typename T>
@@ -485,125 +511,10 @@ MKW_MEMORY_FORCE_INLINE void Store(uint32_t address, T value) {
         return;
     }
 
-    MemoryInline::FlatStore<T>(address, value);
+    MemoryInline::FlatStoreAlias<T>(address, value);
 }
 
-MKW_MEMORY_FORCE_INLINE uint8_t FlatRead8(uint32_t a) {
-    return Load<uint8_t>(a);
-}
-
-MKW_MEMORY_FORCE_INLINE uint16_t FlatRead16(uint32_t a) {
-    return Load<uint16_t>(a);
-}
-
-MKW_MEMORY_FORCE_INLINE uint32_t FlatRead32(uint32_t a) {
-    return Load<uint32_t>(a);
-}
-
-MKW_MEMORY_FORCE_INLINE uint64_t FlatRead64(uint32_t a) {
-    return Load<uint64_t>(a);
-}
-
-MKW_MEMORY_FORCE_INLINE float FlatReadFloat32(uint32_t a) {
-    return PpcSingleBitsToFloat(Load<uint32_t>(a));
-}
-
-MKW_MEMORY_FORCE_INLINE double FlatReadFloat64(uint32_t a) {
-    const uint64_t bits = Load<uint64_t>(a);
-    double value;
-    std::memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWrite8(uint32_t a, uint8_t v) {
-    Store<uint8_t>(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWrite16(uint32_t a, uint16_t v) {
-    Store<uint16_t>(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWrite32(uint32_t a, uint32_t v) {
-    Store<uint32_t>(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWrite64(uint32_t a, uint64_t v) {
-    Store<uint64_t>(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteFloat32(uint32_t a, double v) {
-    Store<uint32_t>(a, ConvertPpcDoubleToSingleBits(v));
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteFloat64(uint32_t a, double v) {
-    uint64_t bits;
-    std::memcpy(&bits, &v, sizeof(bits));
-    Store<uint64_t>(a, bits);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteRam8(uint32_t a, uint8_t v) {
-    FlatWrite8(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteRam16(uint32_t a, uint16_t v) {
-    FlatWrite16(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteRam32(uint32_t a, uint32_t v) {
-    FlatWrite32(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteRam64(uint32_t a, uint64_t v) {
-    FlatWrite64(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteRamFloat32(uint32_t a, double v) {
-    FlatWriteFloat32(a, v);
-}
-
-MKW_MEMORY_FORCE_INLINE void FlatWriteRamFloat64(uint32_t a, double v) {
-    FlatWriteFloat64(a, v);
-}
-
-inline uint8_t ReadStack8(uint32_t a) {
-    return FlatRead8(a);
-}
-
-inline uint16_t ReadStack16(uint32_t a) {
-    return FlatRead16(a);
-}
-
-inline uint32_t ReadStack32(uint32_t a) {
-    return FlatRead32(a);
-}
-
-inline uint64_t ReadStack64(uint32_t a) {
-    return FlatRead64(a);
-}
-
-inline void WriteStack8(uint32_t a, uint8_t v) {
-    FlatWrite8(a, v);
-}
-
-inline void WriteStack16(uint32_t a, uint16_t v) {
-    FlatWrite16(a, v);
-}
-
-inline void WriteStack32(uint32_t a, uint32_t v) {
-    FlatWrite32(a, v);
-}
-
-inline void WriteStack64(uint32_t a, uint64_t v) {
-    FlatWrite64(a, v);
-}
-
-inline void WriteStackFloat32(uint32_t a, double v) {
-    FlatWriteFloat32(a, v);
-}
-
-inline void WriteStackFloat64(uint32_t a, double v) {
-    FlatWriteFloat64(a, v);
-}
+#include "memory_access_routed.inc"
 
 // No resolved ranges: a range may cover hardware, so every access goes
 // through its guest address.
@@ -680,16 +591,31 @@ constexpr bool PsqHardware(uint32_t address) {
     return GuestFlat::IsHardwareAddress(address);
 }
 
+} // namespace MemoryHw
+
+// The functions in runtime/src/alias_access.inc: guest RAM through any alias
+// (uncached, physical, the locked cache), which GuestFlat::Host folds into
+// the window; every other function addresses cached RAM with one add
+// (MemoryInline). No hardware.
+namespace MemoryAlias {
+using namespace MemoryInline;
+
 template <typename T>
-MKW_MEMORY_FORCE_INLINE T PsqLoad(uint32_t address) {
-    return Load<T>(address);
+MKW_MEMORY_FORCE_INLINE T Load(uint32_t address) {
+    return MemoryInline::FlatLoadAlias<T>(address);
 }
 
 template <typename T>
-MKW_MEMORY_FORCE_INLINE void PsqStore(uint32_t address, T value) {
-    Store<T>(address, value);
+MKW_MEMORY_FORCE_INLINE void Store(uint32_t address, T value) {
+    MemoryInline::FlatStoreAlias<T>(address, value);
 }
-} // namespace MemoryHw
+
+#include "memory_access_routed.inc"
+
+constexpr bool PsqHardware(uint32_t) {
+    return false;
+}
+} // namespace MemoryAlias
 
 // Host API: hardware, RAM through any alias (physical included), or an
 // AccessViolation.

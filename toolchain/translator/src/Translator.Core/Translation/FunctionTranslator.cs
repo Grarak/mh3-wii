@@ -753,8 +753,11 @@ public sealed class FunctionTranslator
             enableLeafAbiSpillElision: options.EnableLeafAbiSpillElision,
             modOverridableCallTargets: options.ModOverridableCallTargets,
             regArgsFunctions: options.RegArgsFunctions);
-        return GuestHardwareAccess.Current.Contains(entryPoint)
-            ? emission with { Code = GuestHardwareAccess.Rewrite(emission.Code) }
+        if (GuestHardwareAccess.Current.Contains(entryPoint))
+            return emission with { Code = GuestHardwareAccess.Rewrite(emission.Code) };
+
+        return GuestHardwareAccess.Alias.Contains(entryPoint) || GuestHardwareAccess.NamesAliasAddress(emission.Code)
+            ? emission with { Code = GuestHardwareAccess.RewriteAlias(emission.Code) }
             : emission;
     }
 

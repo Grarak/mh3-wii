@@ -70,6 +70,10 @@ if (project?.Translation.HardwareAccessPath is { } hardwareAccessPath)
 {
     Translator.Core.CodeGen.GuestHardwareAccess.Current = Translator.Core.CodeGen.GuestHardwareAccess.Load(hardwareAccessPath);
 }
+if (project?.Translation.AliasAccessPath is { } aliasAccessPath)
+{
+    Translator.Core.CodeGen.GuestHardwareAccess.Alias = Translator.Core.CodeGen.GuestHardwareAccess.Load(aliasAccessPath);
+}
 var root = project?.WorkspaceRoot ?? Directory.GetCurrentDirectory();
 var preferCachedInputs = HasFlag(tail, "--prefer-cached-inputs");
 var dolFile = new Lazy<DolFile>(LoadDol);

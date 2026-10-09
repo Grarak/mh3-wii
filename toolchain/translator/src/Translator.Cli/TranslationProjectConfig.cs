@@ -103,6 +103,9 @@ internal sealed class TranslationProjectConfig
         string? hardwareAccessPath = dto.Translation?.HardwareAccessPath is { Length: > 0 } hardware
             ? ResolvePath(workspaceRoot, hardware)
             : null;
+        string? aliasAccessPath = dto.Translation?.AliasAccessPath is { Length: > 0 } alias
+            ? ResolvePath(workspaceRoot, alias)
+            : null;
         var noReturnFunctions = (dto.Translation?.NoReturnFunctions ?? [])
             .Select((value, index) => ParseUInt32(value, null, $"translation.no_return_functions[{index}]"))
             .ToArray();
@@ -113,6 +116,7 @@ internal sealed class TranslationProjectConfig
             loadHooksPath,
             tickSitesPath,
             hardwareAccessPath,
+            aliasAccessPath,
             noReturnFunctions);
 
         var abiDirectories = (dto.Runtime?.NativeAbiDirectories ?? [])
@@ -431,6 +435,11 @@ internal sealed class TranslationProjectConfig
         // MMIO registers, the GX FIFO or the EFB. Their accesses go through MemoryHw; every
         // other function addresses guest memory as plain host memory.
         public string? HardwareAccessPath { get; init; }
+        // A file naming the guest functions (one `0xADDRESS` per line) that address guest RAM
+        // through another alias than cached MEM1/MEM2: uncached, physical or the locked cache.
+        // Their accesses go through MemoryAlias, which folds every alias into the runtime's
+        // window; every other function addresses cached RAM with one add.
+        public string? AliasAccessPath { get; init; }
         // Guest functions that never return (assertion panics ending in PPCHalt). Their callers
         // don't take on their complete-context boundary; see GuestAbiInterproceduralAnalyzer.
         public List<string>? NoReturnFunctions { get; init; }
@@ -505,6 +514,7 @@ internal sealed record ProjectTranslation(
     string? LoadHooksPath = null,
     string? TickSitesPath = null,
     string? HardwareAccessPath = null,
+    string? AliasAccessPath = null,
     IReadOnlyList<uint>? NoReturnFunctions = null);
 internal sealed record ProjectRuntime(
     IReadOnlyList<string> NativeAbiDirectories,

@@ -12,6 +12,9 @@
 #include <cstdlib>
 #include <sstream>
 #include <type_traits>
+#if defined(MH3_AUDIT_GUEST_ALIAS) && !defined(__vita__)
+#include <dlfcn.h>
+#endif
 #if defined(MH3_AUDIT_HOST_ACCESS) || defined(MH3_AUDIT_GUEST_ALIAS)
 #include <cstdio>
 #include <mutex>
@@ -114,8 +117,13 @@ void GuestFlat::NoteGuestAlias(uint32_t address) {
     const void* caller = __builtin_return_address(0);
     std::lock_guard guard(lock);
 
-    if (reported.insert({caller, address >> 24}).second)
-        std::fprintf(stderr, "MH3 alias: %08x from %p\n", unsigned(address), caller);
+    if (!reported.insert({caller, address >> 24}).second)
+        return;
+
+    // The offset in the executable, for llvm-symbolizer on a PIE build.
+    Dl_info info{};
+    const uintptr_t base = dladdr(caller, &info) && info.dli_fbase ? reinterpret_cast<uintptr_t>(info.dli_fbase) : 0;
+    std::fprintf(stderr, "MH3 alias: %08x from 0x%llx\n", unsigned(address), static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(caller) - base));
 }
 #endif
 #ifdef MH3_AUDIT_HOST_ACCESS

@@ -1,8 +1,9 @@
-// Paired-single loads and stores, included by isa/ppc_isa_quantized.h twice:
-// once as namespace PsqFlat with MKW_PSQ_MEM = MemoryInline (plain flat guest
-// memory, used by all translated code), once inside namespace MemoryHw with
-// MKW_PSQ_MEM = MemoryHw (hardware addresses reach the device models) for the
-// functions in runtime/src/hardware_access.inc. No include guard.
+// Paired-single loads and stores, included by isa/ppc_isa_quantized.h three
+// times: as namespace PsqFlat with MKW_PSQ_MEM = MemoryInline (cached flat
+// guest memory, used by most translated code), inside namespace MemoryAlias
+// (every RAM alias) for the functions in runtime/src/alias_access.inc, and
+// inside namespace MemoryHw (hardware addresses reach the device models) for
+// the functions in runtime/src/hardware_access.inc. No include guard.
 
 template <uint32_t W, uint32_t I, bool Stack>
 inline double PPC_PsqLStateFallback(uint32_t gqr, uint32_t addr);
@@ -105,10 +106,7 @@ inline void PpcWritePairPsqInline(uint32_t addr, T first, T second)
 inline double PpcLoadPairPsqFloatFastInline(uint32_t addr)
 {
     if (!MKW_PSQ_MEM::PsqHardware(addr)) [[likely]]
-    {
-        MH3_NOTE_GUEST_ALIAS(addr);
-        return PpcLoadPairPsqFloatFromHostInline(GuestFlat::Host(addr));
-    }
+        return PpcLoadPairPsqFloatFromHostInline(MKW_PSQ_MEM::PsqHost(addr));
     return PpcBitCastToDoubleInline(
         PpcLoadPairPsqFloatBitsPackedInline(MKW_PSQ_MEM::PsqLoad<uint64_t>(addr)));
 }
@@ -161,8 +159,7 @@ inline void PpcStorePairPsqFloatFastInline(uint32_t addr, double value)
 {
     if (!MKW_PSQ_MEM::PsqHardware(addr)) [[likely]]
     {
-        MH3_NOTE_GUEST_ALIAS(addr);
-        PpcStorePairPsqFloatToHostInline(GuestFlat::Host(addr), value);
+        PpcStorePairPsqFloatToHostInline(MKW_PSQ_MEM::PsqHost(addr), value);
         return;
     }
 
@@ -242,8 +239,7 @@ MKW_PPC_FORCE_INLINE void PpcStorePairPsqU8Scale61FastInline(
     }
 
     const uint16_t packed = PpcQuantizePairPsqU8Scale61PackedInline(value);
-    MH3_NOTE_GUEST_ALIAS(addr);
-    BigEndian::Write16(GuestFlat::Host(addr), packed);
+    BigEndian::Write16(MKW_PSQ_MEM::PsqHost(addr), packed);
 }
 
 MKW_PPC_FORCE_INLINE void PpcStorePairPsqU8Scale61ResolvedInline(
