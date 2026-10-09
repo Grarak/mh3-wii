@@ -179,6 +179,10 @@ uint32_t mh3SplitFrame;
 // initialization.
 bool mh3SplitDetail = false;
 void MH3FrameSplitCall(unsigned kind) {
+    // The guest worker's calls are not the game thread's.
+    if (PpcThread::CurrentThread() != PpcThread::Game)
+        return;
+
     const unsigned phase = Memory::Read8(kSystem + kFramePhase);
     ++splitCalls[kind][phase < 5 ? phase : 0];
 }
@@ -236,14 +240,23 @@ struct FrameSplit {
                     f(MH3_SPLIT_MOVIE), n(MH3_SPLIT_TRAVERSE), n(MH3_SPLIT_MODEL), n(MH3_SPLIT_EFFECT), n(MH3_SPLIT_NODE_CALLBACK));
         std::printf("MH3 scene split: scene %.2f buckets %.2f setup %.2f finish %.2f post %.2f ms/frame\n", f(MH3_SPLIT_SCENE), f(MH3_SPLIT_BUCKETS), f(MH3_SPLIT_SCENE_SETUP),
                     f(MH3_SPLIT_SCENE_FINISH), f(MH3_SPLIT_POST));
-        std::printf("MH3 effect split: calc %.2f draw %.2f ms/frame (calc scopes/frame %u)\n", f(MH3_SPLIT_EFFECT_CALC), f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC));
+        // Deferred Effect::Calc calls run as the guest worker's jobs (its only
+        // ones), so the game thread's calc is the rest.
         const auto worker = GuestWorker::TakeStatistics();
+        std::printf("MH3 effect split: calc %.2f on the game thread, %.2f on the guest worker; draw %.2f ms/frame (game-thread calc scopes/frame %u)\n",
+                    f(MH3_SPLIT_EFFECT_CALC), worker.jobNs / 1e6 / frames, f(MH3_SPLIT_EFFECT), n(MH3_SPLIT_EFFECT_CALC));
         std::printf("MH3 guest worker: %.2f jobs/frame, %.2f ms/frame of jobs, game waited %.2f ms/frame (%llu waits)\n", double(worker.jobs) / frames, worker.jobNs / 1e6 / frames,
                     worker.waitNs / 1e6 / frames, static_cast<unsigned long long>(worker.waits));
 
-        if (mh3SplitDetail)
+        if (mh3SplitDetail) {
             std::printf("MH3 model split: material prep %.2f (%u) shape prep %.2f (%u) record %.2f (%u) ms/frame (scopes/frame)\n", f(MH3_SPLIT_MATERIAL_PREP), n(MH3_SPLIT_MATERIAL_PREP),
                         f(MH3_SPLIT_SHAPE_PREP), n(MH3_SPLIT_SHAPE_PREP), f(MH3_SPLIT_MODEL_RECORD), n(MH3_SPLIT_MODEL_RECORD));
+            std::printf("MH3 g3d split: world %.2f (%u) material %.2f (%u) vertex %.2f (%u) view %.2f (%u) update %.2f (%u) other %.2f (%u) ms/frame (model scopes/frame)\n",
+                        f(MH3_SPLIT_G3D_WORLD), n(MH3_SPLIT_G3D_WORLD), f(MH3_SPLIT_G3D_MATERIAL), n(MH3_SPLIT_G3D_MATERIAL), f(MH3_SPLIT_G3D_VERTEX), n(MH3_SPLIT_G3D_VERTEX),
+                        f(MH3_SPLIT_G3D_VIEW), n(MH3_SPLIT_G3D_VIEW), f(MH3_SPLIT_G3D_UPDATE), n(MH3_SPLIT_G3D_UPDATE), f(MH3_SPLIT_G3D_OTHER), n(MH3_SPLIT_G3D_OTHER));
+            MH3PrintFieldSplit(frames);
+        }
+
         uint32_t snapshots[3][6];
         TakeNativePacketSnapshotCounts(snapshots);
         const auto s = [&](unsigned row, unsigned component) { return snapshots[row][component] / frames; };

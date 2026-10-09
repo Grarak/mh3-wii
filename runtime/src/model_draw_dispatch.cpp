@@ -483,7 +483,29 @@ extern "C" void MH3_ModelSceneOptions(CpuContext* cpu) {
     cpu->gpr[3] = options;
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80049810, MH3_ModelSceneOptions, "ModelSceneOptions");
+#ifdef MH3_DEVELOPMENT
+namespace {
+unsigned SceneTaskFamily(uint32_t task) {
+    switch (task) {
+    case 1:
+        return MH3_SPLIT_G3D_WORLD;
+    case 2:
+        return MH3_SPLIT_G3D_MATERIAL;
+    case 3:
+        return MH3_SPLIT_G3D_VERTEX;
+    case 4:
+        return MH3_SPLIT_G3D_VIEW;
+    case 8:
+        return MH3_SPLIT_G3D_UPDATE;
+    default:
+        return MH3_SPLIT_G3D_OTHER;
+    }
+}
+} // namespace
+#endif
+
 extern "C" void MH3_ModelSceneTask(CpuContext* cpu) {
+    MH3_SPLIT_DETAIL_SCOPE(SceneTaskFamily(cpu->gpr[4]));
     GuestFrame frame(cpu, 0x20);
     Scene s{{cpu}, frame[0x10]};
     auto ops = s.Ops();

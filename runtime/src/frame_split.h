@@ -1,8 +1,10 @@
 // Development-only game-thread frame split (game_frame.cpp). MH3_SPLIT_SCOPE
 // adds the scope's wall time to one draw-pass family; nested scopes of the
-// same family count once. Release builds compile both away.
+// same family count once. Scopes on the guest worker count nothing: its jobs
+// have their own line. Release builds compile both away.
 #pragma once
 #ifdef MH3_DEVELOPMENT
+#include "isa/ppc_isa_thread_state.h"
 #include <chrono>
 #include <cstdint>
 #ifdef __vita__
@@ -34,6 +36,15 @@ enum MH3SplitFamily : unsigned {
     MH3_SPLIT_BUCKETS,
     // Effect::Calc of every effect (the particle simulation), a logic part.
     MH3_SPLIT_EFFECT_CALC,
+    // MH3_PROFILE=split: the scene processes of model nodes (0x8007DE60 task
+    // 1 world matrices with animation, 2 materials, 3 vertices, 4 view
+    // matrices, 8 frame update; the rest: gather and draw).
+    MH3_SPLIT_G3D_WORLD,
+    MH3_SPLIT_G3D_MATERIAL,
+    MH3_SPLIT_G3D_VERTEX,
+    MH3_SPLIT_G3D_VIEW,
+    MH3_SPLIT_G3D_UPDATE,
+    MH3_SPLIT_G3D_OTHER,
     MH3_SPLIT_FAMILIES
 };
 
@@ -55,19 +66,23 @@ struct MH3SplitClock {
 };
 
 void MH3FrameSplitCall(unsigned kind);
+
+// The MH3 field split line (field_frame.cpp), which it then resets.
+void MH3PrintFieldSplit(unsigned frames);
 void MH3FrameSplitTime(unsigned family, MH3SplitClock::duration elapsed);
 extern uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 extern uint32_t mh3SplitFrame; // frame bodies started
 struct MH3FrameSplitScope {
     unsigned family;
+    bool active;
     MH3SplitClock::time_point start;
-    explicit MH3FrameSplitScope(unsigned value) : family(value) {
-        if (!mh3SplitDepth[family]++)
+    explicit MH3FrameSplitScope(unsigned value) : family(value), active(PpcThread::CurrentThread() == PpcThread::Game) {
+        if (active && !mh3SplitDepth[family]++)
             start = MH3SplitClock::now();
     }
 
     ~MH3FrameSplitScope() {
-        if (!--mh3SplitDepth[family])
+        if (active && !--mh3SplitDepth[family])
             MH3FrameSplitTime(family, MH3SplitClock::now() - start);
     }
 };
@@ -80,7 +95,7 @@ struct MH3FrameSplitDetailScope {
     unsigned family;
     bool active;
     MH3SplitClock::time_point start;
-    explicit MH3FrameSplitDetailScope(unsigned value) : family(value), active(mh3SplitDetail) {
+    explicit MH3FrameSplitDetailScope(unsigned value) : family(value), active(mh3SplitDetail && PpcThread::CurrentThread() == PpcThread::Game) {
         if (active && !mh3SplitDepth[family]++)
             start = MH3SplitClock::now();
     }

@@ -87,7 +87,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | Item | Effect |
 | --- | --- |
 | `frames=N` | the legacy frame profile (`MH3 profile:` line) every N frames; only the GLES self-check reaches it now, so game runs print nothing |
-| `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw) |
+| `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw), the scene processes of model nodes by task in the `MH3 g3d split` line (world matrices, materials, vertices, view matrices, the frame update, the rest), and each call of the field's frame update (0x8028CCE0: player control, enemies, camera and the rest) in the `MH3 field split` line; game-thread time only |
 | `render` | the `MH3 render split` line: the render thread's time per packet in each part of the replay (tasks, frame begin, scene feedback, state restores, model preparation, model draws, material geometry, other geometry, frame end and presentation, waiting). The render thread stores its current part; a sampler thread (core 0 on the Vita) counts it every 250 us, so the render thread reads no clock |
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 | `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry); for attributing GPU time with Razor |
