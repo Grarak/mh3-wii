@@ -955,3 +955,89 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
     Memory::Write32(font + 0x168CC, queued);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8005C174, MH3_FontFlush, "FontFlush");
+
+// net_data.rso, the online menus (connection, terms, CAPCOM ID), draws its
+// sprites with GX itself. Two overlay functions, decompiled with Ghidra and
+// read from their disassembly, enter here through the overlay's dispatch
+// records (scripts/translate_rso_overlays.py, NATIVE_PORTS); the overlay
+// loads at the demo module's base, so they are not registered by address.
+//
+// NetMenuDrawSetup (0x8097F9A0): DebugDrawSetup, then a screen-space
+// orthographic projection (C_MTXOrtho(0, screen height, 0, screen width, 0,
+// 1)), an identity position matrix, no culling, depth test ALWAYS without
+// writes, one texture coordinate from TEX0 (identity), one direct TEV stage
+// modulating texture 0 by the vertex colour, and the vertex format s16 XY
+// position, RGBA8 colour and f32 ST. The copy filter it turns off and the
+// texture cache it invalidates have no native state: the display copy has no
+// vertical filter and textures bind by object.
+extern "C" void MH3_NetMenuDrawSetup(CpuContext* cpu) {
+    GuestFrame frame(cpu, 0x80);
+    GuestCall call{cpu};
+    call(0x8005AF80); // DebugDrawSetup
+    ScreenOrtho();
+    Identity();
+    RasterQuad(false, true);
+
+    if (!MaterialCurrent(uiMaterial, true))
+        PublishPrimitiveMaterial(true);
+
+    ConfigureDirectCoordinates(0, 1, 4, 60);
+    uiTextured = true;
+    uiStages = 1;
+}
+
+// NetMenuDrawSprites(atlases, sprites, count) (0x8097FB58). An atlas is 56
+// bytes: its GXTexObj at +0x10, its width and height (s16) at +0x34/+0x36.
+// A sprite is 16 bytes: atlas (u8), part (u8), anchor (u8), additive (u8),
+// x, y, width, height (s16) and an RGBA8 colour. The part's texel rectangle
+// (u, v, width, height: s16) comes from the overlay's per-atlas tables
+// (0x8098A1B8). Anchor 0 shifts the sprite by half the screen's extra width
+// over 640, anchor 2 by all of it, and anchor 3 left by 107 on a 640-wide
+// screen. Each sprite is one textured quad with source-alpha blending, or
+// additive blending.
+extern "C" void MH3_NetMenuDrawSprites(CpuContext* cpu) {
+    constexpr uint32_t kPartTables = 0x8098A1B8;
+    GuestFrame frame(cpu, 0x80);
+    GuestCall call{cpu};
+    const uint32_t atlases = frame.Arg(3), sprites = frame.Arg(4);
+    const int32_t count = int32_t(frame.Arg(5));
+    call(0x80040354, {frame[0x18]}); // get_ScreenSize(MH_VEC2*)
+    const int16_t shift = int16_t(int32_t((Memory::ReadFloat32(frame[0x18]) - 640.0f) * 0.5f));
+
+    for (int32_t i = 0; i < count; ++i) {
+        const uint32_t sprite = sprites + uint32_t(i) * 16;
+        const uint8_t atlasIndex = Memory::Read8(sprite), part = Memory::Read8(sprite + 1), anchor = Memory::Read8(sprite + 2);
+        int16_t x = int16_t(Memory::Read16(sprite + 4));
+        const int16_t y = int16_t(Memory::Read16(sprite + 6)), width = int16_t(Memory::Read16(sprite + 8)), height = int16_t(Memory::Read16(sprite + 10));
+
+        if (anchor == 0)
+            x = int16_t(x + shift);
+
+        if (anchor == 2)
+            x = int16_t(x + int16_t(shift * 2));
+
+        if (anchor == 3 && shift == 0)
+            x = int16_t(x - 107);
+
+        const uint32_t rectangle = Memory::Read32(kPartTables + atlasIndex * 4u) + part * 8u;
+        const int16_t u = int16_t(Memory::Read16(rectangle)), v = int16_t(Memory::Read16(rectangle + 2));
+        const uint32_t atlas = atlases + atlasIndex * 56u;
+        const float atlasWidth = float(int16_t(Memory::Read16(atlas + 0x34))), atlasHeight = float(int16_t(Memory::Read16(atlas + 0x36)));
+        const float s0 = float(u) / atlasWidth, t0 = float(v) / atlasHeight;
+        const float s1 = float(u + int16_t(Memory::Read16(rectangle + 4))) / atlasWidth, t1 = float(v + int16_t(Memory::Read16(rectangle + 6))) / atlasHeight;
+
+        // GXSetBlendMode(BLEND, SRCALPHA, INVSRCALPHA or ONE, CLEAR).
+        auto raster = GetNativeDrawState().raster;
+        raster.blend_mode = 1;
+        raster.src_factor = 4;
+        raster.dst_factor = Memory::Read8(sprite + 3) ? 1 : 5;
+        raster.logic_op = 0;
+        SetNativeRaster(raster);
+        BindNativeTexture(ReadNativeTextureObject(atlas + 0x10));
+        uint8_t rgba[4];
+        ReadColor(sprite + 12, rgba);
+        mh3_ui_vertex vertices[4];
+        mh3_ui_rect(vertices, x, y, int16_t(x + width), int16_t(y + height), 0, rgba, s0, t0, s1, t1);
+        DrawVertices(MH3_UI_QUADS, vertices, 4, true);
+    }
+}

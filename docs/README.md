@@ -49,6 +49,10 @@ how to build, run (including the Vita devkit) and debug.
 - [native-field-resource-loading.md](native-field-resource-loading.md): field resource scheduling and invalid areas.
 - [native-dispatch-freshness.md](native-dispatch-freshness.md): how native registrations reach the dispatch tables.
 
+## Online play
+
+- [online.md](online.md): online play against the MH3SP servers: the MH3SP patch, the guest thread scheduler, the network IOS devices, a local test server and the testing rules.
+
 ## Web build
 
 - [web-build.md](web-build.md): WebAssembly with a WebGPU renderer: building, serving (COOP/COEP), the disc image in the browser's storage, threads, the WebGPU backend and its WGSL shader bank, what is missing, and merging it with GLES later.

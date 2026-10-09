@@ -22,6 +22,11 @@ under [Renamed and removed](#renamed-and-removed) that is still set.
 | `MH3_RENDER_WIDEN` | `f`: draw every perspective projection `f` times wider than the camera the game culls with (culling edge checks) | development |
 | `MH3_DRAW_TABLE_CACHE` | `0`: neither read nor write the draw-table file (`draw-tables.bin`) | all |
 | `MH3_GXM_SHADER_DUMP` | a directory: mirror runtime-compiled GXPs (development bank misses, preflights) there; set by the selector preflight | Vita |
+| `MH3_ONLINE_CA` | a DER file: the root CA the game pins for its Capcom server instead of the MH3SP one (a local MH3SP server's `cert/ca.der`; [online](online.md)) | all |
+| `MH3_ONLINE_HOSTS` | `name=address[,...]` (`*.domain` for every host in it): answer these lookups without DNS ([online](online.md)) | Linux |
+| `MH3_ONLINE_PORTS` | `from=to[,...]`: connect to port `to` instead of `from` (a local account server instead of port 80; [online](online.md)) | Linux |
+| `MH3_NET_TRACE` | log the network devices' requests, sockets, lookups and TLS sessions ([online](online.md)) | all |
+| `MH3_THREAD_TRACE` | log every guest thread switch ([online](online.md#guest-threads)) | all |
 
 ## Development tools
 

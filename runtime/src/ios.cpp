@@ -4,6 +4,7 @@
 #include "disc_image.h"
 #include "asset_cache.h"
 #include "guest_call.h"
+#include "net/ios_net.h"
 #include "scope_exit.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <aurora/thread_role.hpp>
@@ -990,6 +991,22 @@ REGISTER_NATIVE_FUNCTION(0x804BB950, MH3_IPCWriteReg);
 extern "C" void MH3_IOSOpen(CpuContext* ctx) {
     const std::string path = GuestPath(ctx->gpr[3]);
 
+    // Online play: sockets, SSL, the network configuration and, once online
+    // play started, KD (net/ios_net.h).
+    if (IosNet::IsDevice(path)) {
+        const int32_t result = IosNet::Open(path);
+
+        if (result) {
+            ctx->gpr[3] = result;
+            return;
+        }
+
+        const uint32_t handle = nextHandle++;
+        devices.emplace(handle, path);
+        ctx->gpr[3] = handle;
+        return;
+    }
+
     // No WiiConnect24 background-download daemon is running on the host.
     // Let the SDK's existing unavailable-service path handle offline startup.
     if (path == "/dev/net/kd/request" || path == "/dev/net/kd/time") {
@@ -1018,6 +1035,12 @@ extern "C" void MH3_IOSOpen(CpuContext* ctx) {
             hidDevices.emplace(handle, HidState{});
 
         ctx->gpr[3] = handle;
+        return;
+    }
+
+    // No USB host controller: the Wii Speak library (PMIC) finds no microphone.
+    if (path.starts_with("/dev/usb/oh")) {
+        ctx->gpr[3] = -6;
         return;
     }
 
@@ -1059,6 +1082,20 @@ extern "C" void MH3_IOSClose(CpuContext* ctx) {
     ctx->gpr[3] = syncError ? syncError : result == 0 ? 0 : Error();
 }
 REGISTER_NATIVE_FUNCTION(0x804BC810, MH3_IOSClose);
+
+// The USB library's IOS_Open and IOS_Close with a two-second timeout
+// (0x804BC630, 0x804BC8C0; decompiled with Ghidra): they queue the request
+// as __ios_Ipc2 does and give up with -3 when no reply came in time. Here the
+// request runs at once, so they are IOS_Open(path, mode) and IOS_Close(fd).
+extern "C" void MH3_IOSOpenWithTimeout(CpuContext* ctx) {
+    MH3_IOSOpen(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804BC630, MH3_IOSOpenWithTimeout, "IOSOpenWithTimeout");
+
+extern "C" void MH3_IOSCloseWithTimeout(CpuContext* ctx) {
+    MH3_IOSClose(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804BC8C0, MH3_IOSCloseWithTimeout, "IOSCloseWithTimeout");
 extern "C" void MH3_IOSRead(CpuContext* ctx) {
     auto it = files.find(ctx->gpr[3]);
 
@@ -1176,6 +1213,12 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
         return;
     }
 
+    if (it != devices.end() && IosNet::IsDevice(it->second)) {
+        IosNet::IoctlAsync(it->second, ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7], ctx->gpr[8], ctx->gpr[9], ctx->gpr[10]);
+        ctx->gpr[3] = 0;
+        return;
+    }
+
     if (it != devices.end() && it->second == "/dev/di") {
         const uint32_t callback = ctx->gpr[9], argument = ctx->gpr[10];
 
@@ -1273,6 +1316,14 @@ extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
     }
 
     const uint32_t command = ctx->gpr[4];
+
+    // A network request may wait while other guest threads open and close
+    // devices: keep the path.
+    if (IosNet::IsDevice(device->second)) {
+        const std::string path = device->second;
+        ctx->gpr[3] = IosNet::Ioctl(ctx, path, command, ctx->gpr[5], ctx->gpr[6], ctx->gpr[7], ctx->gpr[8]);
+        return;
+    }
 
     if (device->second == "/dev/usb/hid") {
         // IOS55 HID v4 protocol: Dolphin Core/IOS/USB/USB_HID/HIDv4.cpp
@@ -1524,6 +1575,12 @@ extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
         return;
     }
 
+    if (IosNet::IsDevice(device->second)) {
+        const std::string path = device->second;
+        ctx->gpr[3] = IosNet::Ioctlv(ctx, path, command, inputs, outputs, vectors);
+        return;
+    }
+
     if (device->second == "/dev/fs" && command == 12) {
         if (inputs != 1 || outputs != 2 || Memory::Read32(vectors + 4) != 64 || Memory::Read32(vectors + 12) != 4 || Memory::Read32(vectors + 20) != 4) {
             ctx->gpr[3] = -4;
@@ -1697,6 +1754,17 @@ extern "C" void MH3_IOSCloseAsync(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION(0x804BC750, MH3_IOSCloseAsync);
 extern "C" void MH3_IOSIoctlvAsync(CpuContext* ctx) {
+    if (const auto device = devices.find(ctx->gpr[3]); device != devices.end() && IosNet::IsDevice(device->second)) {
+        if (!ctx->gpr[8] || ctx->gpr[5] > 16 || ctx->gpr[6] > 16 || !Memory::Contains(ctx->gpr[7], (ctx->gpr[5] + ctx->gpr[6]) * 8)) {
+            ctx->gpr[3] = -4;
+            return;
+        }
+
+        IosNet::IoctlvAsync(device->second, ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7], ctx->gpr[8], ctx->gpr[9]);
+        ctx->gpr[3] = 0;
+        return;
+    }
+
     AsyncFile(ctx, MH3_IOSIoctlv, ctx->gpr[8], ctx->gpr[9]);
 }
 REGISTER_NATIVE_FUNCTION(0x804BD220, MH3_IOSIoctlvAsync);

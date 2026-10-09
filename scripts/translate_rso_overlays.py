@@ -42,8 +42,23 @@ PROFILES = {
                     'f924d4a2b4edc56de214f209e8f47570ed6e5856228c7703f136dc5843444896', 'Map10FieldBinding'),
     'map11_field': ('map11', 0x80AA4500,
                     'd9a415e9da5f752b803ccf9e8fd806d93c7b3ec353531552dd5a2cb1b5f571a4', 'Map11FieldBinding'),
+    # The online menus (connection, terms, CAPCOM ID), loaded at the demo
+    # module's base when the mode menu picks City.
+    'net_data': ('net_data', 0x8097D080,
+                 '92c01ec2ccff3d7759ca5e7c6450bb1cdb844c7ef35bb7973ddaa8863830c11b', 'NetDataBinding'),
+    # Loc Lac (the online city's gate and cities), right after net_data.
+    'map_town_online': ('map_town', 0x809A6EE0,
+                        '9261198878e97da7a8d476117455cde58ad7001136680ae428f6f1e6ca0d4c15', 'MapTownOnlineBinding'),
 }
 DOL_DIGEST = 'db5c9939f677c33d15d446aa4ad19c28044d0b80c5b3cc75adc7f1340ecab162'
+
+# Native ports of overlay functions: their dispatch records enter the native
+# function instead of the translation. An overlay shares its addresses with
+# other modules, so these are not registered by address.
+NATIVE_PORTS = {
+    # net_data's GX sprite drawing (runtime/src/native_ui.cpp).
+    'net_data': {0x8097F9A0: 'MH3_NetMenuDrawSetup', 0x8097FB58: 'MH3_NetMenuDrawSprites'},
+}
 
 
 def write_changed(path, text):
@@ -135,6 +150,7 @@ def main():
                 selected.add(dependency)
                 pending.append(dependency)
     sources, records = [], []
+    ports = NATIVE_PORTS.get(profile, {})
     for entry in sorted((entries[a] for a in selected), key=lambda item: item['entryPoint']):
         source = (work / 'functions' / entry['relativePath']).read_text()
         if hashlib.sha256(source.encode()).hexdigest() != entry['sha256']:
@@ -142,7 +158,10 @@ def main():
         address = entry['entryPoint']
         sources.append(isolate_profile_source(source, profile))
         mask = entry['build']['nonvolatileFprWriteMask']
-        if text <= address < text + size:
+        if address in ports:
+            # A native port: the dispatch guards the nonvolatile registers.
+            records.append(f'    {{0x{address:08X}u, &{ports[address]}, 0xFFFFC000u, true}},')
+        elif text <= address < text + size:
             records.append(f'    {{0x{address:08X}u, &mh3_{profile}_{address:08X}, 0x{mask:08X}u, false}},')
     checksum = 0xCBF29CE484222325
     for byte in image[offset:offset + size]:
@@ -161,6 +180,9 @@ extern const RawDispatchRecord Records[Count];
     output = ROOT / 'generated/rso_overlays'
     output.mkdir(parents=True, exist_ok=True)
     write_changed(output / f'{profile}.h', header)
+    if set(ports) - {entry['entryPoint'] for entry in functions}:
+        raise ValueError('A native port replaces no overlay function')
+    sources += [''.join(f'extern "C" void {name}(CpuContext*);\n' for name in ports.values())]
     sources += [f'namespace {binding} {{\nconst RawDispatchRecord Records[]{{\n' +
                 '\n'.join(records) + '\n};\n}\n']
     # Include the declaration first so the const table has external linkage.

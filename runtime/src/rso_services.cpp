@@ -19,6 +19,8 @@
 #include "generated/rso_overlays/map09_field.h"
 #include "generated/rso_overlays/map10_field.h"
 #include "generated/rso_overlays/map11_field.h"
+#include "generated/rso_overlays/net_data.h"
+#include "generated/rso_overlays/map_town_online.h"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -70,6 +72,9 @@ Module modules[]{
      Map10FieldBinding::Count},
     {"map11.rso", Map11FieldBinding::Base, Map11FieldBinding::Text, Map11FieldBinding::Size, Map11FieldBinding::Prolog, Map11FieldBinding::Checksum, false, Map11FieldBinding::Records,
      Map11FieldBinding::Count},
+    {"net_data.rso", NetDataBinding::Base, NetDataBinding::Text, NetDataBinding::Size, NetDataBinding::Prolog, NetDataBinding::Checksum, false, NetDataBinding::Records, NetDataBinding::Count},
+    {"map_town.rso", MapTownOnlineBinding::Base, MapTownOnlineBinding::Text, MapTownOnlineBinding::Size, MapTownOnlineBinding::Prolog, MapTownOnlineBinding::Checksum, false,
+     MapTownOnlineBinding::Records, MapTownOnlineBinding::Count},
 };
 
 uint64_t TextChecksum(uint32_t text, uint32_t size) {

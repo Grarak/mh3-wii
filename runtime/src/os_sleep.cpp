@@ -2,6 +2,8 @@
 #include "fatal.h"
 #include "audio_dma.h"
 #include "audio/native_audio.h"
+#include "guest_threads.h"
+#include "net/ios_net.h"
 #include "os_alarm.h"
 #include "ios_host.h"
 #include "timebase_contract.h"
@@ -18,7 +20,8 @@ void ServiceHostGraphicsEvents();
 
 // OSSleepTicks, RMHP08. Host timing replaces its stack-allocated hardware
 // alarm. Keep the native call stack alive while delivering device callbacks.
-// Switching to another runnable guest thread requires a fiber scheduler.
+// Once other guest threads run (guest_threads.h), the sleeping thread waits
+// for its deadline in the scheduler and they run meanwhile.
 namespace {
 template <class Pump>
 void SleepTicks(CpuContext* cpu, Pump pump) {
@@ -39,7 +42,7 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
     ScopeExit restore([&] { *cpu = saved; });
 
     do {
-        if (Memory::Read32(saved.gpr[13] - 14984))
+        if (Memory::Read32(saved.gpr[13] - 14984) && !GuestThreads::Started())
             MH3_THROW(std::runtime_error("OSSleepTicks requires runnable guest thread switching"));
 
         pump();
@@ -54,8 +57,17 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
 } // namespace
 
 // Delivers pending device work: host window events, IOS completions, audio
-// DMA, OS alarms and VI retrace callbacks.
+// DMA, OS alarms and VI retrace callbacks, then the guest threads' sleeps and
+// waits that are over (and a switch to a woken thread of higher priority). The
+// game thread does it; another guest thread's host thread only delivers IOS
+// completions and alarms (the window and the controllers belong to the game
+// thread).
 void PumpDevices(CpuContext* cpu) {
+    if (!GuestThreads::OnGameThread()) {
+        PumpIosCompletions(cpu);
+        ServiceOsAlarms(cpu);
+        return;
+    }
 #ifdef MH3_HAS_AURORA
     ServiceHostGraphicsEvents();
 #endif
@@ -64,9 +76,20 @@ void PumpDevices(CpuContext* cpu) {
     NativeAudio::ServiceNativeAudio(cpu);
     ServiceOsAlarms(cpu);
     ServiceVideoRetrace(cpu);
+    IosNet::Service();
+    GuestThreads::Service(cpu);
 }
 
 extern "C" void MH3_OSSleepTicks(CpuContext* cpu) {
+    // With other guest threads (or one ready to run), sleep in the scheduler.
+    if (GuestThreads::Started() || Memory::Read32(cpu->gpr[13] - 14984)) {
+        const auto ticks = (uint64_t(cpu->gpr[3]) << 32) | cpu->gpr[4];
+        const auto deadline = GuestThreads::Clock::now() + TimeBaseContract::TicksToDuration(ticks);
+
+        if (GuestThreads::SleepUntil(cpu, deadline))
+            return;
+    }
+
     SleepTicks(cpu, [&] { PumpDevices(cpu); });
 }
 REGISTER_NATIVE_FUNCTION(0x804D5320, MH3_OSSleepTicks);

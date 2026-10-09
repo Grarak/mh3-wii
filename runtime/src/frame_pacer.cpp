@@ -22,6 +22,7 @@
 #endif
 #include "field_jump.h"
 #include "game_step.h"
+#include "guest_threads.h"
 #include "memory.h"
 #include "timebase_contract.h"
 #include "video_interface.h"
@@ -72,6 +73,9 @@ constexpr auto kMaxStep = std::chrono::milliseconds(100);
 
 // Game time a slow host may still catch up on; older debt is dropped.
 constexpr auto kMaxDebt = std::chrono::milliseconds(100);
+
+// The most a variable step leaves to other runnable guest threads.
+constexpr auto kDonation = std::chrono::milliseconds(2);
 
 enum : uint32_t {
     ApplyWidemode = 0x8003FA48, // reconfigures VI/copy for 4:3 or 16:9
@@ -163,9 +167,12 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         // The next step is assumed to take as long as this one.
         GameStep::Begin(std::max(stepTicks, 1e-3) / 2);
 
-        // No wait: only deliver the device work due (audio, alarms, IOS, VI).
+        // No wait: only deliver the device work due (audio, alarms, IOS, VI),
+        // and let the other guest threads that can run have a moment, as the
+        // retrace waits did on the Wii (online play).
         const CpuContext frame = *ctx;
         PumpDevices(ctx);
+        GuestThreads::Donate(ctx, kDonation);
         *ctx = frame;
     } else {
         frameEnd += budget * period;

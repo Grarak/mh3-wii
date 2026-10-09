@@ -11,6 +11,7 @@
 #include "quest_catalog.h"
 #include "launcher_cheats.h"
 #include "guest_worker.h"
+#include "net/online.h"
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -436,6 +437,7 @@ int main(int argc, char** argv) {
         }
 
         InitializeDataSections();
+        ApplyOnlinePatches();
 #ifdef MH3_ENABLE_COLLISION_CHECK
         if (argc == 2 && std::string_view(argv[1]) == "--collision-check")
             return RunCollisionCheck(&cpu);
