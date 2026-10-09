@@ -42,16 +42,20 @@ void SleepTicks(CpuContext* cpu, Pump pump) {
 }
 }
 
-extern "C" void MH3_OSSleepTicks(CpuContext* cpu) {
-    SleepTicks(cpu, [&] {
+// Delivers pending device work: host window events, IOS completions, audio
+// DMA, OS alarms and VI retrace callbacks.
+void PumpDevices(CpuContext* cpu) {
 #ifdef MH3_HAS_AURORA
-        ServiceHostGraphicsEvents();
+    ServiceHostGraphicsEvents();
 #endif
-        PumpIosCompletions(cpu);
-        ServiceAudioDma(cpu);
-        ServiceOsAlarms(cpu);
-        ServiceVideoRetrace(cpu);
-    });
+    PumpIosCompletions(cpu);
+    ServiceAudioDma(cpu);
+    ServiceOsAlarms(cpu);
+    ServiceVideoRetrace(cpu);
+}
+
+extern "C" void MH3_OSSleepTicks(CpuContext* cpu) {
+    SleepTicks(cpu, [&] { PumpDevices(cpu); });
 }
 REGISTER_NATIVE_FUNCTION(0x804D5320, MH3_OSSleepTicks);
 

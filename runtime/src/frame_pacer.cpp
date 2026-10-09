@@ -33,6 +33,8 @@
 void ReportHostSpeed(double ticks, double nominalHz);
 #endif
 
+void PumpDevices(CpuContext* cpu); // os_sleep.cpp
+
 namespace {
 
 // Small-data globals (offsets from r13; lower-case names are mh3.sel exports).
@@ -140,8 +142,10 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         stepTicks = std::chrono::duration<double>(step) / period;
         // The next step is assumed to take as long as this one.
         GameStep::Begin(std::max(stepTicks, 1e-3) / 2);
-        // Keep audio, alarms, IOS and VI callbacks pumping without waiting.
-        os(OSSleepTicks, {0, 0});
+        // No wait: only deliver the device work due (audio, alarms, IOS, VI).
+        const CpuContext frame = *ctx;
+        PumpDevices(ctx);
+        *ctx = frame;
     } else {
         frameEnd += budget * period;
         if (now - frameEnd > kMaxDebt) frameEnd = now; // too far behind: drop the debt

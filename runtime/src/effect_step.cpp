@@ -3,34 +3,38 @@
 // ef is tick based: every Effect::Calc emitters run their curves and emission
 // and every particle runs one tick (curves at its integer age, fields,
 // collision, position += velocity), so at a short step particles would move,
-// age and spawn too fast. Instead of rewriting the library for fractional
-// ticks, its own per-tick code keeps running on whole ticks and is driven by
-// the step clock:
+// age and spawn too fast.
 //
-//  - Effect::Calc runs once per whole tick of game time that elapsed this
-//    step (GameStep::Ticks). A step without one runs a particle-only pass:
-//    emitter curves and emission are gated off, so emitters keep ticking on
-//    whole ticks of game time.
-//  - Each particle carries its own clock. ParticleManager::Calc only runs a
-//    particle's real tick when that clock crosses a whole tick; the tick's
-//    before and after states are kept, and between ticks the particle is
-//    shown at its place in that tick (position, velocity, size, scale,
-//    rotation, texture transform, colours), which at a 1/30 s step is exactly
-//    the stock state after each tick. Curve events (child emission, texture
-//    changes) still fire once per whole tick.
+//  - Emitters keep ticking on whole ticks: Effect::Calc runs once per whole
+//    tick of game time elapsed this step (GameStep::Ticks), and a step without
+//    one runs a particle-only pass with emitter curves and emission gated off.
+//    Emission is an event (particles appear on ticks), so it stays on ticks.
+//  - Particles advance by the game time of the pass (dt ticks) and carry a
+//    fractional age. ParticleManager::Calc (0x800AC35C) runs every pass for
+//    every particle, at the integer tick of its age:
+//      velocity += fields * dt, position += (field push + velocity) * momentum
+//      * dt: the momentum (the factor ParticleAddPosition 0x800AD130 applies)
+//      is scaled by dt for the call, and the velocity change the call made is
+//      taken dt times, the position corrected for it;
+//      the curves (colours, size, scale, rotation, texture transforms) are
+//      keyframed values of the age: they are evaluated at the particle's
+//      fractional age, from the curve's values at the ticks on either side;
+//      the age crosses whole ticks for the tick's events: child emission
+//      (a curve track) and retirement at the end of life only happen then.
+//    At dt = 1 (the stock 1/30 s step) the call is the original.
 //
 // Offsets are MH3's nw4r ef (the same layout as Wii Sports' decompiled ef).
 #include "abi_bridge.h"
 #include "game_step.h"
+#include "guest_call.h"
 #include "port_check.h"
 #include "memory.h"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
-#include <utility>
+#include <unordered_set>
 #include <vector>
 
 extern "C" void func_800A4C20(CpuContext*); // nw4r::ef::Effect::Calc(bool onlyBillboard)
@@ -51,84 +55,128 @@ struct List {
 };
 
 enum : uint32_t { kLifeActive = 1 };
-enum : uint32_t { kEvalWait = 0, kEvalDone = 1 };
+enum : uint32_t { kEvalWait = 0 };
+
+enum : uint32_t {
+    TrackCount = 0x800AD294,     // (ResEmitter) -> u16 particle tracks
+    InitTrackCount = 0x800ADED8, // (ResEmitter) -> u16 of them run only at tick 0
+    Track = 0x800ADE30,          // (ResEmitter, u16 index) -> track
+    CurveU8 = 0x8009DF14,        // AnimCurveExecuteU8(track, target, tick, seed, life)
+    CurveF32 = 0x8009F8C0,       // AnimCurveExecuteF32(...)
+    CurveRotate = 0x800A035C,    // AnimCurveExecuteRotate(...)
+};
 
 // Effect / Emitter / ParticleManager / Particle fields.
 enum : uint32_t {
     kEffectEmitters = 0x24,        // ut::List of Emitter
     kLifeStatus = 0x0C,            // u32 (Emitter, Particle)
     kEmitterLastTranslate = 0x108, // VEC3: emitter position after the last Effect::Calc
-    kEmitterPrevTranslate = 0x114, // VEC3: the one before (velocity inheritance)
+    kManagerResource = 0x24,       // ResEmitter
     kManagerParticles = 0x38,      // ut::List of Particle
     kManagerLastCalced = 0x54,     // Particle*: Calc resumes after it
-    kParticleState = 0x20,         // ParticleParameter .. momentum
+    kParticleCurves = 0x20,        // ParticleParameter: curve targets from here
+    kParticleColours = 0x30,       // .. RGBA8 colours up to here
+    kParticleRotate = 0x40,        // VEC3 radians
+    kParticleFloats = 0x88,        // size .. texture translate: f32 up to here
+    kParticleCurvesEnd = 0xA0,     // textures, flags
+    kParticleVelocity = 0xA0,      // VEC3
+    kParticlePosition = 0xAC,      // VEC3
+    kParticlePrevPosition = 0xB8,  // VEC3
+    kParticleMomentum = 0xC4,      // f32
     kParticleEval = 0xD8,          // u32
     kParticleTick = 0xDC,          // u16 age in ticks
     kParticleSeed = 0xDE,          // u16
+    kParticleLife = 0xE0,          // u16
 };
+// Track header: u8 magic (0xAB/0xAC), u8 target offset, u8 kind, u8, u8 flags.
+enum : uint8_t { kTrackU8 = 0, kTrackF32 = 3, kTrackRotate = 6 };
+enum : uint8_t { kTrackSkip = 0x08, kTrackEmitterTick = 0x10 };
 
-// ParticleParameter (0x20..0xC8) as words: colours, size, scale, rotate,
-// texture scale/rotate/translate, textures and flags, velocity, position,
-// previous position, momentum.
-constexpr size_t kStateWords = (0xC8 - kParticleState) / 4;
-using State = std::array<uint32_t, kStateWords>;
-constexpr size_t Word(uint32_t offset) { return (offset - kParticleState) / 4; }
-
-State ReadState(uint32_t particle) {
-    State s;
-    for (size_t i = 0; i < kStateWords; ++i) s[i] = Memory::Read32(particle + kParticleState + i * 4);
-    return s;
-}
-void WriteState(uint32_t particle, const State& s) {
-    for (size_t i = 0; i < kStateWords; ++i) Memory::Write32(particle + kParticleState + i * 4, s[i]);
+using Vec3 = std::array<float, 3>;
+Vec3 ReadVec(uint32_t a) { return {Memory::ReadFloat32(a), Memory::ReadFloat32(a + 4), Memory::ReadFloat32(a + 8)}; }
+void WriteVec(uint32_t a, const Vec3& v) {
+    for (int k = 0; k < 3; ++k) Memory::WriteFloat32(a + 4 * k, v[k]);
 }
 
+constexpr size_t kCurveWords = (kParticleCurvesEnd - kParticleCurves) / 4;
+using Curves = std::array<uint32_t, kCurveWords>;
+Curves ReadCurves(uint32_t particle) {
+    Curves c;
+    for (size_t i = 0; i < kCurveWords; ++i) c[i] = Memory::Read32(particle + kParticleCurves + 4 * i);
+    return c;
+}
+void WriteCurves(uint32_t particle, const Curves& c) {
+    for (size_t i = 0; i < kCurveWords; ++i) Memory::Write32(particle + kParticleCurves + 4 * i, c[i]);
+}
 float F(uint32_t bits) { float f; std::memcpy(&f, &bits, 4); return f; }
 uint32_t Bits(float f) { uint32_t b; std::memcpy(&b, &f, 4); return b; }
 
-// The particle a fraction t into its tick from `before` to `after`.
-State Between(const State& before, const State& after, float t) {
-    State s = after;
-    const auto lerp = [&](size_t i, float wrap) {
-        const float a = F(before[i]), b = F(after[i]);
-        // Angles and texture offsets that wrapped during the tick snap.
-        if (std::isfinite(a) && std::isfinite(b) && !(wrap > 0 && std::fabs(b - a) > wrap))
-            s[i] = Bits(a + (b - a) * t);
-    };
-    for (size_t i = Word(0x20); i < Word(0x30); ++i) { // colours, RGBA8
-        uint32_t v = 0;
-        for (int shift = 24; shift >= 0; shift -= 8) {
-            const float a = float(before[i] >> shift & 0xFF), b = float(after[i] >> shift & 0xFF);
-            v |= uint32_t(std::lround(a + (b - a) * t)) << shift;
-        }
-        s[i] = v;
-    }
-    for (size_t i = Word(0x30); i < Word(0x40); ++i) lerp(i, 0);                // size, scale
-    for (size_t i = Word(0x40); i < Word(0x70); ++i) lerp(i, 3.1415927f);       // rotate, texture scale/rotate
-    for (size_t i = Word(0x70); i < Word(0x88); ++i) lerp(i, 0.5f);             // texture translate
-    for (size_t i = Word(0xA0); i < Word(0xB8); ++i) lerp(i, 0);                // velocity, position
-    // Previous position trails by the whole tick's movement, as after a tick.
-    for (size_t k = 0; k < 3; ++k) {
-        const size_t pos = Word(0xAC) + k, prev = Word(0xB8) + k;
-        s[prev] = Bits(F(s[pos]) - (F(after[pos]) - F(before[pos])));
-    }
-    return s;
-}
-
 struct Particle {
-    uint16_t seed = 0, tick = 0; // identity: a reused slot or a stock tick invalidates the entry
-    float t = 0;                 // clock: fraction of the current tick elapsed
-    uint64_t generation = 0;     // Effect::Calc pass that last ran its tick
-    State before{}, after{};
+    uint16_t seed = 0; // identity: a reused slot or a stock tick invalidates the entry
+    double age = 0;    // ticks, fractional
+    uint64_t generation = 0; // Effect::Calc pass that last advanced it
 };
 
 struct Step {
-    std::unordered_map<uint32_t, Particle> particles;
+    std::unordered_map<uint32_t, Particle> particles; // those between ticks
     uint64_t generation = 0;
     double particleStep = 1.0; // ticks particles advance in this Effect::Calc pass
     bool particlesOnly = false;
 };
 Step step;
+
+// Particles whose age crosses no whole tick in the running ParticleManager::Calc.
+std::unordered_set<uint32_t> betweenTicks;
+
+// Runs the particle's curve tracks at `tick`, as ParticleManager::Calc does
+// (without the child and texture tracks, the events, and the emitter-age ones).
+void RunCurves(GuestCall& game, uint32_t manager, uint32_t particle, uint32_t tick) {
+    const uint32_t res = Memory::Read32(manager + kManagerResource);
+    const uint32_t count = game(TrackCount, {res}) & 0xFFFF;
+    const uint32_t first = tick == 0 ? 0 : game(InitTrackCount, {res}) & 0xFFFF;
+    const uint32_t seed = Memory::Read16(particle + kParticleSeed);
+    const uint32_t life = Memory::Read16(particle + kParticleLife);
+    for (uint32_t i = first; i < count; ++i) {
+        const uint32_t track = game(Track, {res, i});
+        const uint8_t magic = Memory::Read8(track), target = Memory::Read8(track + 1);
+        const uint8_t kind = Memory::Read8(track + 2), flags = Memory::Read8(track + 4);
+        if ((flags & (kTrackSkip | kTrackEmitterTick)) != 0 || uint8_t(magic + 0x55) >= 2) continue;
+        if (kind == kTrackU8) game(CurveU8, {track, particle + kParticleCurves + target, tick, seed, life});
+        else if (kind == kTrackF32) game(CurveF32, {track, particle + kParticleCurves + target, tick, seed, life});
+        else if (kind == kTrackRotate) game(CurveRotate, {track, particle + kParticleRotate, tick, seed, life});
+    }
+}
+
+// Shows the curves at age `at` (a fraction past a whole tick): the keyframed
+// values between the ticks either side, as the curves are linear between keys.
+void CurvesAt(GuestCall& game, uint32_t manager, uint32_t particle, double at) {
+    const uint32_t tick = uint32_t(at);
+    const float t = float(at - tick);
+    const Curves kept = ReadCurves(particle);
+    RunCurves(game, manager, particle, tick);
+    const Curves a = ReadCurves(particle);
+    RunCurves(game, manager, particle, tick + 1);
+    const Curves b = ReadCurves(particle);
+    Curves s = kept;
+    constexpr size_t colours = (kParticleColours - kParticleCurves) / 4;
+    constexpr size_t floats = (kParticleFloats - kParticleCurves) / 4;
+    constexpr size_t rotate = (kParticleRotate - kParticleCurves) / 4;
+    for (size_t i = 0; i < colours; ++i) {
+        uint32_t v = 0;
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            const float x = float(a[i] >> shift & 0xFF), y = float(b[i] >> shift & 0xFF);
+            v |= uint32_t(std::lround(x + (y - x) * t)) << shift;
+        }
+        s[i] = v;
+    }
+    for (size_t i = colours; i < floats; ++i) {
+        const float x = F(a[i]), y = F(b[i]);
+        // A rotation curve wrapping between the two ticks snaps.
+        const bool wraps = i >= rotate && i < rotate + 3 && std::fabs(y - x) > 3.1415927f;
+        s[i] = !std::isfinite(x) || !std::isfinite(y) || wraps ? a[i] : Bits(x + (y - x) * t);
+    }
+    WriteCurves(particle, s);
+}
 
 } // namespace
 
@@ -194,9 +242,8 @@ extern "C" void MH3_EmitterCalcEmission(CpuContext* ctx) { PortCheck::Call(ctx, 
 REGISTER_NATIVE_FUNCTION_AS(0x800A8E5C, MH3_EmitterCalcEmission, "EmitterCalcEmission");
 
 static void ParticleManagerCalcPort(CpuContext* ctx) {
-    // Whole ticks with no particle between ticks (the stock 1/30 s step) are
-    // the original. Once particles are tracked, a whole tick still goes through
-    // their clocks: their RAM holds a between-ticks state, not their last tick.
+    // Whole ticks with every particle on a whole tick (the stock 1/30 s step)
+    // are the original.
     if (step.particleStep == 1.0 && step.particles.empty()) {
         func_800AC35C(ctx);
         return;
@@ -208,81 +255,78 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
 
     struct Work {
         uint32_t address;
-        Particle* particle;
-        double remaining; // ticks still to advance in this pass
-        bool known;       // the entry holds this particle's last tick
-        bool catchUp;     // an extra tick (calc remain) within the same pass
-        State pre;
+        double age, dt;
+        float momentum;
+        Vec3 velocity, position;
     };
     std::vector<Work> work;
     for (uint32_t p = lastCalced ? list.Next(lastCalced) : list.First(); p; p = list.Next(p)) {
         if (Memory::Read32(p + kLifeStatus) != kLifeActive || Memory::Read32(p + kParticleEval) != kEvalWait)
             continue;
-        Memory::Write32(p + kParticleEval, kEvalDone);
-        Particle& entry = step.particles[p];
-        const bool known = entry.seed == Memory::Read16(p + kParticleSeed) &&
-                           entry.tick == Memory::Read16(p + kParticleTick) && entry.tick != 0;
-        const bool catchUp = known && entry.generation == step.generation;
-        work.push_back({p, &entry, catchUp ? 0.0 : step.particleStep, known, catchUp, {}});
-    }
-
-    // Advances a particle's clock; true when its next real tick is due now.
-    const auto due = [](Work& w) {
-        if (!w.known || w.catchUp) return true;
-        Particle& e = *w.particle;
-        const double r = std::min(w.remaining, 1.0 - e.t);
-        e.t = float(e.t + r);
-        w.remaining -= r;
-        return e.t >= 1.0f && w.remaining > 0;
-    };
-
-    bool ran = false;
-    std::vector<size_t> pending(work.size());
-    for (size_t i = 0; i < work.size(); ++i) pending[i] = i;
-    for (int round = 0; round < 16 && !pending.empty(); ++round) {
-        std::vector<size_t> ticking;
-        for (size_t i : pending) {
-            Work& w = work[i];
-            if (due(w)) {
-                ticking.push_back(i);
-            } else {
-                WriteState(w.address, Between(w.particle->before, w.particle->after, w.particle->t));
+        const uint16_t tick = Memory::Read16(p + kParticleTick);
+        double age = tick, dt = step.particleStep;
+        if (auto it = step.particles.find(p); it != step.particles.end()) {
+            const Particle& e = it->second;
+            if (e.seed == Memory::Read16(p + kParticleSeed) && uint32_t(e.age) == tick) {
+                age = e.age;
+                // Calc again in the same pass (calc remain: a particle emitted
+                // with ticks to catch up) is a whole tick.
+                if (e.generation == step.generation) dt = 1.0;
             }
         }
-        if (ticking.empty()) break;
-        for (size_t i : ticking) {
-            Work& w = work[i];
-            if (w.known) WriteState(w.address, w.particle->after);
-            w.pre = ReadState(w.address);
-            Memory::Write32(w.address + kParticleEval, kEvalWait);
-        }
-        Memory::Write32(manager + kManagerLastCalced, lastCalced);
-        *ctx = saved;
-        func_800AC35C(ctx);
-        ran = true;
-        pending.clear();
-        for (size_t i : ticking) {
-            Work& w = work[i];
-            if (Memory::Read32(w.address + kLifeStatus) != kLifeActive) { // retired this tick
-                step.particles.erase(w.address);
-                continue;
-            }
-            Particle& e = *w.particle;
-            e.before = w.pre;
-            e.after = ReadState(w.address);
-            e.seed = Memory::Read16(w.address + kParticleSeed);
-            e.tick = Memory::Read16(w.address + kParticleTick);
-            e.generation = step.generation;
-            e.t = w.catchUp ? 1.0f : 0.0f; // a catch-up tick is shown whole
-            w.known = true;
-            w.catchUp = false;
-            pending.push_back(i);
-        }
+        Work w{p, age, dt, Memory::ReadFloat32(p + kParticleMomentum), ReadVec(p + kParticleVelocity),
+               ReadVec(p + kParticlePosition)};
+        if (dt != 1.0) Memory::WriteFloat32(p + kParticleMomentum, float(w.momentum * dt));
+        if (std::floor(age + dt) == std::floor(age)) betweenTicks.insert(p);
+        work.push_back(w);
     }
-    if (!ran) Memory::Write32(manager + kManagerLastCalced, list.Last());
+    func_800AC35C(ctx);
+    betweenTicks.clear();
     *ctx = saved;
+
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    for (const Work& w : work) {
+        const uint32_t p = w.address;
+        if (Memory::Read32(p + kLifeStatus) != kLifeActive) { // retired
+            step.particles.erase(p);
+            continue;
+        }
+        if (w.dt != 1.0) {
+            Memory::WriteFloat32(p + kParticleMomentum, w.momentum);
+            const Vec3 after = ReadVec(p + kParticleVelocity);
+            Vec3 velocity, position = ReadVec(p + kParticlePosition), previous;
+            for (int k = 0; k < 3; ++k) {
+                velocity[k] = float(w.velocity[k] + (after[k] - w.velocity[k]) * w.dt);
+                position[k] = float(position[k] - (after[k] - velocity[k]) * w.momentum * w.dt);
+                // The previous position trails by a tick's movement, as on the Wii.
+                previous[k] = float(position[k] - (position[k] - w.position[k]) / w.dt);
+            }
+            WriteVec(p + kParticleVelocity, velocity);
+            WriteVec(p + kParticlePosition, position);
+            WriteVec(p + kParticlePrevPosition, previous);
+        }
+        const double age = w.age + w.dt;
+        Memory::Write16(p + kParticleTick, uint16_t(age));
+        if (age == std::floor(age)) {
+            step.particles.erase(p);
+            continue;
+        }
+        step.particles[p] = {Memory::Read16(p + kParticleSeed), age, step.generation};
+        // After the tick from age k the Wii shows the curves at k: the curves
+        // run one tick behind the age, here at age - 1.
+        if (age > 1.0) CurvesAt(game, manager, p, age - 1.0);
+    }
 }
 extern "C" void func_800AC35C(CpuContext* ctx);
 extern "C" void MH3_ParticleManagerCalc(CpuContext* ctx) { PortCheck::Call(ctx, "ParticleManagerCalc", func_800AC35C, ParticleManagerCalcPort); }
 REGISTER_NATIVE_FUNCTION_AS(0x800AC35C, MH3_ParticleManagerCalc, "ParticleManagerCalc");
 
+
+// Child emission is a curve event: only when the particle's age crosses a tick.
+extern "C" void func_800A1D0C(CpuContext* ctx);
+static void AnimCurveExecuteChildPort(CpuContext* ctx) {
+    if (!betweenTicks.count(ctx->gpr[4])) func_800A1D0C(ctx);
+}
+extern "C" void MH3_AnimCurveExecuteChild(CpuContext* ctx) { PortCheck::Call(ctx, "AnimCurveExecuteChild", func_800A1D0C, AnimCurveExecuteChildPort); }
+REGISTER_NATIVE_FUNCTION_AS(0x800A1D0C, MH3_AnimCurveExecuteChild, "AnimCurveExecuteChild");

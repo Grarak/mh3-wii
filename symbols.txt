@@ -193,6 +193,10 @@
 800a035c AnimCurveExecuteRotate
 800a0d68 AnimCurveExecuteTexture
 800a1d0c AnimCurveExecuteChild
+8009ce20 AnimCurveTickToFrame
+800ad294 ResEmitterNumPtclTrack
+800aded8 ResEmitterNumPtclInitTrack
+800ade30 ResEmitterGetPtclTrack
 800ab6bc MathSinRad
 800dfe30 MapSoundUpdate
 800d84a0 SoundOffline
