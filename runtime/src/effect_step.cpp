@@ -37,6 +37,7 @@
 #include "memory.h"
 
 #include <algorithm>
+#include <atomic>
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
 #endif
@@ -742,9 +743,16 @@ namespace {
 // The task pass's Effect::Calc calls, in order: the effect and onlyBillboard;
 // and whether the effect view update waits for the join (MH3_EffectSystemView).
 struct Deferral {
-    bool enabled = false, collecting = false, launched = false, viewPending = false;
+    bool enabled = false, collecting = false, viewPending = false;
+    std::atomic<bool> launched{false}; // the draw thread reads it beside the game thread (overlap)
     std::vector<std::pair<uint32_t, uint32_t>> calls;
 };
+
+bool overlap = false;
+
+bool OnDrawThread() {
+    return PpcThread::CurrentThread() == PpcThread::Draw;
+}
 
 Deferral deferral;
 
@@ -767,7 +775,21 @@ void RunDeferred(CpuContext* cpu, void*) {
 } // namespace
 
 namespace EffectStep {
+void SetOverlap(bool enabled) {
+    overlap = enabled;
+}
+
 void Defer(bool enabled) {
+    // Overlapped: the previous step's calls may still run beside the draw
+    // thread's scene; the list is the game thread's, joined before the next.
+    if (overlap) {
+        if (deferral.launched)
+            GuestWorker::Wait();
+
+        deferral.calls.clear();
+        deferral.launched = false;
+    }
+
     // Port checks compare whole RAM around a call: they need the game thread's order.
     deferral.enabled = enabled && GuestWorker::Available() && !PortCheck::Set();
     deferral.collecting = deferral.enabled;
@@ -778,7 +800,7 @@ void Collected() {
 }
 
 void Launch(const CpuContext& game) {
-    if (deferral.calls.empty() || deferral.launched)
+    if (deferral.calls.empty() || deferral.launched || (overlap && OnDrawThread()))
         return;
 
     GuestWorker::Submit(game, RunDeferred, nullptr);
@@ -786,6 +808,16 @@ void Launch(const CpuContext& game) {
 }
 
 void Join(CpuContext* cpu) {
+    if (overlap && OnDrawThread()) {
+        if (deferral.launched)
+            GuestWorker::Thread().Await();
+
+        if (std::exchange(deferral.viewPending, false))
+            PutEffectView(cpu);
+
+        return;
+    }
+
     deferral.collecting = false;
 
     if (deferral.calls.empty())
@@ -802,7 +834,8 @@ void Join(CpuContext* cpu) {
     deferral.calls.clear();
     deferral.launched = false;
 
-    if (std::exchange(deferral.viewPending, false))
+    // Overlapped, the effect view is the draw thread's.
+    if (!overlap && std::exchange(deferral.viewPending, false))
         PutEffectView(cpu);
 }
 } // namespace EffectStep

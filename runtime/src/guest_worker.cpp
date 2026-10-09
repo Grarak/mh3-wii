@@ -160,6 +160,13 @@ void GuestThread::Wait(bool park) {
     ++waitCount_;
 }
 
+void GuestThread::Await() const {
+    const uint32_t target = submitted_.Load();
+
+    for (uint32_t done = finished_.Load(); done != target;)
+        done = finished_.SpinForChange(done);
+}
+
 bool GuestThread::Pending() const {
     return finished_.Load() != submitted_.Load();
 }

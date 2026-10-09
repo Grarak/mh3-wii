@@ -5,6 +5,7 @@
 #include "model_cull.h"
 #include "scene_cull.h"
 #include "native_frame_packet.h"
+#include "guest_worker.h"
 #include "asset_cache.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_prepare_diagnostics.h"
@@ -29,6 +30,7 @@
 #include "gl/gl.hpp"
 #include "dolphin/vi/vi_internal.hpp"
 #include <algorithm>
+#include <utility>
 #include <array>
 #include <atomic>
 #include <exception>
@@ -416,9 +418,35 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
     StartNativeRenderThread();
 }
 
+// The overlapped draw (docs/pipelined-draw.md): the frame's packet begins at
+// the handoff, after the previous scene published its own, and the draw
+// thread publishes it; frame begin only latches admission.
+bool frameOverlap = false, overlapAdmitted = false, overlapPacketBegun = false, overlapSubmitted = false;
+
+void SetNativeFrameOverlap(bool enabled) {
+    frameOverlap = enabled;
+}
+
+void BeginOverlappedNativeGraphicsFrame() {
+    PaceNativeFramePacket();
+    MH3_STAT(BeginNativeFrameStatistics();)
+    BeginNativeFramePacket(overlapAdmitted);
+    overlapPacketBegun = true;
+}
+
+void NativeFrameSubmittedToDraw() {
+    overlapPacketBegun = false;
+    overlapSubmitted = true;
+}
+
 bool BeginNativeGraphicsFrame() {
     if (!initialized)
         MH3_THROW(std::runtime_error("Native frame began before graphics startup"));
+
+    if (frameOverlap && !aurora::gl::on_render_thread() && PpcThread::CurrentThread() == PpcThread::Game) {
+        overlapAdmitted = aurora_native_window_presentable();
+        return overlapAdmitted;
+    }
 
     // Before the frame's statistics: the wait is not game-thread work.
     PaceNativeFramePacket();
@@ -436,6 +464,10 @@ bool NativeGraphicsFrameShouldRender() {
     if (!initialized)
         return false;
 
+    // Overlapped, the game thread's logic runs before its packet begins.
+    if (frameOverlap && PpcThread::CurrentThread() == PpcThread::Game && !overlapPacketBegun)
+        return overlapAdmitted;
+
     if (NativeRenderThreadRunning() && !aurora::gl::on_render_thread())
         return NativeFramePacketRecording();
 
@@ -450,6 +482,22 @@ void CancelNativeGraphicsFrame() {
         CancelNativeFramePacket();
     else
         aurora_cancel_native_frame();
+}
+
+bool EndOverlappedNativeGraphicsFrame() {
+    if (!frameOverlap || PpcThread::CurrentThread() != PpcThread::Game)
+        return false;
+
+    // The draw thread publishes a submitted scene's packet itself.
+    if (std::exchange(overlapSubmitted, false))
+        return true;
+
+    // A frame without a draw section (boot): an empty packet, as the frame
+    // end would publish, once the previous scene's is out.
+    DrawThread::Thread().Wait();
+    BeginOverlappedNativeGraphicsFrame();
+    overlapPacketBegun = false;
+    return false;
 }
 
 void EndNativeGraphicsFrame() {

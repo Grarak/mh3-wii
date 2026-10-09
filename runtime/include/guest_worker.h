@@ -64,6 +64,13 @@ class GuestThread {
     // True from Submit until the job finishes.
     bool Pending() const;
 
+    // Waits (spinning) for the submitted job without the submitter's
+    // statistics: for another thread that only needs the job's results.
+    void Await() const;
+
+    // The core it asks for, before it first starts.
+    void SetCore(unsigned core) { core_ = core; }
+
     Statistics TakeStatistics();
 
   private:

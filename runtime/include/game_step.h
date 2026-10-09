@@ -64,4 +64,10 @@ void Defer(bool enabled);
 void Collected();
 void Launch(const CpuContext& game);
 void Join(CpuContext* cpu);
+
+// The overlapped draw (MH3_PROFILE=draw-overlap, docs/pipelined-draw.md): the
+// game thread launches a step's calls at its handoff and owns the list, joining
+// them in the next step's Defer; the draw thread's Join only waits for the
+// calculation and puts the effect view, and its Launch does nothing.
+void SetOverlap(bool enabled);
 } // namespace EffectStep

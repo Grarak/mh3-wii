@@ -128,6 +128,18 @@ bool NativeGraphicsFrameShouldRender();
 void CancelNativeGraphicsFrame();
 void EndNativeGraphicsFrame();
 
+// The overlapped draw (MH3_PROFILE=draw-overlap, docs/pipelined-draw.md):
+// frame begin only latches admission; the game thread begins the packet at
+// the handoff (BeginOverlappedNativeGraphicsFrame) and gives it to the draw
+// thread (NativeFrameSubmittedToDraw), which ends the frame. At the frame end
+// EndOverlappedNativeGraphicsFrame says whether the draw thread has it (true:
+// skip EndNativeGraphicsFrame); for a frame that drew nothing it begins the
+// empty packet the end then publishes.
+void SetNativeFrameOverlap(bool enabled);
+void BeginOverlappedNativeGraphicsFrame();
+void NativeFrameSubmittedToDraw();
+bool EndOverlappedNativeGraphicsFrame();
+
 // The game thread or the render thread: each owns its logical draw state.
 bool OnNativeGraphicsThread();
 

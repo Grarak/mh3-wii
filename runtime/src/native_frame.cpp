@@ -61,12 +61,16 @@ REGISTER_NATIVE_FUNCTION_AS(0x8003FE94, MH3_NativeDisplaySetup, "NativeDisplaySe
 extern "C" void MH3_NativeCompletionSetup(CpuContext*) {}
 REGISTER_NATIVE_FUNCTION_AS(0x8003FE88, MH3_NativeCompletionSetup, "NativeCompletionSetup");
 
+bool MH3DrawOverlapMode(); // game_frame.cpp
+
 extern "C" void MH3_NativeFrameBegin(CpuContext*) {
+    MH3DrawOverlapMode();
     BeginNativeGraphicsFrame();
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8003FF20, MH3_NativeFrameBegin, "NativeFrameBegin");
 
 extern "C" void MH3_NativeFrameEnd(CpuContext*) {
-    EndNativeGraphicsFrame();
+    if (!EndOverlappedNativeGraphicsFrame())
+        EndNativeGraphicsFrame();
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8003FFFC, MH3_NativeFrameEnd, "NativeFrameEnd");
