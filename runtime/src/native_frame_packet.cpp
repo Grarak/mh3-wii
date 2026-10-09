@@ -161,6 +161,9 @@ struct Packet {
 struct Task {
     uint64_t sequence;
     std::function<void()> run;
+
+    // Who queued it (the long packet report names the slowest task by it).
+    const void* origin = nullptr;
 };
 
 // A ring by sequence: packet s in packets[s % kNativeFramePacketSlots]. The
@@ -610,9 +613,19 @@ bool Allocate(uint32_t vertices, uint32_t indices, Geometry& out) {
 }
 
 // ---- Render thread ----
-void RunTasks(std::deque<Task>& queue, uint64_t through) {
+#ifdef MH3_DEVELOPMENT
+// The packet's task runs, for the long packet report (render thread only).
+struct TaskTiming {
+    uint32_t count = 0;
+    uint64_t slowestNs = 0;
+    const void* slowest = nullptr;
+};
+#endif
+
+void RunTasks(std::deque<Task>& queue, uint64_t through, [[maybe_unused]] void* timing = nullptr) {
     for ([[maybe_unused]] uint32_t index = 0;; ++index) {
         std::function<void()> run;
+        [[maybe_unused]] const void* origin;
         {
             std::lock_guard lock(taskLock);
 
@@ -620,12 +633,25 @@ void RunTasks(std::deque<Task>& queue, uint64_t through) {
                 return;
 
             run = std::move(queue.front().run);
+            origin = queue.front().origin;
             queue.pop_front();
         }
 #ifdef MH3_DEVELOPMENT
         renderStep.store(index, std::memory_order_relaxed);
+        const uint64_t start = RenderMonotonicNs();
 #endif
         run();
+#ifdef MH3_DEVELOPMENT
+        if (auto* t = static_cast<TaskTiming*>(timing)) {
+            const uint64_t elapsed = RenderMonotonicNs() - start;
+            ++t->count;
+
+            if (elapsed > t->slowestNs) {
+                t->slowestNs = elapsed;
+                t->slowest = origin;
+            }
+        }
+#endif
     }
 }
 
@@ -933,13 +959,20 @@ void Draw(const Packet& p) {
     }
 }
 
-void Execute(const Packet& p) {
+void Execute(const Packet& p, [[maybe_unused]] uint64_t gpuWaitNs = 0) {
 #ifdef MH3_DEVELOPMENT
     renderPacket.store(p.sequence, std::memory_order_relaxed);
+    TaskTiming before, after;
+    const uint64_t start = RenderMonotonicNs();
 #endif
     MH3_RENDER_STAGE(RenderStage::BeforeTasks);
     MH3_RENDER_PART(Tasks);
+#ifdef MH3_DEVELOPMENT
+    RunTasks(beforeTasks, p.sequence, &before);
+    const uint64_t drawStart = RenderMonotonicNs();
+#else
     RunTasks(beforeTasks, p.sequence);
+#endif
 
     if (p.render && !p.canceled) {
         MH3_RENDER_STAGE(RenderStage::Begin);
@@ -964,7 +997,22 @@ void Execute(const Packet& p) {
 
     MH3_RENDER_STAGE(RenderStage::AfterTasks);
     MH3_RENDER_PART(Tasks);
+#ifdef MH3_DEVELOPMENT
+    const uint64_t afterStart = RenderMonotonicNs();
+    RunTasks(afterTasks, p.sequence, &after);
+    const uint64_t end = RenderMonotonicNs();
+
+    // A packet over 40 ms (with its GPU slot wait) stalls the game thread
+    // behind it: where its time went, and who queued its slowest task
+    // (symbolize the address against the build's ELF).
+    if (const uint64_t total = end - start + gpuWaitNs; total >= 40'000'000)
+        std::fprintf(stderr,
+                     "MH3 long packet %llu: %.1f ms: GPU slot wait %.1f, before tasks %.1f (%u, slowest %.1f from %p), draw %.1f, after tasks %.1f (%u, slowest %.1f from %p)\n",
+                     static_cast<unsigned long long>(p.sequence), total / 1e6, gpuWaitNs / 1e6, (drawStart - start) / 1e6, before.count, before.slowestNs / 1e6, before.slowest,
+                     (afterStart - drawStart) / 1e6, (end - afterStart) / 1e6, after.count, after.slowestNs / 1e6, after.slowest);
+#else
     RunTasks(afterTasks, p.sequence);
+#endif
     MH3_RENDER_STAGE(RenderStage::Waiting);
     MH3_RENDER_PART(Waiting);
 }
@@ -1092,10 +1140,16 @@ void RenderPackets() {
             idleStart = 0;
         }
 #endif
+#ifdef MH3_DEVELOPMENT
+        const uint64_t waitStart = RenderMonotonicNs();
+#endif
         if (paced && !synchronous && p.render && !p.canceled)
             WaitForGpuFrameSlot();
-
+#ifdef MH3_DEVELOPMENT
+        Execute(p, RenderMonotonicNs() - waitStart);
+#else
         Execute(p);
+#endif
 
         // Its quads were drawn from the packet's arena (SlotFree).
         if (!p.quads.empty())
@@ -1453,7 +1507,7 @@ void QueueNativeGraphicsTask(NativeTaskOrder order, std::function<void()> task) 
 
     RequireGame();
     std::lock_guard lock(taskLock);
-    (order == NativeTaskOrder::BeforeDraws ? beforeTasks : afterTasks).push_back({sequence, std::move(task)});
+    (order == NativeTaskOrder::BeforeDraws ? beforeTasks : afterTasks).push_back({sequence, std::move(task), __builtin_return_address(0)});
 }
 
 uint32_t NativeFramePacketSlot() {

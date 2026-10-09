@@ -309,6 +309,9 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     auto& program = shade.programs[key];
 
     if (!program) {
+#ifdef MH3_DEVELOPMENT
+        const auto created = std::chrono::steady_clock::now();
+#endif
         auto sources = NativeShaderSource(variant);
 #ifdef MH3_DEVELOPMENT
         // The GXM bank keys of this variant (docs/vita-shader-bank.md), for
@@ -336,6 +339,11 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
         desc.samplers = {{"u_texture0", 0}, {"u_texture1", 1}, {"u_texture2", 2}};
         desc.blocks = {{"Draw", 0}, {"Scene", 1}, {"Palette", 2}, {"Shade", 3}, {"Material", 4}, {"Animated", 5}};
         program = std::make_shared<aurora::gl::Program>(std::move(desc));
+#ifdef MH3_DEVELOPMENT
+        // Created on the render thread at first use: a stall of the frame.
+        if (const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - created).count(); ms >= 2)
+            std::fprintf(stderr, "MH3 slow shade program %s+%s: %.1f ms\n", NativeShaderVertexName(variant).c_str(), NativeShaderFragmentName(variant).c_str(), ms);
+#endif
     }
 
     shade.lastProgramKey = key;

@@ -347,6 +347,22 @@ void ResetIndirect() {
 // setup, the traverse and the root's view matrices (0x80082D40). With the
 // draw thread it runs at the handoff on the game thread (SceneQueue::Prepare),
 // so the draw thread walks only the buckets.
+// A scene setup call over 20 ms (a one-off stall the split averages hide).
+uint32_t TimedSetup(GuestCall& call, uint32_t function, std::initializer_list<uint32_t> args = {}) {
+#ifdef MH3_DEVELOPMENT
+    const auto start = MH3SplitClock::now();
+    const uint32_t result = call(function, args);
+    const auto elapsed = std::chrono::duration<double, std::milli>(MH3SplitClock::now() - start).count();
+
+    if (elapsed >= 20)
+        std::printf("MH3 slow scene setup call %08x: %.1f ms\n", function, elapsed);
+
+    return result;
+#else
+    return call(function, args);
+#endif
+}
+
 void PrepareSingle(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x30);
     GuestCall call{cpu};
@@ -358,12 +374,12 @@ void PrepareSingle(CpuContext* cpu) {
 
     {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
-        Memory::Write32(frame[0x10], call(0x80082C30, {root}));
+        Memory::Write32(frame[0x10], TimedSetup(call, 0x80082C30, {root}));
     }
 
     Traverse(cpu, frame[0x10], 0);
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
-    call(0x80082D40, {root});
+    TimedSetup(call, 0x80082D40, {root});
 }
 
 // The rest: the effect view, the buckets, the model caches' finish, the post effects.
@@ -374,7 +390,7 @@ void DrawPreparedSingle(CpuContext* cpu, bool flattened = false) {
     GuestCall call{cpu};
     {
         MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE_SETUP);
-        call(0x800D4910);
+        TimedSetup(call, 0x800D4910);
     }
 
     DrawAll(call, flattened);
@@ -412,7 +428,7 @@ void DrawScene(CpuContext* cpu, bool split) {
             call(0x800CF3F8, {player});
             call(0x80082C6C, {root, Memory::Read8(0x8065b50c + player)});
             call(0x802B2E90);
-            Memory::Write32(frame[0x10], call(0x80082C30, {root}));
+            Memory::Write32(frame[0x10], TimedSetup(call, 0x80082C30, {root}));
             Traverse(cpu, frame[0x10], 0);
             call(0x80082D40, {root});
             call(0x800D4910);

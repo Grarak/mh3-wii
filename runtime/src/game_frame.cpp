@@ -35,6 +35,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -220,6 +221,9 @@ struct FrameSplit {
     double logic = 0, draw = 0, other = 0;
     uint32_t frames = 0;
     Clock::time_point reported = Clock::now();
+
+    // The totals at the frame's start, for the long frame report.
+    double logicStart = 0, drawStart = 0, otherStart = 0, familiesStart[MH3_SPLIT_FAMILIES]{};
     static double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
     void Begin() {
         if (!mh3SplitFrame)
@@ -227,6 +231,34 @@ struct FrameSplit {
 
         ++mh3SplitFrame;
         start = mark = Clock::now();
+        logicStart = logic;
+        drawStart = draw;
+        otherStart = other;
+        std::memcpy(familiesStart, splitFamilies, sizeof familiesStart);
+    }
+
+    // A game frame over 40 ms (a stall the per-second averages hide): its own
+    // logic, draw and other time and the split families that took the most.
+    void ReportLong() const {
+        const double wall = Ms(mark - start);
+
+        if (wall < 40)
+            return;
+
+        static constexpr const char* names[MH3_SPLIT_FAMILIES] = {"traverse", "model", "effect", "node callback", "font", "fade", "hud", "movie", "material prep", "shape prep",
+                                                                  "model record", "scene setup", "scene finish", "post", "scene", "buckets", "effect calc", "g3d world",
+                                                                  "g3d material", "g3d vertex", "g3d view", "g3d update", "g3d other", "layers", "ui"};
+        unsigned order[MH3_SPLIT_FAMILIES];
+
+        for (unsigned i = 0; i < MH3_SPLIT_FAMILIES; ++i)
+            order[i] = i;
+
+        std::partial_sort(order, order + 4, order + MH3_SPLIT_FAMILIES,
+                          [this](unsigned a, unsigned b) { return splitFamilies[a] - familiesStart[a] > splitFamilies[b] - familiesStart[b]; });
+        std::printf("MH3 long frame %u: %.1f ms (logic %.1f draw %.1f other %.1f); most: %s %.1f, %s %.1f, %s %.1f, %s %.1f ms\n", mh3SplitFrame, wall, logic - logicStart,
+                    draw - drawStart, other - otherStart, names[order[0]], splitFamilies[order[0]] - familiesStart[order[0]], names[order[1]],
+                    splitFamilies[order[1]] - familiesStart[order[1]], names[order[2]], splitFamilies[order[2]] - familiesStart[order[2]], names[order[3]],
+                    splitFamilies[order[3]] - familiesStart[order[3]]);
     }
 
     void Lap(double& bucket) {
@@ -242,6 +274,9 @@ struct FrameSplit {
             const char* value = std::getenv("MH3_STATS");
             return !value || std::strcmp(value, "0") != 0;
         }();
+
+        if (enabled)
+            ReportLong();
 
         if (!enabled || mark - reported < std::chrono::seconds(1))
             return;

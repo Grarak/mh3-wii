@@ -215,3 +215,21 @@ bias 64 KiB off for this executable layout and fails). The Pi's libc and libm
 have no DWARF frame data, so their memcpy/memcmp/memset/fmaf samples stay
 without callers; in the October 2 captures about 45% of samples recovered at
 least one caller.
+
+## Stalls
+
+Development builds report single slow frames, which the per-second averages
+hide:
+
+- `MH3 long frame N: X ms (logic, draw, other); most: ...`: a game frame over
+  40 ms, with the split families that took the most (`game_frame.cpp`). Draw
+  time outside every family is the game thread waiting for the render thread.
+- `MH3 long packet N: X ms: GPU slot wait, before tasks (count, slowest, from
+  ADDRESS), draw, after tasks`: a render-thread packet over 40 ms
+  (`native_frame_packet.cpp`); symbolize the task's address against the run's
+  ELF (`addr2line -e RUN/game.elf`).
+- `MH3 slow shade program`, `MH3 GXM slow ...`, `MH3 slow scene setup call`:
+  shader program creation over 2 ms and scene setup calls over 20 ms.
+
+First found (Alatreon, 2026-10-05): a 270 ms render packet that built nine
+model packs and three shader programs at a model's first draw mid-fight.

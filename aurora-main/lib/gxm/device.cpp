@@ -485,8 +485,24 @@ void set_common_dialog_active(bool active) noexcept {
   g_commonDialogActive = active;
 }
 
+namespace {
+// Program creation on the render thread stalls the frame it happens in: report
+// the slow ones (the process time is a cheap microsecond counter).
+struct SlowProgramReport {
+  const char* what;
+  uint64_t hash;
+  SceUInt64 start = sceKernelGetProcessTimeWide();
+  ~SlowProgramReport() {
+    if (const SceUInt64 elapsed = sceKernelGetProcessTimeWide() - start; elapsed >= 2000)
+      std::fprintf(stderr, "MH3 GXM slow %s %016llx: %.1f ms\n", what, static_cast<unsigned long long>(hash), elapsed / 1000.0);
+  }
+};
+} // namespace
+
 PatchedProgram::PatchedProgram(Device& device, uint64_t vertexHash, uint64_t fragmentHash, SceGxmIndexFormat indices, std::span<const VertexInput> inputs)
-: m_device(device), m_vertexBinary(vertex_binary(vertexHash)), m_fragmentBinary(fragment_binary(fragmentHash)), m_fragmentHash(fragmentHash) {
+: m_device(device), m_vertexBinary((SlowProgramReport{"vertex lookup", vertexHash}, vertex_binary(vertexHash))),
+  m_fragmentBinary((SlowProgramReport{"fragment lookup", fragmentHash}, fragment_binary(fragmentHash))), m_fragmentHash(fragmentHash) {
+  const SlowProgramReport report{"program patch", vertexHash};
   check(sceGxmProgramCheck(m_vertexBinary), "check vertex binary");
   check(sceGxmProgramCheck(m_fragmentBinary), "check fragment binary");
   check(sceGxmShaderPatcherRegisterProgram(device.patcher(), m_vertexBinary, &m_vertexId), "register vertex binary");
@@ -643,6 +659,7 @@ void PatchedProgram::bind(const SceGxmBlendInfo& blend, SceGxmOutputRegisterForm
 
     // Explicit scalar output cannot use the runtime half4 conversion/blend
     // patch. F32 surfaces have only R, so an unblended R write needs no mask.
+    const SlowProgramReport report{"fragment patch", m_fragmentHash};
     check(sceGxmShaderPatcherCreateFragmentProgram(m_device.patcher(), scalar ? m_scalarFragmentId : m_fragmentId, scalar ? SCE_GXM_OUTPUT_REGISTER_FORMAT_DECLARED : output, SCE_GXM_MULTISAMPLE_NONE,
                                                    scalar ? nullptr : &blend, m_vertexBinary, &fragment),
           "patch fragment program");
