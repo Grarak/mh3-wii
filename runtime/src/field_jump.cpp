@@ -1,5 +1,5 @@
-// Field jump, RMHP08 (development). MH3_QUEST=id leaves the village for a
-// quest's field as soon as the village is up, the way its exits do.
+// Field jump, RMHP08 (development). --quest / --online-quest leave the village
+// for a quest's field as soon as the village is up, the way its exits do.
 //
 // Every trip out of the village is a quest: the Moga Woods exit starts the
 // free-roam quest of the current season (1..4, 0x802FB8A4), the quest counter
@@ -13,15 +13,17 @@
 //
 // Quests come from a quest file the field loads (0x803AD264): offline the
 // village's (05/quest00, ids 1000..), in play mode 4 (online) Port Tanzia's
-// (05/quest01, ids 10000..). An online quest id loads the online file.
+// (05/quest01, ids 10000..); the arena's (05/quest03, ids 9000..) through
+// 0x803AD744. The jump loads the file of its quest.
 //
 // The quest's map setup (0x803AF518) puts its start area in the field's move
 // work (+0xEA, copied to +0xEE and the current area 0x806BB806); the stage
-// then loads that area. MH3_AREA=n replaces it.
+// then loads that area. --area n replaces it.
 //
-// MH3_QUEST=free: the Moga Woods exit (the season's free-roam quest); any
-// number: that quest id. MH3_FIELD_WAIT=steps (default 30) runs the village
-// that many steps in its main state before leaving.
+// MH3_FIELD_WAIT=steps (default 30) runs the village that many steps in its
+// main state before leaving.
+#include "field_jump.h"
+
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -43,7 +45,6 @@ enum : uint32_t {
     FilterReset = 0x80058514,
 };
 constexpr uint32_t kFirstCounterQuest = 1000; // free-roam quests are 1..4
-constexpr uint32_t kFirstOnlineQuest = 10000;
 constexpr uint32_t kPlayMode = 0x8065AA85; // u8
 constexpr uint8_t kPlayModeOnline = 4;
 constexpr uint32_t MoveWork = 0x800CFAF4;  // get_move_work_adrs(u8 kind) -> move work
@@ -55,6 +56,7 @@ enum : uint8_t { kStateLeave = 5, kSubStateTearDown = 2 };
 struct Jump {
     bool enabled = false;
     uint32_t quest = 0; // 0: the free-roam quest
+    QuestCatalog::Set set = QuestCatalog::Set::Village;
     uint32_t wait = 30;
     int area = -1; // -1: the quest's
     uint32_t steps = 0;
@@ -66,11 +68,6 @@ Jump& State() {
     static Jump jump = [] {
         Jump j;
 #ifdef MH3_DEVELOPMENT
-        if (const char* v = std::getenv("MH3_QUEST")) {
-            j.enabled = true;
-            j.quest = uint32_t(std::strtoul(v, nullptr, 0)) & 0xFFFF; // "free" parses as 0
-        }
-        if (const char* v = std::getenv("MH3_AREA")) j.area = int(std::strtol(v, nullptr, 0));
         if (const char* v = std::getenv("MH3_FIELD_WAIT")) j.wait = uint32_t(std::strtoul(v, nullptr, 0));
 #endif
         return j;
@@ -116,11 +113,24 @@ static void VillageTaskPort(CpuContext* ctx) {
 extern "C" void MH3_VillageTask(CpuContext* ctx) { PortCheck::Call(ctx, "VillageTask", func_8021F40C, VillageTaskPort); }
 REGISTER_NATIVE_FUNCTION_AS(0x8021F40C, MH3_VillageTask, "VillageTask");
 
-// Loads the field's quest file: the online one for an online quest id.
+void RequestQuestJump(uint32_t quest, QuestCatalog::Set set, int area) {
+    Jump& jump = State();
+    jump.enabled = true;
+    jump.quest = quest;
+    jump.set = set;
+    jump.area = area;
+}
+
+// Loads the field's quest file: the jump's quest set.
 extern "C" void func_803AD264(CpuContext* ctx);
+extern "C" void func_803AD744(CpuContext* ctx);
 static void LoadQuestFilePort(CpuContext* ctx) {
     const Jump& jump = State();
-    if (!jump.done || jump.quest < kFirstOnlineQuest) {
+    if (jump.done && jump.set == QuestCatalog::Set::Arena) {
+        func_803AD744(ctx);
+        return;
+    }
+    if (!jump.done || jump.set != QuestCatalog::Set::Online) {
         func_803AD264(ctx);
         return;
     }

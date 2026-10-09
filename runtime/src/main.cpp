@@ -3,6 +3,9 @@
 #include "disc_image.h"
 #include "audio_dma.h"
 #include "village_boot.h"
+#include "field_jump.h"
+#include "quest_catalog.h"
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <fstream>
@@ -68,6 +71,47 @@ int RunGraphicsCheck(int argc, char** argv);
 int RunEfbCheck(int argc, char** argv);
 #endif
 
+constexpr const char* kUsage =
+    "Unknown option. Options:\n"
+    "  --village                      start File 1 / character 1 in the village\n"
+#ifdef MH3_DEVELOPMENT
+    "  --list quests|online-quests|arena-quests\n"
+    "                                 list a quest set (id, stars, map, name, monsters, goal)\n"
+    "  --quest <id>|free [--arena] [--area <n>]\n"
+    "                                 start a village quest (or an arena quest, or the\n"
+    "                                 Moga Woods free roam) from the village\n"
+    "  --online-quest <id> [--area <n>]\n"
+    "                                 start an online (Port Tanzia) quest from the village\n"
+#endif
+    ;
+
+#ifdef MH3_DEVELOPMENT
+// --quest <id>|free [--arena] [--area <n>] / --online-quest <id> [--area <n>]
+void StartQuestBoot(int argc, char** argv) {
+    using QuestCatalog::Set;
+    Set set = std::string_view(argv[1]) == "--online-quest" ? Set::Online : Set::Village;
+    const std::string_view id = argv[2];
+    int area = -1;
+    for (int i = 3; i < argc; ++i) {
+        const std::string_view option = argv[i];
+        if (option == "--arena" && set == Set::Village) set = Set::Arena;
+        else if (option == "--area" && i + 1 < argc) area = std::stoi(argv[++i]);
+        else throw std::runtime_error(kUsage);
+    }
+    uint32_t quest = 0;
+    if (id != "free" || set != Set::Village) {
+        quest = uint32_t(std::stoul(std::string(id)));
+        const auto quests = QuestCatalog::Load(set);
+        const auto it = std::find_if(quests.begin(), quests.end(), [&](const auto& q) { return q.id == quest; });
+        if (it == quests.end())
+            throw std::runtime_error("No quest " + std::string(id) + " in that set; see --list");
+        std::cerr << "MH3 quest: " << it->id << " " << it->name << " (" << QuestCatalog::MapName(it->map) << ")\n";
+    }
+    RequestQuestJump(quest, set, area);
+    StartVillageBoot();
+}
+#endif
+
 int main(int argc, char** argv) {
     try {
 #ifdef MH3_HAS_AURORA
@@ -86,6 +130,16 @@ int main(int argc, char** argv) {
             if (!output) throw std::runtime_error("Disc read output failed");
             return 0;
         }
+#ifdef MH3_DEVELOPMENT
+        if (argc == 3 && std::string_view(argv[1]) == "--list") {
+            const std::string_view what = argv[2];
+            if (what == "quests") QuestCatalog::Print(QuestCatalog::Set::Village);
+            else if (what == "online-quests") QuestCatalog::Print(QuestCatalog::Set::Online);
+            else if (what == "arena-quests") QuestCatalog::Print(QuestCatalog::Set::Arena);
+            else throw std::runtime_error(kUsage);
+            return 0;
+        }
+#endif
         Memory::Init(24 * 1024 * 1024);
         InitializePersistentCpuContext();
         auto& cpu = GetPersistentCpuContext();
@@ -134,7 +188,11 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--village") StartVillageBoot();
-        else if (argc != 1) throw std::runtime_error("Unknown option; use --village for automatic File 1 / character 1 startup");
+#ifdef MH3_DEVELOPMENT
+        else if (argc >= 3 && (std::string_view(argv[1]) == "--quest" || std::string_view(argv[1]) == "--online-quest"))
+            StartQuestBoot(argc, argv);
+#endif
+        else if (argc != 1) throw std::runtime_error(kUsage);
         RecompMod::RegisterExecutableRange(0x80004000, 0x800066E0, ".init");
         RecompMod::RegisterExecutableRange(0x8003F260, 0x8056FAA0, ".text");
         // The apploader normally installs the FST in reserved high MEM1.
