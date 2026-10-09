@@ -178,83 +178,12 @@ void EaseHeight(uint32_t value, uint32_t wanted, float d) {
 }
 
 #ifdef MH3_DEVELOPMENT
-constexpr uint32_t kMovePosition = 0x188;                // VEC3, a monster work's position (enemy_glide.cpp)
-constexpr uint32_t kMoveChar = 0x24;                     // a monster work's MHchar (embedded; its model +0x118 is the work's +0x13C)
-constexpr uint32_t kSceneRoot = 0x80796e34;              // the scene root (native_scene_queue.cpp)
-constexpr uint32_t kChildren = 0xDC, kChildCount = 0xE4; // a scene group's children (scene_world.cpp)
-constexpr uint32_t kCalcWorldCallback = 0x11C;           // ScnMdlSimple: its CalcWorld callback object
-constexpr uint32_t WorldMatrix = 0x8007B5A8;             // (object, 1): the object's world matrix
+constexpr uint32_t kMovePosition = 0x188; // VEC3, a monster work's position (enemy_glide.cpp)
 
 // MH3_TRACE=monsters: each monster's move work and position once a second.
-// monster-steps=N: every logic step, monster N's position, the step, its
-// MHchar's position, model offset and first channels, and the world
-// translation of the scene root's models near it.
-void ReportMonsters(GuestCall& game) {
-    static const bool enabled = TraceOptions().Has("monsters");
-    static const uint64_t stepped = TraceOptions().Number("monster-steps", UINT64_MAX);
+void ReportMonsters() {
+    static const TraceFlag enabled("monsters");
     static auto last = std::chrono::steady_clock::now();
-
-    if (stepped != UINT64_MAX) {
-        if (const uint32_t m = Cheats::MoveWork(Cheats::Kind::Monster, uint32_t(stepped)); m && Memory::Read16(m)) {
-            const uint32_t c = m + kMoveChar;
-            std::fprintf(stderr, "MH3 monster step: packet %llu scale %.3f ticks %u position %.1f %.1f %.1f", static_cast<unsigned long long>(NativeFramePacketSequence()), GameStep::Scale(),
-                         GameStep::Ticks(), F(m + kMovePosition), F(m + kMovePosition + 4), F(m + kMovePosition + 8));
-            std::fprintf(stderr, " char %08x pos %.1f %.1f %.1f offset %.1f %.1f %.1f flags %x", c, F(c + 4), F(c + 8), F(c + 12), F(c + 0x10), F(c + 0x14), F(c + 0x18), R32(c + 0x4C));
-
-            // The work's angles (s32[3] at +0x1BC, monster_attacks.cpp) and its turn goal (+0x37C).
-            std::fprintf(stderr, " rot %d %d %d goal %04x", int32_t(R32(m + 0x1BC)), int32_t(R32(m + 0x1C0)), int32_t(R32(m + 0x1C4)), Memory::Read16(m + 0x37C));
-
-            for (uint32_t i = 0; i < 3; ++i)
-                std::fprintf(stderr, " ch%u %.2f>%.2f r%.2f e%.1f w%.2f", i, F(c + 0x8C + 4 * i), F(c + 0x74 + 4 * i), F(c + 0x5C + 4 * i), F(c + 0xA4 + 4 * i), F(c + 0xD4 + 4 * i));
-
-            // The scene root's children within 4000 units of it (x, z): their
-            // world matrices' translation as this step draws them, and their
-            // CalcWorld callback's class.
-            const uint32_t root = R32(kSceneRoot);
-            const uint32_t count = root ? R32(root + kChildCount) : 0, list = root ? R32(root + kChildren) : 0;
-
-            for (uint32_t i = 0; i < count && i < 64; ++i) {
-                const uint32_t child = R32(list + 4 * i), callback = R32(child + kCalcWorldCallback);
-                const uint32_t world = game.Call<WorldMatrix>({child, 1});
-                const float dx = F(world + 12) - F(m + kMovePosition), dz = F(world + 44) - F(m + kMovePosition + 8);
-
-                if (dx * dx + dz * dz < 4000.0f * 4000.0f)
-                    std::fprintf(stderr, " model %08x/%08x world %08x at %.1f %.1f %.1f", child, callback ? R32(callback) : 0, world, F(world + 12), F(world + 28), F(world + 44));
-            }
-
-            std::fprintf(stderr, "\n");
-        }
-    }
-
-    // monster-spins: every step, each monster whose yaw (+0x1C0) turns more
-    // than 2000 units (11 degrees) a tick: a spin added once a step instead of
-    // by the step's game time turns the same per step at any step length.
-    static const bool spins = TraceOptions().Has("monster-spins");
-
-    if (spins) {
-        static uint32_t lastYaw[16]{};
-        static uint32_t lastWork[16]{};
-        const uint32_t n = std::min<uint32_t>(Cheats::MoveWorkCount(Cheats::Kind::Monster), 16);
-
-        for (uint32_t i = 0; i < n; ++i) {
-            const uint32_t m = Cheats::MoveWork(Cheats::Kind::Monster, i);
-
-            if (!m || !Memory::Read16(m))
-                continue;
-
-            const uint32_t yaw = R32(m + 0x1C0);
-            const int32_t turn = int32_t(int16_t(uint16_t(yaw - lastYaw[i])));
-
-            if (lastWork[i] == m && GameStep::Scale() > 0 && std::abs(turn) / GameStep::Scale() > 2000) {
-                const uint32_t c = m + kMoveChar;
-                std::fprintf(stderr, "MH3 monster spin: [%u] work %08x words %08x %08x %08x turn %d scale %.3f ticks %u motion %.2f>%.2f r%.2f e%.1f\n", i, m, R32(m + 4), R32(m + 8),
-                             R32(m + 0x10), turn, GameStep::Scale(), GameStep::Ticks(), F(c + 0x8C), F(c + 0x74), F(c + 0x5C), F(c + 0xA4));
-            }
-
-            lastYaw[i] = yaw;
-            lastWork[i] = m;
-        }
-    }
 
     if (!enabled || std::chrono::steady_clock::now() - last < std::chrono::seconds(1))
         return;
@@ -270,119 +199,6 @@ void ReportMonsters(GuestCall& game) {
                          F(m + kMovePosition + 8));
     }
 }
-
-// MH3_TRACE=camera-blends: how long each camera blend ran, in ticks of game
-// time, read a step late at the next field camera update, and on how many of
-// its steps the values it blends moved (a blend that moves only on ticks
-// steps at 30 Hz): the field camera's reset (+0x42; the eye), the collision
-// camera's release blends (+0x100 height, +0x101 sideways; their offsets),
-// the aim view's blend (+0x234 steps left; its eye +0x1F0), the zone camera's
-// blend (the zone +0x42; the region's kind, +1; the zone's eye +0x00 and
-// distance and angles +0x60), the scope zoom (+0x1DC, +0x1E0 changing) and a
-// monster's hold (BindCamera's count +0x114; the eye and target).
-constexpr uint32_t kZone = 0x348; // the zone camera (0x802BA400)
-
-void ReportBlends(uint32_t cam) {
-    static const bool enabled = TraceOptions().Has("camera-blends");
-
-    if (!enabled)
-        return;
-
-    struct Words {
-        uint32_t offset, count;
-    };
-
-    struct Blend {
-        const char* name;
-        Words watched[2];
-        double began;
-        uint32_t steps, moved, last;
-    };
-
-    static Blend blends[] = {
-        {"reset", {{kEye, 3}, {0, 0}}, -1, 0, 0, 0},
-        {"collision height", {{0xC8, 1}, {0xE0, 1}}, -1, 0, 0, 0},
-        {"collision sideways", {{0xC4, 3}, {0xDC, 3}}, -1, 0, 0, 0},
-        {"aim", {{0x1F0, 3}, {0, 0}}, -1, 0, 0, 0},
-        {"zone", {{kZone, 3}, {kZone + 0x60, 4}}, -1, 0, 0, 0},
-        {"zoom", {{0x1DC, 2}, {0, 0}}, -1, 0, 0, 0},
-        {"bind", {{kEye, 3}, {kTarget, 3}}, -1, 0, 0, 0},
-    };
-
-    static float zoom[2], zoomFrom[2];
-    const float zoomNow[2] = {F(cam + 0x1DC), F(cam + 0x1E0)};
-    const uint32_t region = R32(cam + kZone + 0x58);
-    const bool active[] = {
-        Memory::Read8(cam + kReset) != 0,
-        Memory::Read8(cam + 0x100) != 0,
-        Memory::Read8(cam + 0x101) != 0,
-        int16_t(Memory::Read16(cam + 0x234)) > 0,
-        Memory::Read8(cam + kZone + 0x42) != 0,
-        zoomNow[0] != zoom[0] || zoomNow[1] != zoom[1],
-        int32_t(R32(cam + 0x114)) > 0,
-    };
-
-    for (size_t i = 0; i < std::size(blends); ++i) {
-        Blend& blend = blends[i];
-        uint32_t hash = 0;
-
-        for (const Words& words : blend.watched)
-            for (uint32_t k = 0; k < words.count; ++k)
-                hash = hash * 31 + R32(cam + words.offset + 4 * k);
-
-        if (active[i] && blend.began < 0) {
-            blend.began = GameStep::Elapsed();
-            blend.steps = blend.moved = 0;
-
-            if (i == 5) {
-                zoomFrom[0] = zoom[0];
-                zoomFrom[1] = zoom[1];
-            }
-        } else if (active[i]) {
-            ++blend.steps;
-            blend.moved += hash != blend.last;
-        } else if (blend.began >= 0) {
-            const double ticks = GameStep::Elapsed() - blend.began;
-            char what[64] = "";
-
-            if (i == 4)
-                std::snprintf(what, sizeof(what), " (kind %u)", region ? Memory::Read8(region + 1) : 0xFFu);
-            else if (i == 5)
-                std::snprintf(what, sizeof(what), " %.2f %.2f -> %.2f %.2f", zoomFrom[0], zoomFrom[1], zoomNow[0], zoomNow[1]);
-
-            std::fprintf(stderr, "MH3 camera blend: %s%s for %.1f ticks from tick %.1f, moved on %u of %u steps\n", blend.name, what, ticks, blend.began, blend.moved, blend.steps);
-            blend.began = -1;
-        }
-
-        blend.last = hash;
-    }
-
-    zoom[0] = zoomNow[0];
-    zoom[1] = zoomNow[1];
-}
-
-// MH3_TRACE=camera-path: each step while the camera turns and 30 steps after,
-// the step's game time in us (as the frame packet carries it to the flip
-// trace), its length in ticks, the yaw, its target and ramp, the pitch, the
-// eye and the target.
-void ReportPath(uint32_t cam) {
-    static const bool enabled = TraceOptions().Has("camera-path");
-
-    if (!enabled)
-        return;
-
-    static uint32_t lastYaw = 0, quiet = 31;
-    const uint32_t yaw = R32(cam + kYaw), target = R32(cam + kYawTarget);
-    quiet = yaw != lastYaw || target != yaw ? 0 : quiet + 1;
-    lastYaw = yaw;
-
-    if (quiet > 30)
-        return;
-
-    std::fprintf(stderr, "MH3 camera path: game %.0f us step %.4f yaw %d target %d ramp %d pitch %d eye %.3f %.3f %.3f look %.3f %.3f %.3f\n", GameStep::Elapsed() * (1e6 / 30.0),
-                 GameStep::Scale(), int32_t(yaw), int32_t(target), int8_t(Memory::Read8(cam + 0xA1)), int32_t(R32(cam + kPitch)), F(cam + kEye), F(cam + kEye + 4), F(cam + kEye + 8),
-                 F(cam + kTarget), F(cam + kTarget + 4), F(cam + kTarget + 8));
-}
 #endif
 } // namespace
 
@@ -395,9 +211,6 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     const auto act = [&](uint32_t kind, uint32_t action) {
         return game.Call<ActionCheck>({plw, kind, action});
     };
-#ifdef MH3_DEVELOPMENT
-    ReportBlends(cam);
-#endif
 
     if (Memory::Read8(plw) == 0 || (game.Call<GetOnlineMode>() & 0xFF) == 2)
         return;
@@ -716,8 +529,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     game.Call<VecCopy>({cam + kOldEye, cam + kEye});
     game.Call<VecCopy>({cam + kOldTarget, cam + kTarget});
 #ifdef MH3_DEVELOPMENT
-    ReportMonsters(game);
-    ReportPath(cam);
+    ReportMonsters();
 
     // MH3_INPUT=camera=N[:D]: the camera looks at monster N instead, from the
     // game's eye or from D units away on the line to it (raised by D/3); the
@@ -824,16 +636,6 @@ static void BindCameraPort(CpuContext* ctx) {
     const float fraction = float(GameStep::Fraction());
     static bool placed = false; // the last tick placed the eye and target
     static BindPlace last;
-#ifdef MH3_DEVELOPMENT
-    // MH3_TRACE=bind-camera: each hold's length in ticks of game time and
-    // the count it reached, and each change of its state (+0x118), phase
-    // (+0x144) and next-phase signal (+0x145, set by 0x802B95B0).
-    static const bool traced = TraceOptions().Has("bind-camera");
-    static double began = -1;
-    static int32_t reached = 0;
-    const int32_t before = int32_t(Memory::Read32(cam + kBindSteps));
-    const uint32_t flags = Memory::Read8(cam + 0x118) << 16 | Memory::Read8(cam + 0x144) << 8 | Memory::Read8(cam + 0x145);
-#endif
 
     for (uint32_t i = 0; i < ticks; ++i) {
         placed = BindTick(ctx, cam, plw);
@@ -873,28 +675,6 @@ static void BindCameraPort(CpuContext* ctx) {
             now.Write(cam);
         }
     }
-
-#ifdef MH3_DEVELOPMENT
-    if (traced) {
-        const int32_t after = int32_t(Memory::Read32(cam + kBindSteps));
-        const uint32_t now = Memory::Read8(cam + 0x118) << 16 | Memory::Read8(cam + 0x144) << 8 | Memory::Read8(cam + 0x145);
-
-        if (now != flags)
-            std::fprintf(stderr, "MH3 bind camera: tick %.2f (%u ticks) state %d -> %d, phase %u -> %u, signal %u -> %u, count %d -> %d\n", GameStep::Elapsed(), ticks, int8_t(flags >> 16),
-                         int8_t(now >> 16), (flags >> 8) & 0xFF, (now >> 8) & 0xFF, flags & 0xFF, now & 0xFF, before, after);
-
-        if (before <= 0 && after > 0)
-            began = GameStep::Elapsed() - 1;
-
-        reached = std::max(reached, after);
-
-        if (before > 0 && after == 0 && began >= 0) {
-            std::fprintf(stderr, "MH3 bind camera: hold of %.1f ticks, count %d\n", GameStep::Elapsed() - began, reached);
-            began = -1;
-            reached = 0;
-        }
-    }
-#endif
 }
 
 extern "C" void MH3_BindCamera(CpuContext* ctx) {

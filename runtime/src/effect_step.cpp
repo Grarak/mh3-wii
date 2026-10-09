@@ -1161,7 +1161,7 @@ namespace {
 // the count, mean age and life (ticks) and summed alpha of the first colour.
 // A manager prints once per tick, so fixed and variable steps line up by tick.
 void TraceParticles(uint32_t manager) {
-    static const bool enabled = TraceOptions().Has("particles");
+    static const TraceFlag enabled("particles");
 
     if (!enabled)
         return;

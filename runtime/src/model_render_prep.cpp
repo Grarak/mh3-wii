@@ -1280,7 +1280,7 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
     }
 
 #ifdef MH3_DEVELOPMENT
-    static const bool tracedMaterials = TraceOptions().Has("materials");
+    static const TraceFlag tracedMaterials("materials");
 
     if (tracedMaterials) [[unlikely]]
         TraceMaterial(scope.material_address, entry.blocks, slots);
@@ -1301,7 +1301,7 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
         auto& out = srts.Next(&in.srt);
         Checked(mh3_texture_srt_read_for_prepare({Bytes(resource, 0x248), 0x248}, &out.srt));
 #ifdef MH3_DEVELOPMENT
-        static const bool tracedSrt = TraceOptions().Has("srt");
+        static const TraceFlag tracedSrt("srt");
 
         if (tracedSrt) [[unlikely]]
             TraceTextureSrt(resource, entry.material, out.srt);

@@ -45,11 +45,6 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
-#ifdef MH3_DEVELOPMENT
-#include "dev_options.h"
-
-#include <cstdio>
-#endif
 
 namespace {
 
@@ -343,21 +338,6 @@ REGISTER_NATIVE_FUNCTION_AS(0x80095434, MH3_TexCoordGetEffectMtx, "TexCoordGetEf
 
 extern "C" void func_800953A8(CpuContext* ctx);
 extern "C" void MH3_TexCoordSetEffectMtx(CpuContext* ctx) {
-#ifdef MH3_DEVELOPMENT
-    // MH3_TRACE=tex-scroll: each caller of SetEffectMtx (the game's texture
-    // scrollers, water among them) the first time and every 60th call, with
-    // the matrix's translation and the step counter.
-    static const bool traced = TraceOptions().Has("tex-scroll");
-
-    if (traced) [[unlikely]] {
-        static std::unordered_map<uint32_t, uint32_t> calls;
-        const uint32_t lr = ctx->lr, mtx = ctx->gpr[5];
-
-        if (const uint32_t n = calls[lr]++; n % 60 == 0)
-            std::fprintf(stderr, "MH3 tex scroll: caller %08x call %u handle %08x index %u translation %.4f %.4f tick %u\n", lr, n, ctx->gpr[3], ctx->gpr[4], mtx ? F(mtx + 12) : 0.0f,
-                         mtx ? F(mtx + 28) : 0.0f, Memory::Read32(0x8065AA6C));
-    }
-#endif
     PortCheck::Call(ctx, "TexCoordSetEffectMtx", func_800953A8, SetEffectMtxPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800953A8, MH3_TexCoordSetEffectMtx, "TexCoordSetEffectMtx");
@@ -380,47 +360,18 @@ extern "C" void MH3_ObjectListScrollUpdate(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8031ED54, MH3_ObjectListScrollUpdate, "ObjectListScrollUpdate");
 
-// MH3_TRACE=srt (development builds): the texture-SRT animation objects'
-// (AnmObjTexSrtRes, vtable 0x8058DC9x) virtual SetFrame (0x8006D0E8, f1 the
-// frame) and UpdateFrame (0x8006D668): per object and caller the first call
-// and every 120th, with its FrameCtrl (+0x18: frame, rate), NW4R's base rate
-// and the step counter. A frame set once a step from a count of the game's
-// own runs as fast as the step rate. Registered in every build: the build's
-// generated dispatch profile names these natives, so a release build without
-// them stopped at the first quest ("omits translated winner 0x8006d668").
-#ifdef MH3_DEVELOPMENT
-namespace {
-void TraceTexSrtFrame(const char* what, CpuContext* ctx) {
-    static std::unordered_map<uint64_t, uint32_t> calls;
-    const uint32_t object = ctx->gpr[3], lr = ctx->lr;
-
-    if (const uint32_t n = calls[uint64_t(object) << 32 | lr]++; n % 120 == 0)
-        std::fprintf(stderr, "MH3 srt anm: %s object %08x caller %08x call %u f1 %.3f frame %.3f rate %.4f base %.4f tick %u\n", what, object, lr, n, ctx->fpr[1].d,
-                     Memory::ReadFloat32(object + 0x18), Memory::ReadFloat32(object + 0x1C), Memory::ReadFloat32(0x80793628), Memory::Read32(0x8065AA6C));
-}
-} // namespace
-#endif
-
+// The texture-SRT animation objects' (AnmObjTexSrtRes) SetFrame and
+// UpdateFrame, called through: the build's generated dispatch profile names
+// these natives, and a build without them stops at the first quest ("omits
+// translated winner 0x8006d668").
 extern "C" void func_8006D0E8(CpuContext* ctx);
 extern "C" void MH3_AnmTexSrtSetFrame(CpuContext* ctx) {
-#ifdef MH3_DEVELOPMENT
-    static const bool traced = TraceOptions().Has("srt");
-
-    if (traced) [[unlikely]]
-        TraceTexSrtFrame("set", ctx);
-#endif
     func_8006D0E8(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8006D0E8, MH3_AnmTexSrtSetFrame, "AnmTexSrtSetFrame");
 
 extern "C" void func_8006D668(CpuContext* ctx);
 extern "C" void MH3_AnmTexSrtUpdateFrame(CpuContext* ctx) {
-#ifdef MH3_DEVELOPMENT
-    static const bool traced = TraceOptions().Has("srt");
-
-    if (traced) [[unlikely]]
-        TraceTexSrtFrame("update", ctx);
-#endif
     func_8006D668(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8006D668, MH3_AnmTexSrtUpdateFrame, "AnmTexSrtUpdateFrame");

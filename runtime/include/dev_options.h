@@ -10,6 +10,8 @@
 // `retired` names removed items, reported as removed and otherwise ignored.
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -28,50 +30,13 @@ public:
 
     DevOptions(const char* variable, std::initializer_list<std::string_view> known, Words words = Words::None, std::initializer_list<std::string_view> retired = {})
         : variable_(variable) {
-        const char* text = std::getenv(variable);
+        Parse(known, words, retired);
+    }
 
-        if (!text)
-            return;
-
-        set_ = *text != 0;
-        const std::string_view all(text);
-
-        for (size_t at = 0; at < all.size();) {
-            size_t end = all.find(',', at);
-
-            if (end == std::string_view::npos)
-                end = all.size();
-
-            const std::string_view item = all.substr(at, end - at);
-            at = end + 1;
-
-            if (item.empty())
-                continue;
-
-            const size_t equals = item.find('=');
-            const std::string_view name = item.substr(0, equals);
-            bool listed = false;
-
-            for (const std::string_view k : known)
-                listed |= k == name;
-
-            if (!listed && Retired(retired, name))
-                continue;
-
-            if (equals != std::string_view::npos) {
-                if (!listed)
-                    Unknown(item);
-
-                options_.emplace_back(std::string(name), std::string(item.substr(equals + 1)));
-            } else if (listed) {
-                flags_.emplace_back(item);
-            } else {
-                if (words == Words::None)
-                    Unknown(item);
-
-                words_.emplace_back(item);
-            }
-        }
+    // `known` kept in an array that other code reads too.
+    template <size_t N>
+    DevOptions(const char* variable, const std::array<std::string_view, N>& known) : variable_(variable) {
+        Parse(known, Words::None, {});
     }
 
     // The variable is set and not empty.
@@ -120,6 +85,54 @@ public:
     }
 
 private:
+    template <typename Known>
+    void Parse(const Known& known, Words words, std::initializer_list<std::string_view> retired) {
+        const char* text = std::getenv(variable_);
+
+        if (!text)
+            return;
+
+        set_ = *text != 0;
+        const std::string_view all(text);
+
+        for (size_t at = 0; at < all.size();) {
+            size_t end = all.find(',', at);
+
+            if (end == std::string_view::npos)
+                end = all.size();
+
+            const std::string_view item = all.substr(at, end - at);
+            at = end + 1;
+
+            if (item.empty())
+                continue;
+
+            const size_t equals = item.find('=');
+            const std::string_view name = item.substr(0, equals);
+            bool listed = false;
+
+            for (const std::string_view k : known)
+                listed |= k == name;
+
+            if (!listed && Retired(retired, name))
+                continue;
+
+            if (equals != std::string_view::npos) {
+                if (!listed)
+                    Unknown(item);
+
+                options_.emplace_back(std::string(name), std::string(item.substr(equals + 1)));
+            } else if (listed) {
+                flags_.emplace_back(item);
+            } else {
+                if (words == Words::None)
+                    Unknown(item);
+
+                words_.emplace_back(item);
+            }
+        }
+    }
+
     bool Retired(std::initializer_list<std::string_view> retired, std::string_view name) const {
         for (const std::string_view r : retired) {
             if (r != name)
@@ -185,6 +198,8 @@ inline void ReportRetiredVariables() {
         {"MH3_DRAW_TABLE", "MH3_VERIFY"},
         {"MH3_RAM_DUMP", "MH3_CAPTURE"},
         {"MH3_TRACE_INPUT", "MH3_TRACE"},
+        {"MH3_NET_TRACE", "MH3_TRACE"},
+        {"MH3_THREAD_TRACE", "MH3_TRACE"},
         {"MH3_PREPARE_DIAGNOSTICS", "MH3_PROFILE"},
         {"MH3_INPUT_FILE", "MH3_INPUT"},
         {"MH3_INPUT_RECORD", "MH3_INPUT"},
@@ -285,11 +300,50 @@ inline const DevOptions& ProfileOptions() {
 // length and count, how long each camera blend ran and, while the camera
 // turns, its yaw, pitch, eye and target each step (field_camera.cpp), and each
 // second's flips with their frames' game time (graphics_host.cpp, GXM), and
-// each disc read's request and delivery (ios.cpp).
+// each disc read's request and delivery (ios.cpp), the network devices'
+// requests, sockets, lookups and TLS sessions (net, ios_net.cpp) and every
+// guest thread switch (threads, guest_threads.cpp).
+inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects", "effect-states", "bind-camera", "camera-blends", "camera-path", "flips", "disc-reads", "net", "threads"});
+
 inline const DevOptions& TraceOptions() {
-    static const DevOptions options("MH3_TRACE", {"input", "draw-pages", "monsters", "monster-steps", "monster-spins", "hit-shapes", "actions", "tex-scroll", "srt", "materials", "draw-writes", "particles", "loading", "lights", "sun", "glare", "fog", "big-particles", "effect-objects", "effect-states", "bind-camera", "camera-blends", "camera-path", "flips", "disc-reads"});
+    static const DevOptions options("MH3_TRACE", kTraceItems);
     return options;
 }
+
+// A MH3_TRACE item as a switch that the debug port turns on and off while the
+// game runs (`trace ITEM on|off`): a site keeps one and tests it each time.
+// The items that set something up when the run starts (draw-pages, flips)
+// and the numbers (monster-steps) are read from TraceOptions instead.
+class TraceFlag {
+public:
+    explicit TraceFlag(std::string_view item) : on_(Switch(item)) {}
+
+    operator bool() const { return on_ && on_->load(std::memory_order_relaxed); }
+
+    // The switch of an item, nullptr for an unknown one; each starts as
+    // MH3_TRACE has it.
+    static std::atomic<bool>* Switch(std::string_view item) {
+        if (item == "draw-pages" || item == "flips" || item == "monster-steps")
+            return nullptr;
+
+        static std::atomic<bool> switches[kTraceItems.size()];
+        [[maybe_unused]] static const bool loaded = [] {
+            for (size_t i = 0; i < kTraceItems.size(); ++i)
+                switches[i] = TraceOptions().Has(kTraceItems[i]);
+
+            return true;
+        }();
+
+        for (size_t i = 0; i < kTraceItems.size(); ++i)
+            if (kTraceItems[i] == item)
+                return &switches[i];
+
+        return nullptr;
+    }
+
+private:
+    std::atomic<bool>* on_;
+};
 
 // MH3_VERIFY=[pose][,material][,cull][,prep][,prep-image][,draw-table][,replay]: in-run checks of
 // a native path against what it replaces: `pose` compares every reused pose

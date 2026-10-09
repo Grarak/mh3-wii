@@ -459,7 +459,7 @@ extern "C" void MH3_EfFindEmitter(CpuContext* ctx) {
     // MH3_TRACE=particles: every emitter looked up by name (each effect the
     // game creates), its data (the particle managers' resource) and the
     // return addresses of the five frames above, from the stack's back chain.
-    static const bool trace = TraceOptions().Has("particles");
+    static const TraceFlag trace("particles");
 
     if (trace) {
         char text[48] = {};

@@ -103,7 +103,7 @@ class DiscReader {
     // MH3_TRACE=disc-reads: each read's request and delivery, on the clock of
     // MH3_TRACE=loading's frame lines.
     static bool TraceReads() {
-        static const bool trace = TraceOptions().Has("disc-reads");
+        static const TraceFlag trace("disc-reads");
         return trace;
     }
 

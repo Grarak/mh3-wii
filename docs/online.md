@@ -194,7 +194,7 @@ git clone https://github.com/sepalani/MH3SP && cd MH3SP
 python3 master_server.py -s &
 python3 scripts/dev/online-local-nas.py &      # NAS and the availability check
 MH3_ONLINE_CA=MH3SP/cert/ca.der MH3_ONLINE_HOSTS='*.mh3sp.com=127.0.0.1' \
-  MH3_ONLINE_PORTS=80=18080 MH3_NET_TRACE=1 build/linux-arm64-dev/MH3
+  MH3_ONLINE_PORTS=80=18080 MH3_TRACE=net build/linux-arm64-dev/MH3
 ```
 
 | Variable | Meaning |
@@ -204,4 +204,4 @@ MH3_ONLINE_CA=MH3SP/cert/ca.der MH3_ONLINE_HOSTS='*.mh3sp.com=127.0.0.1' \
 | `MH3_ONLINE_CA=PATH` | install this DER CA instead of the MH3SP one (the local server's `cert/ca.der`) |
 | `MH3_ONLINE_HOSTS=name=ip,...` | answer these host names (`*.domain` for a whole domain) without DNS |
 | `MH3_ONLINE_PORTS=from=to,...` | connect to `to` instead of port `from` (the NAS's port 80) |
-| `MH3_NET_TRACE=1` | log sockets, connects, lookups and TLS sessions |
+| `MH3_TRACE=net` | development builds: log sockets, connects, lookups and TLS sessions |

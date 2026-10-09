@@ -125,7 +125,7 @@ extern "C" void MH3_EnemyActionTable(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     // MH3_TRACE=actions: each (group, variant) the game looks up, once, with
     // its action table word (the monsters' attack and action tables).
-    static const bool traced = TraceOptions().Has("actions");
+    static const TraceFlag traced("actions");
 
     if (traced) {
         static std::set<uint32_t> seen;

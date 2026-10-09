@@ -536,7 +536,7 @@ struct TracedParticle {
 };
 
 void TraceBigQuad(const mh3_effect_quad &q) {
-    static const bool enabled = TraceOptions().Has("big-particles");
+    static const TraceFlag enabled("big-particles");
     static std::unordered_map<uint32_t, TracedParticle> previous;
 
     if (!enabled || !traceParticle)

@@ -264,7 +264,7 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // it and what it moved: the field camera's yaw and pitch (current and
     // target), player 0's position and facing, and how many steps since the
     // last line reported a key repeat (comparing step modes by game time).
-    static const bool traceInput = TraceOptions().Has("input");
+    static const TraceFlag traceInput("input");
 
     if (traceInput) {
         constexpr uint32_t kPad = 0x8065B7D0;    // Psw, channel 0 (0x350 bytes a channel)

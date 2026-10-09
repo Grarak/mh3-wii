@@ -292,7 +292,7 @@ const ShadeEntry& ShadeMaterial() {
 // each distinct set when it first appears and how often each was built, every
 // 600 frames (the underwater blue flashes, todo 3.5).
 void TraceSceneFog(uint32_t type, float width) {
-    static const bool enabled = TraceOptions().Has("fog");
+    static const TraceFlag enabled("fog");
 
     if (!enabled)
         return;

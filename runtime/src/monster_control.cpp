@@ -359,7 +359,7 @@ ActionStart Begin(uint32_t work, uint8_t mode, uint8_t sub, uint8_t how, uint32_
 // (the remap handler can change it), how and the caller, the yaw and place
 // the last action left; once per kind its handler table.
 void NoteAction(CpuContext* ctx, const ActionStart& a) {
-    static const bool traced = TraceOptions().Has("actions");
+    static const TraceFlag traced("actions");
 
     if (!traced)
         return;

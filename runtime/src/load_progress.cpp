@@ -201,7 +201,7 @@ uint64_t QueuedLoads(uint32_t& files) {
             screen.files.push_back(Fnv(path));
             Match();
 #ifdef MH3_DEVELOPMENT
-            static const bool trace = TraceOptions().Has("loading");
+            static const TraceFlag trace("loading");
 
             if (trace)
                 std::fprintf(stderr, "MH3 loading: queued %s (%u bytes), learned %.2f MiB\n", path.c_str(), QueuedBytes(entry, path), screen.match ? screen.match->bytes / 1048576.0 : 0.0);
@@ -301,7 +301,7 @@ float Frame() {
     const float share = total ? float(double(done) / double(total)) : 0.0f;
     screen.shown = std::min(1.0f, std::max(screen.shown, share));
 #ifdef MH3_DEVELOPMENT
-    static const bool trace = TraceOptions().Has("loading");
+    static const TraceFlag trace("loading");
 
     if (trace)
         std::fprintf(stderr, "MH3 loading: %.3f state %u queue %u files %.2f MiB, disc %.2f MiB read %.2f in flight, learned %.2f, conversion %.2f MiB done %.2f queued -> %.3f shown %.3f\n",

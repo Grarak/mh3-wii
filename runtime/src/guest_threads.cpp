@@ -11,6 +11,10 @@
 #include "guest_call.h"
 #include "memory.h"
 
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -187,11 +191,13 @@ uint32_t Dequeue() {
     return thread;
 }
 
-bool traceThreads = std::getenv("MH3_THREAD_TRACE") != nullptr;
-
 void HandTo(Record* target, bool idle) {
+#ifdef MH3_DEVELOPMENT
+    static const TraceFlag traceThreads("threads");
+
     if (traceThreads)
         std::fprintf(stderr, "MH3 guest threads: to 0x%08X%s\n", target->thread, idle ? " (idle)" : "");
+#endif
 
     {
         std::lock_guard guard(lock);

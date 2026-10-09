@@ -8,6 +8,10 @@
 #include "net_host.h"
 #include "online.h"
 
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
+
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -158,11 +162,18 @@ struct Pending {
 
 std::vector<Pending> pending;
 
-// Read at first use: the Vita applies runtime.env after static initialization.
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=net. Read at first use: the Vita applies runtime.env after static
+// initialization.
 bool TraceNet() {
-    static const bool trace = std::getenv("MH3_NET_TRACE") != nullptr;
+    static const TraceFlag trace("net");
     return trace;
 }
+#else
+constexpr bool TraceNet() {
+    return false;
+}
+#endif
 
 // A request that is done at once.
 Attempt Done(int32_t result) {

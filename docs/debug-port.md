@@ -35,6 +35,8 @@ when one is an error.
 | `shot PATH` | dumps the next drawn frame to PATH (BMP) |
 | `call ADDR [INT...] [f FLOAT...]` | calls the guest function at ADDR with the ints (hex) in r3.. and the floats in f1..; answers r3 and f1 |
 | `cheat NAME[=VALUE]` | turns on an integrated cheat (as `--cheat`) |
+| `trace` | the `MH3_TRACE` items that can be switched, each `=on` or `=off` |
+| `trace ITEM on\|off` | turns a trace item on or off ([flags](flags.md#mh3_trace-game-state-over-game-time)) |
 
 Addresses are guest virtual addresses (0x80000000 up); others answer
 `error: no guest RAM`.

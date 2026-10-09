@@ -17,12 +17,15 @@
 //   call ADDR [INT...] [f FLOAT...]  call a guest function (ints hex, in r3..,
 //                             floats in f1..); answers r3 and f1
 //   cheat NAME[=VALUE]        turn on an integrated cheat
+//   trace [ITEM on|off]       the MH3_TRACE items and which are on, or turn
+//                             one on or off
 // Development builds on the hosts only (CMakeLists.txt adds this file to
 // those).
 #include "debug_port.h"
 
 #include "abi_bridge.h"
 #include "cheats.h"
+#include "dev_options.h"
 #include "game_step.h"
 #include "gx_host.h"
 #include "launcher_cheats.h"
@@ -261,7 +264,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat (docs/debug-port.md)";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat trace (docs/debug-port.md)";
 
     if (word == "state")
         return State(s);
@@ -395,6 +398,28 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         const auto equals = rest.find('=');
         const std::string name = rest.substr(0, equals), choice = equals == std::string::npos ? "" : rest.substr(equals + 1);
         return LauncherCheats::EnableByName(name, choice) ? "ok" : "error: no cheat or value '" + rest + "'";
+    }
+
+    if (word == "trace") {
+        std::string state;
+
+        if (!(in >> arg)) {
+            std::string text = "ok";
+
+            for (const std::string_view item : kTraceItems)
+                if (const auto* on = TraceFlag::Switch(item))
+                    text += " " + std::string(item) + (on->load() ? "=on" : "=off");
+
+            return text;
+        }
+
+        auto* on = TraceFlag::Switch(arg);
+
+        if (!on || !(in >> state) || (state != "on" && state != "off"))
+            return "error: trace [ITEM on|off] (`trace` lists the items)";
+
+        on->store(state == "on");
+        return "ok";
     }
 
     return "error: unknown command " + word;

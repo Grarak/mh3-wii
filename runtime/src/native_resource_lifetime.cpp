@@ -252,7 +252,7 @@ std::array<DrawSideWrite, 4096> drawSideWrites;
 size_t drawSideCount = 0;
 
 void RecordDrawSideWrite(CpuContext* cpu, char kind, uint32_t begin, uint32_t bytes) {
-    static const bool enabled = TraceOptions().Has("draw-writes");
+    static const TraceFlag enabled("draw-writes");
 
     if (!enabled || PpcThread::CurrentThread() != PpcThread::Game || !DrawThread::Thread().Pending())
         return;
