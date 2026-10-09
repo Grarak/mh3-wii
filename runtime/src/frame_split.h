@@ -26,15 +26,18 @@ void MH3FrameSplitCall(unsigned kind);
 void MH3FrameSplitTime(unsigned family, std::chrono::steady_clock::duration elapsed);
 extern uint8_t mh3SplitDepth[MH3_SPLIT_FAMILIES];
 extern uint32_t mh3SplitFrame; // frame bodies started
+// Set on threads other than the game thread (model instances on the render
+// thread run the same draw code): their scopes do not count.
+inline thread_local bool mh3SplitOff = false;
 struct MH3FrameSplitScope {
     unsigned family;
     std::chrono::steady_clock::time_point start;
     explicit MH3FrameSplitScope(unsigned value) : family(value) {
-        if (!mh3SplitDepth[family]++)
+        if (!mh3SplitOff && !mh3SplitDepth[family]++)
             start = std::chrono::steady_clock::now();
     }
     ~MH3FrameSplitScope() {
-        if (!--mh3SplitDepth[family])
+        if (!mh3SplitOff && !--mh3SplitDepth[family])
             MH3FrameSplitTime(family, std::chrono::steady_clock::now() - start);
     }
 };

@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "memory.h"
 #include "draw_memory.h"
+#include "draw_replica.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -20,6 +21,8 @@
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
+// Pose owners are game-thread state: model instances drawn on the render
+// thread carry their captured pose instead.
 std::unordered_map<uint32_t, mh3_model_pose_owner> owners;
 struct Region {
     uint32_t bytes;
@@ -28,10 +31,13 @@ struct Region {
 std::map<uint32_t, Region> regions;
 std::unordered_map<uint32_t, std::vector<uint32_t>> positions;
 uint64_t pose_revision = 0;
-mh3_model_matrix_selectors selectors{};
+thread_local constinit mh3_model_matrix_selectors selectors{};
 // Loaded matrix slots, one copy per thread: UI/effect producers load them on
 // the game thread; model draws rebuild them on the render thread.
 thread_local constinit mh3_model_palette matrix_palette{};
+// The captured pose of the model instance being drawn on this thread.
+thread_local const uint32_t* instance_addresses = nullptr;
+thread_local const mh3_matrix_sources* instance_pose = nullptr;
 thread_local constinit uint64_t matrix_palette_revision = 0;
 #ifdef MH3_DEVELOPMENT
 struct PoseTrace {
@@ -118,7 +124,14 @@ void Reindex(const std::unordered_map<uint32_t, mh3_model_pose_owner>& next) {
     regions = std::move(ranges);
     positions = std::move(arrays);
 }
+// The pose owner index belongs to the game thread; a model instance carries
+// its pose (SetNativeModelInstancePose).
+void RequireGame() {
+    if (DrawReplica::current != DrawReplica::Game)
+        throw std::runtime_error("Native model pose producer outside the game thread");
+}
 mh3_model_pose_owner& Declare(uint32_t scene) {
+    RequireGame();
     mh3_model_pose_owner next{};
     Checked(mh3_model_pose_owner_read(&MH3NativeResourceMemory(), scene, &next));
     const auto found = owners.find(next.scene_address);
@@ -150,6 +163,7 @@ void Select(const uint32_t rows[8]) {
 } // namespace
 
 bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environment, uint32_t count, uint32_t reference) {
+    RequireGame();
     if (!count)
         return false;
     uint32_t model = 0;
@@ -179,7 +193,7 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
     return !updates.empty();
 }
 void RetireNativeModelPose(uint32_t address, uint32_t bytes) {
-    if (!bytes)
+    if (!bytes || DrawReplica::current != DrawReplica::Game)
         return;
     address = Canonical(address);
     const uint64_t end = uint64_t(address) + bytes;
@@ -214,9 +228,19 @@ void ClearNativeModelPose() {
     positions.clear();
     selectors = {};
 }
+void SetNativeModelInstancePose(const uint32_t addresses[3], const mh3_matrix_sources* pose) {
+    instance_addresses = addresses;
+    instance_pose = pose;
+}
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model) {
     if (!addresses)
         throw std::runtime_error("Native model pose requires explicit source addresses");
+    if (instance_pose) {
+        for (unsigned i = 0; i < 3; i++)
+            if (Canonical(addresses[i]) != Canonical(instance_addresses[i]))
+                throw std::runtime_error("Model instance reads a pose it did not capture");
+        return *instance_pose;
+    }
     TraceInput("read", model, addresses, 0);
     mh3_matrix_sources result{};
     bool found = false;
@@ -245,6 +269,13 @@ void PublishNativeModelDualTexture(bool enabled) {
     PublishSelectors();
 }
 void ApplyNativeModelSelectors() {
+    PublishSelectors();
+}
+mh3_model_matrix_selectors ReadNativeModelSelectors() {
+    return selectors;
+}
+void SetNativeModelSelectors(const mh3_model_matrix_selectors& state) {
+    selectors = state;
     PublishSelectors();
 }
 void PublishNativeModelMatrixRows(const uint32_t rows[8]) {

@@ -22,6 +22,17 @@ bool NativeTextureResourceIsOriginal(uint32_t payload, uint64_t generation);
 void InitializeNativeTextureSource(uint32_t reference, bool palette);
 void CopyNativeResourceObjects(uint32_t destination, uint32_t source, bool palette);
 void RestoreNativeModelCamera();
+/* 800885F4 Invalidate: forgets the selected CPU cache fields (0x7ff: all). */
+void InvalidateNativeModelCaches(uint32_t fields);
+/* Imported light sets by LightState address. They are draw state that follows
+ * the guest LightState (reimported many times a frame), so model instances
+ * carry the game thread's table to the render thread instead of mirroring it. */
+typedef struct mh3_native_light_set_entry {
+    uint32_t state;
+    mh3_native_light_slots slots;
+} mh3_native_light_set_entry;
+size_t ReadNativeLightSets(mh3_native_light_set_entry* out, size_t capacity);
+void SetNativeLightSets(const mh3_native_light_set_entry* sets, size_t count);
 /* Selection from a previously imported typed LightState. This publishes the
  * chosen slots and returns owned masks/ambient, never borrowed guest storage. */
 mh3_native_light_slots SelectNativeModelLightSet(uint32_t state, uint32_t set_id);

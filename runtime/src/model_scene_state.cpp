@@ -46,8 +46,22 @@ void ApplyScissor(const mh3_native_camera& camera) {
     Checked(mh3_camera_effective_scissor(&camera, rectangle));
     SetNativeScissor(rectangle[0], rectangle[1], rectangle[2], rectangle[3]);
 }
-std::unordered_map<uint32_t, mh3_native_light_slots> light_slots;
+// Imported light sets by LightState address; each drawing thread has its own.
+thread_local std::unordered_map<uint32_t, mh3_native_light_slots> light_slots;
 } // namespace
+size_t ReadNativeLightSets(mh3_native_light_set_entry* out, size_t capacity) {
+    if (light_slots.size() > capacity)
+        throw std::runtime_error("Too many native LightStates for a model instance");
+    size_t count = 0;
+    for (const auto& [state, slots] : light_slots)
+        out[count++] = {state, slots};
+    return count;
+}
+void SetNativeLightSets(const mh3_native_light_set_entry* sets, size_t count) {
+    light_slots.clear();
+    for (size_t i = 0; i < count; i++)
+        light_slots.insert_or_assign(sets[i].state, sets[i].slots);
+}
 
 void RestoreNativeModelCamera() {
     // 802BDCF4 ->800473FC ->ScnRoot::GetCamera, not an inherited backend
@@ -197,15 +211,18 @@ extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80085758, MH3_ModelLightSelect, "ModelLightSelect");
 
-extern "C" void MH3_ModelInvalidate(CpuContext* cpu) {
+void InvalidateNativeModelCaches(uint32_t fields) {
     const mh3_model_cache_storage storage{Mutable(0x80685480, 1),  Mutable(0x80685500, 2),  Mutable(0x8068530c, 4),  Mutable(0x80796dbc, 4), Mutable(0x80685300, 12),
                                           Mutable(0x80685504, 12), Mutable(0x80796db4, 1),  Mutable(0x80685510, 32), Mutable(0x80796db8, 4), Mutable(0x80796dc8, 4),
                                           Mutable(0x80685d60, 4),  Mutable(0x80686378, 28), Mutable(0x80685530, 12), Mutable(0x80796db0, 1)};
-    Checked(mh3_model_cache_invalidate(storage, cpu->gpr[3]));
-    if (cpu->gpr[3] & 1024) {
+    Checked(mh3_model_cache_invalidate(storage, fields));
+    if (fields & 1024) {
         const uint32_t absent[]{0, 0, 0};
         StoreNativeModelMatrixSources(0x80685530, absent);
     }
+}
+extern "C" void MH3_ModelInvalidate(CpuContext* cpu) {
+    InvalidateNativeModelCaches(cpu->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800885F4, MH3_ModelInvalidate, "ModelInvalidate");
 extern "C" void MH3_ModelRenderMode(CpuContext* cpu) {

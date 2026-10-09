@@ -23,6 +23,8 @@ void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 void SubmitNativeGeometry(const AuroraNativeGeometry& geometry, bool textured);
 // item indexes the model store of this packet's slot (model_scope.cpp).
 void RecordNativeModelDraw(uint32_t item);
+// index: a model instance the render thread draws (model_instance.cpp).
+void RecordNativeModelInstance(uint32_t index);
 void RecordNativeDepthClear();
 // Scene feedback runs in draw order on the render thread. The game thread
 // keeps its own revisions of the published targets for its texture bindings.
@@ -35,6 +37,10 @@ uint64_t NativeSceneFeedbackVersion(const void* identity, uint32_t width, uint32
 // never drops either. Runs inline while no render thread exists.
 enum class NativeTaskOrder { BeforeDraws, AfterDraws };
 void QueueNativeGraphicsTask(NativeTaskOrder order, std::function<void()> task);
+// A mirrored host-state mutation for the render replica (draw_replica.h),
+// from any thread but the render thread. It belongs to the packet being
+// recorded, or to the next one between packets.
+void QueueNativeReplicaTask(std::function<void()> task, bool after);
 // The recording packet's exchange slot (0..2) and frame sequence.
 uint32_t NativeFramePacketSlot();
 uint64_t NativeFramePacketSequence();

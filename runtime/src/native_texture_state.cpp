@@ -86,6 +86,7 @@ void BindNativeTexture(const mh3_native_texture_binding& binding) {
     const auto& sampler = binding.sampler;
     aurora::bind_native_texture(binding.map_id, source, {sampler.wrap_s, sampler.wrap_t, sampler.min_filter, sampler.mag_filter, sampler.anisotropy, input.min_lod, input.max_lod, sampler.lod_bias});
     textures[binding.map_id] = {binding, true};
+    Changed(); // render-thread model instances snapshot their bindings
 }
 void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out) {
     out.valid = 0;

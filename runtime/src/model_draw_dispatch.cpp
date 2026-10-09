@@ -1,13 +1,17 @@
 // Thin RMHP08 ABI adapters. Typed C owns draw order, resource selection and
 // the authored sort; retained handlers and renderer callbacks stay at this seam.
 #include "abi_bridge.h"
+#include "draw_replica.h"
 #include "frame_split.h"
 #include "guest_call.h"
 #include "memory.h"
+#include "draw_memory.h"
+#include "runtime/native/adapters/model_instance_bridge.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
 #include "runtime/native/mh3_model_draw_dispatch.h"
 #include <array>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #ifdef MH3_DEVELOPMENT
@@ -58,24 +62,30 @@ struct Census {
 // Census keys are built only while the census runs.
 #define MH3_CENSUS(...)                                                                                                                                                                                \
     do {                                                                                                                                                                                               \
-        if (census.every)                                                                                                                                                                              \
+        if (census.every && DrawReplica::current == DrawReplica::Game)                                                                                                                                                                              \
             __VA_ARGS__;                                                                                                                                                                               \
     } while (0)
 #else
 #define MH3_CENSUS(...)
 #endif
 constexpr uint32_t Scratch = 0x8066d300, Phase = 0x807936b8;
-std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
+// Each drawing thread sorts its own records.
+thread_local std::array<mh3_model_draw_record, MH3_MODEL_SORT_CAPACITY> work;
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
         throw std::runtime_error("Native model draw dispatch failed: " + std::to_string(status));
 }
 mh3_res_span Bytes(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {DrawMemory::Pointer(address, size), size};
 }
 mh3_res_mut_span Mutable(uint32_t address, size_t size) {
-    return {Memory::GetPointer(address, size), size};
+    return {DrawMemory::Mutable(address, size), size};
 }
+// Guest words the draw passes by reference. The game thread places them in a
+// guest stack frame; a model instance on the render thread in its scratch.
+struct References {
+    uint32_t shape, node, material, bindings;
+};
 struct Model {
     uint32_t base, resource;
     mh3_res_model value;
@@ -101,34 +111,43 @@ struct Model {
         constexpr uint32_t offset = 0x68; // RMHP08 GetResMdlInfo + GetNumViewMtx
         if (value.size < offset + 4)
             throw std::runtime_error("Model matrix count is outside resource");
-        const uint32_t count = Memory::Read32(resource + offset);
+        const uint32_t count = DrawMemory::Read32(resource + offset);
         if (uint64_t(count) * 48 > uint64_t(SIZE_MAX))
             throw std::runtime_error("Model matrix allocation size overflow");
         return {Bytes(address, size_t(count) * 48), count, 48, 1};
     }
 };
 struct Submit {
-    GuestCall call;
+    CpuContext* cpu; // null on the render thread: the natives are called directly
     const Model& model;
-    uint32_t replacement, shape, node, material, bindings;
+    uint32_t replacement;
+    References refs;
     static mh3_res_status Emit(void* user, const mh3_model_draw_item* item) {
         auto& s = *static_cast<Submit*>(user);
+        const auto& r = s.refs;
         MH3_CENSUS(census.Add("item flags " + Census::Hex(item->dispatch_flags) + (s.replacement ? " replaced" : "")));
-        Memory::Write32(s.shape, s.model.Address(item->shape.offset));
-        Memory::Write32(s.node, s.model.Address(item->node.offset));
-        Memory::Write32(s.material, s.model.Address(item->material.offset));
+        DrawMemory::Write32(r.shape, s.model.Address(item->shape.offset));
+        DrawMemory::Write32(r.node, s.model.Address(item->node.offset));
+        DrawMemory::Write32(r.material, s.model.Address(item->material.offset));
         if (s.replacement) {
             mh3_model_material_bindings bindings{};
             const auto status = mh3_model_material_select(Bytes(s.replacement, 64), item->material_index, &bindings);
             if (status)
                 return status;
             for (unsigned i = 0; i < 11; i++)
-                Memory::Write32(s.bindings + i * 4, bindings.resource_slots[i]);
+                DrawMemory::Write32(r.bindings + i * 4, bindings.resource_slots[i]);
             for (unsigned i = 0; i < 3; i++)
-                Memory::Write32(s.bindings + (i + 11) * 4, bindings.vertex_tables[i]);
+                DrawMemory::Write32(r.bindings + (i + 11) * 4, bindings.vertex_tables[i]);
         }
-        const uint32_t descriptor = s.call.Call<0x80077814>({s.material, s.node, s.shape});
-        s.call.Call<0x80076A58>({s.material, s.shape, 0, 0, item->dispatch_flags, s.replacement ? s.bindings : 0, descriptor});
+        const uint32_t bindings = s.replacement ? r.bindings : 0;
+        if (!s.cpu) {
+            const uint32_t descriptor = NativeModelIndirectMatrices(r.material, r.node, r.shape);
+            DispatchNativeModel({r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor});
+            return MH3_RES_OK;
+        }
+        GuestCall call{s.cpu};
+        const uint32_t descriptor = call.Call<0x80077814>({r.material, r.node, r.shape});
+        call.Call<0x80076A58>({r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor});
         return MH3_RES_OK;
     }
 };
@@ -138,17 +157,24 @@ mh3_res_status ReadRecord(void* user, uint32_t index, mh3_model_draw_record* out
         return MH3_RES_RANGE;
     return mh3_model_draw_record_read(Bytes(start + index * 12, 12), out);
 }
-void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, uint32_t replacement, uint32_t options, bool sorted) {
+// scratch: the render thread's reference words; the game thread uses a frame.
+void Draw(CpuContext* cpu, const References* scratch, uint32_t resource, uint32_t stream, uint32_t count, uint32_t replacement, uint32_t options, bool sorted) {
     const Model model(resource);
-    GuestFrame frame(cpu, 0x80);
-    Submit submit{{cpu}, model, replacement, frame[0x10], frame[0x14], frame[0x18], frame[0x20]};
+    std::optional<GuestFrame> frame;
+    References refs{};
+    if (cpu) {
+        frame.emplace(cpu, 0x80);
+        refs = {(*frame)[0x10], (*frame)[0x14], (*frame)[0x18], (*frame)[0x20]};
+    } else
+        refs = *scratch;
+    Submit submit{cpu, model, replacement, refs};
     BeginNativeModelDraw();
     if (sorted)
         Checked(mh3_model_draw_sorted_read(&model.value, count, options, ReadRecord, &stream, Submit::Emit, &submit, nullptr));
     else {
         mh3_res_span visibility{};
         if (replacement) {
-            const uint32_t address = Memory::Read32(replacement + 4);
+            const uint32_t address = DrawMemory::Read32(replacement + 4);
             if (address) {
                 mh3_res_memory_view view{};
                 Checked(mh3_res_runtime_map(&MH3NativeResourceMemory(), address, 1, &view));
@@ -160,7 +186,7 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
 }
 uint32_t Collect(const Model& model, uint32_t position, uint32_t stream, uint32_t replacement) {
     const mh3_model_draw_collection input{
-        &model.value, model.Stream(stream), &MH3NativeResourceMemory(), replacement ? Bytes(replacement, 64) : mh3_res_span{}, model.Positions(position), Memory::ReadFloat32(0x807982d8)};
+        &model.value, model.Stream(stream), &MH3NativeResourceMemory(), replacement ? Bytes(replacement, 64) : mh3_res_span{}, model.Positions(position), DrawMemory::ReadFloat32(0x807982d8)};
     uint32_t count = 0;
     Checked(mh3_model_draw_collect(&input, work.data(), work.size(), &count));
     return count;
@@ -170,7 +196,7 @@ void Publish(uint32_t count) {
         Checked(mh3_model_draw_record_write(Mutable(Scratch + i * 12, 12), &work[i]));
 }
 struct Sort {
-    GuestCall call;
+    CpuContext* cpu;
     uint32_t base, comparator;
     mh3_model_draw_record* records;
     const uint32_t* addresses = nullptr;
@@ -188,7 +214,9 @@ struct Sort {
             const auto first = Record(s, a), second = Record(s, b);
             return mh3_model_draw_less(&first, &second, s.comparator == 0x80079f78);
         }
-        return s.call(s.comparator, {s.Address(a), s.Address(b)}) != 0;
+        if (!s.cpu)
+            throw std::runtime_error("Model sort comparator has no native producer");
+        return GuestCall{s.cpu}(s.comparator, {s.Address(a), s.Address(b)}) != 0;
     }
     static void Swap(void* user, size_t a, size_t b) {
         auto& s = *static_cast<Sort*>(user);
@@ -201,8 +229,8 @@ struct Sort {
             Checked(mh3_model_draw_record_write(Mutable(s.Address(b), 12), &second));
         }
     }
-    static int32_t PhaseValue(void*, unsigned which) { return int32_t(Memory::Read32(Phase + which * 4)); }
-    static void SetPhase(void*, unsigned which, int32_t value) { Memory::Write32(Phase + which * 4, uint32_t(value)); }
+    static int32_t PhaseValue(void*, unsigned which) { return int32_t(DrawMemory::Read32(Phase + which * 4)); }
+    static void SetPhase(void*, unsigned which, int32_t value) { DrawMemory::Write32(Phase + which * 4, uint32_t(value)); }
     mh3_model_sort_ops Ops() { return {this, Less, Swap, PhaseValue, SetPhase}; }
 };
 size_t Count(uint32_t begin, uint32_t end) {
@@ -214,6 +242,7 @@ size_t Count(uint32_t begin, uint32_t end) {
 }
 struct Pipeline {
     CpuContext* cpu;
+    const References* scratch;
     uint32_t reference, position;
     static void Bind(void*, const uint32_t sources[3]) { StoreNativeModelMatrixSources(0x80685530, sources); }
     // 80071c9c waits for HID2's locked-cache DMA count, then a system-call
@@ -222,32 +251,32 @@ struct Pipeline {
     static void Complete(void*) {}
     static mh3_res_status Pass(void* user, uint32_t stream, uint32_t replacement, uint32_t options, int sorted, int xlu) {
         auto& p = *static_cast<Pipeline*>(user);
-        const uint32_t resource = Memory::Read32(p.reference);
+        const uint32_t resource = DrawMemory::Read32(p.reference);
         if (!sorted) {
-            Draw(p.cpu, resource, stream, 0, replacement, options, false);
+            Draw(p.cpu, p.scratch, resource, stream, 0, replacement, options, false);
             return MH3_RES_OK;
         }
         const Model model(resource);
         const uint32_t count = Collect(model, p.position, stream, replacement);
-        Sort sort{{p.cpu}, Scratch, xlu ? 0x80079f78u : 0x80079fdcu, work.data()};
+        Sort sort{p.cpu, Scratch, xlu ? 0x80079f78u : 0x80079fdcu, work.data()};
         auto ops = sort.Ops();
         Checked(mh3_model_draw_sort(&ops, 0, count, 0));
         Publish(count);
         // The original scratch is shared; callbacks must observe its exact
         // contents and later iterations must reread any nested draw mutation.
-        Draw(p.cpu, Memory::Read32(p.reference), Scratch, count, replacement, options, true);
+        Draw(p.cpu, p.scratch, DrawMemory::Read32(p.reference), Scratch, count, replacement, options, true);
         return MH3_RES_OK;
     }
 };
-void PipelineRun(CpuContext* cpu, uint32_t reference, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
+void PipelineRun(CpuContext* cpu, const References* scratch, uint32_t reference, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
 #ifdef MH3_DEVELOPMENT
-    if (census.every) {
+    if (census.every && DrawReplica::current == DrawReplica::Game) {
         census.models.insert(Memory::Read32(reference));
         census.Add(std::string("pipeline ") + (opaque ? "O" : "-") + (xlu ? "X" : "-") + " sources " + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " options " +
                    Census::Hex(options) + (replacement ? " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" + Census::Hex(Memory::Read32(replacement + 4)) : ""));
     }
 #endif
-    Pipeline p{cpu, reference, sources[0]};
+    Pipeline p{cpu, scratch, reference, sources[0]};
     const mh3_model_draw_pipeline ops{&p, Pipeline::Bind, Pipeline::Complete, Pipeline::Pass};
     Checked(mh3_model_draw_pipeline_run(&ops, sources, opaque, xlu, replacement, options));
 }
@@ -259,7 +288,7 @@ struct Scene {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
         census.Frame();
-        if (census.every) {
+        if (census.every && DrawReplica::current == DrawReplica::Game) {
             census.owners.insert(owner);
             census.Add("task " + std::to_string(task) + " class " + Census::Hex(Memory::Read32(owner)) + " options " + Census::Hex(*options));
         }
@@ -336,7 +365,7 @@ struct Scene {
     static mh3_res_status DrawPass(void* user, uint32_t resource, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
         auto& s = *static_cast<Scene*>(user);
 #ifdef MH3_DEVELOPMENT
-        if (census.every) {
+        if (census.every && DrawReplica::current == DrawReplica::Game) {
             census.models.insert(resource);
             census.Add(std::string(opaque ? "opa" : "xlu") + " sources " + (sources[0] ? "P" : "-") + (sources[1] ? "N" : "-") + (sources[2] ? "E" : "-") + " replacement " + Census::Hex(Memory::Read32(replacement)) + "/" +
                        Census::Hex(Memory::Read32(replacement + 4)));
@@ -344,17 +373,71 @@ struct Scene {
 #endif
         GuestFrame frame(s.call.cpu, 0x20);
         Memory::Write32(frame[0x10], resource);
-        PipelineRun(s.call.cpu, frame[0x10], sources, opaque, xlu, replacement, options);
+        PipelineRun(s.call.cpu, nullptr, frame[0x10], sources, opaque, xlu, replacement, options);
+        return MH3_RES_OK;
+    }
+};
+// A model instance drawn on the render thread (model_instance.cpp). Its scene
+// task is the native ModelSceneTask, it has no owner callback, and its view
+// arrays were captured with it; natives are called directly and the words
+// the draw passes by reference live in the instance's scratch region.
+struct InstanceScene {
+    References refs;
+    uint32_t options_word, resource_word;
+    const uint32_t* sources;
+    mh3_model_scene_draw_ops Ops() { return {this, Task, Handler, Virtual, Callback, Options, Source, DrawPass}; }
+    static void Task(void* user, uint32_t owner, unsigned task, uint32_t* options) {
+        auto& s = *static_cast<InstanceScene*>(user);
+        DrawMemory::Write32(s.options_word, *options);
+        auto ops = s.Ops();
+        Checked(mh3_model_scene_task(&ops, Bytes(owner, 0x148), owner, task, 0, s.options_word));
+        *options = DrawMemory::Read32(s.options_word);
+    }
+    static void Handler(void* user, uint32_t owner, uint32_t task, uint32_t argument, uint32_t options) {
+        if (task != 6 && task != 7)
+            throw std::runtime_error("Model instance reached scene task " + std::to_string(task));
+        auto ops = static_cast<InstanceScene*>(user)->Ops();
+        Checked((task == 6 ? mh3_model_scene_opa : mh3_model_scene_xlu)(&ops, Bytes(owner, 0x148), owner, argument, options));
+    }
+    static void Virtual(void*, uint32_t, unsigned, uint32_t) { throw std::runtime_error("Model instance reached a scene virtual"); }
+    static void Callback(void*, uint32_t, unsigned, unsigned, uint32_t, uint32_t, uint32_t) { throw std::runtime_error("Model instance reached an owner callback"); }
+    static uint32_t Options(void*, uint32_t pointer) { return DrawMemory::Read32(pointer); }
+    static uint32_t Source(void* user, uint32_t, unsigned kind) {
+        if (kind >= 3)
+            throw std::runtime_error("Unexpected model source kind");
+        return static_cast<InstanceScene*>(user)->sources[kind];
+    }
+    static mh3_res_status DrawPass(void* user, uint32_t resource, const uint32_t sources[3], uint32_t opaque, uint32_t xlu, uint32_t replacement, uint32_t options) {
+        auto& s = *static_cast<InstanceScene*>(user);
+        DrawMemory::Write32(s.resource_word, resource);
+        PipelineRun(nullptr, &s.refs, s.resource_word, sources, opaque, xlu, replacement, options);
         return MH3_RES_OK;
     }
 };
 } // namespace
 
-extern "C" void MH3_ModelSceneDraw(CpuContext* cpu) {
-    GuestFrame frame(cpu, 0x20);
-    Scene s{{cpu}, frame[0x10]};
+void DrawNativeModelInstance(uint32_t owner, uint32_t options, const uint32_t sources[3], uint32_t scratch) {
+    InstanceScene s{{scratch + 0x10, scratch + 0x14, scratch + 0x18, scratch + 0x20}, scratch, scratch + 4, sources};
     auto ops = s.Ops();
-    Checked(mh3_model_scene_draw(&ops, Bytes(frame.Arg(3), 0x148), frame.Arg(3), frame.Arg(4)));
+    Checked(mh3_model_scene_draw(&ops, Bytes(owner, 0x148), owner, options));
+}
+
+extern "C" void MH3_ModelSceneDraw(CpuContext* cpu) {
+    bool learn = false;
+    if (CaptureNativeModelInstance(cpu->gpr[3], cpu->gpr[4], &learn))
+        return;
+    {
+        std::optional<NativeModelInstanceLearning> learning;
+        if (learn)
+            learning.emplace(cpu->gpr[3]);
+        GuestFrame frame(cpu, 0x20);
+        Scene s{{cpu}, frame[0x10]};
+        auto ops = s.Ops();
+        Checked(mh3_model_scene_draw(&ops, Bytes(frame.Arg(3), 0x148), frame.Arg(3), frame.Arg(4)));
+    }
+#ifdef MH3_DEVELOPMENT
+    FinishNativeModelInstance();
+#endif
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8004978C, MH3_ModelSceneDraw, "ModelSceneDraw");
 extern "C" void MH3_ModelSceneOptions(CpuContext* cpu) {
@@ -387,22 +470,22 @@ REGISTER_NATIVE_FUNCTION_AS(0x8007DC40, MH3_ModelSceneOpa, "ModelSceneOpa");
 extern "C" void MH3_ModelDrawPipeline(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x20);
     const uint32_t sources[3] = {frame.Arg(4), frame.Arg(5), frame.Arg(6)};
-    PipelineRun(cpu, frame.Arg(3), sources, frame.Arg(7), frame.Arg(8), frame.Arg(9), frame.Arg(10));
+    PipelineRun(cpu, nullptr, frame.Arg(3), sources, frame.Arg(7), frame.Arg(8), frame.Arg(9), frame.Arg(10));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80079408, MH3_ModelDrawPipeline, "ModelDrawPipeline");
 extern "C" void MH3_ModelDrawUnsorted(CpuContext* cpu) {
     const auto reference = cpu->gpr[3], stream = cpu->gpr[4], options = cpu->gpr[5];
-    Draw(cpu, Memory::Read32(reference), stream, 0, 0, options, false);
+    Draw(cpu, nullptr, Memory::Read32(reference), stream, 0, 0, options, false);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800786F0, MH3_ModelDrawUnsorted, "ModelDrawUnsorted");
 extern "C" void MH3_ModelDrawSorted(CpuContext* cpu) {
     const auto reference = cpu->gpr[3], stream = cpu->gpr[4], count = cpu->gpr[5], options = cpu->gpr[6];
-    Draw(cpu, Memory::Read32(reference), stream, count, 0, options, true);
+    Draw(cpu, nullptr, Memory::Read32(reference), stream, count, 0, options, true);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80078EE0, MH3_ModelDrawSorted, "ModelDrawSorted");
 extern "C" void MH3_ModelDrawSortedReplacement(CpuContext* cpu) {
     const auto reference = cpu->gpr[3], stream = cpu->gpr[4], count = cpu->gpr[5], replacement = cpu->gpr[6], options = cpu->gpr[7];
-    Draw(cpu, Memory::Read32(reference), stream, count, replacement, options, true);
+    Draw(cpu, nullptr, Memory::Read32(reference), stream, count, replacement, options, true);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8007907C, MH3_ModelDrawSortedReplacement, "ModelDrawSortedReplacement");
 extern "C" void MH3_ModelDrawCollect(CpuContext* cpu) {

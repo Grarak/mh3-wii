@@ -3,6 +3,8 @@
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
 #include "frame_split.h"
+#include "draw_replica.h"
+#include "runtime/native/adapters/model_instance_bridge.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_frame_state_exchange.h"
 #include <aurora/aurora.h>
@@ -30,7 +32,7 @@ namespace {
 // Per-frame geometry high water is about 200 KiB of vertices (Alatreon quest).
 constexpr size_t VertexArenaBytes = 2u << 20, IndexArenaBytes = 512u << 10;
 
-enum class Kind : uint8_t { Model, MaterialGeometry, Geometry, DepthClear, Capture, Glare, Clone };
+enum class Kind : uint8_t { Model, Instance, MaterialGeometry, Geometry, DepthClear, Capture, Glare, Clone };
 using StateIndices = std::array<uint32_t, NATIVE_STATE_COMPONENTS>;
 struct Record {
     Kind kind;
@@ -106,6 +108,8 @@ std::atomic<uint64_t> completed{0};
 bool synchronous = false;
 std::mutex taskLock;
 std::deque<Task> beforeTasks, afterTasks;
+// The packet that mirrored host-state mutations belong to (any thread).
+std::atomic<uint64_t> replicaSequence{1};
 
 // Game thread.
 Packet* recording = nullptr;
@@ -267,6 +271,11 @@ void Draw(const Packet& p) {
         case Kind::Model:
             ExecuteNativeModelDraw(p.slot, record.payload);
             break;
+        case Kind::Instance:
+            ExecuteNativeModelInstance(p.slot, record.payload);
+            // The instance changed the drawing state its record restored.
+            forget();
+            break;
         case Kind::MaterialGeometry:
             SubmitNativeMaterialGeometry(p.materialGeometry[record.payload]);
             break;
@@ -294,6 +303,10 @@ void Execute(const Packet& p) {
 }
 void RenderLoop() {
     aurora::gl::acquire_context();
+    DrawReplica::current = DrawReplica::Render;
+#ifdef MH3_DEVELOPMENT
+    mh3SplitOff = true;
+#endif
     try {
         for (;;) {
             const uint32_t ticket = published.load(std::memory_order_acquire);
@@ -364,6 +377,10 @@ void RecordNativeModelDraw(uint32_t item) {
     if (NativeFramePacketRecording())
         Push(Kind::Model, item);
 }
+void RecordNativeModelInstance(uint32_t index) {
+    if (NativeFramePacketRecording())
+        Push(Kind::Instance, index);
+}
 void RecordNativeDepthClear() {
     if (NativeFramePacketRecording())
         Push(Kind::DepthClear, 0);
@@ -413,6 +430,10 @@ void QueueNativeGraphicsTask(NativeTaskOrder order, std::function<void()> task) 
     std::lock_guard lock(taskLock);
     (order == NativeTaskOrder::BeforeDraws ? beforeTasks : afterTasks).push_back({sequence, std::move(task)});
 }
+void QueueNativeReplicaTask(std::function<void()> task, bool after) {
+    std::lock_guard lock(taskLock);
+    (after ? afterTasks : beforeTasks).push_back({replicaSequence.load(std::memory_order_acquire), std::move(task)});
+}
 uint32_t NativeFramePacketSlot() {
     if (!recording)
         throw std::runtime_error("No frame packet is being recorded");
@@ -439,6 +460,8 @@ void StartNativeRenderThread() {
     gameThread = std::this_thread::get_id();
     stopping = false;
     failed = false;
+    replicaSequence.store(sequence + 1, std::memory_order_release);
+    StartNativeModelInstances();
     aurora::gl::release_context();
     running = true;
     renderThread = std::thread(RenderLoop);
@@ -450,6 +473,7 @@ void StopNativeRenderThread() {
     published.fetch_add(1, std::memory_order_release);
     published.notify_all();
     renderThread.join();
+    StopNativeModelInstances();
     running = false;
     recording = nullptr;
     aurora::gl::acquire_context();
@@ -466,6 +490,7 @@ void BeginNativeFramePacket(bool render) {
     auto& p = ProducerPacket();
     p.Reset(++sequence, render);
     recording = &p;
+    replicaSequence.store(sequence, std::memory_order_release);
 }
 bool NativeFramePacketRecording() {
     return recording && recording->render && !recording->canceled;
@@ -480,6 +505,7 @@ void PublishNativeFramePacket(std::string capture) {
         throw std::runtime_error("Frame packet published without a begin");
     auto& p = *recording;
     recording = nullptr;
+    replicaSequence.store(sequence + 1, std::memory_order_release);
     p.capture = std::move(capture);
     const bool wait = synchronous || !p.capture.empty();
     uint32_t replaced = 0;

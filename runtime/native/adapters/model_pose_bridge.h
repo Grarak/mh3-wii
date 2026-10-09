@@ -6,6 +6,9 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
 void RetireNativeModelPose(uint32_t address, uint32_t bytes);
 void ClearNativeModelPose();
 mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t model_address = 0);
+/* While set, this thread draws a model instance whose view arrays (addresses)
+ * were captured as pose: ReadNativeModelPose returns it. Null clears it. */
+void SetNativeModelInstancePose(const uint32_t addresses[3], const mh3_matrix_sources* pose);
 /* 80080BC0/80080C0C/80080C68: the scene's current view array (0 position,
  * 1 normal, 2 environment), declaring its allocation owner. */
 uint32_t NativeModelViewArray(uint32_t scene, unsigned kind);
@@ -13,6 +16,10 @@ void PublishNativeModelDualTexture(bool enabled);
 /* Reapply independent live selector state after an immutable material overlay.
  * Unknown remains unknown; this is never an identity/dual fallback. */
 void ApplyNativeModelSelectors();
+/* This thread's selector state. Model instances carry the game thread's state
+ * at capture to the render thread, which applies it before drawing them. */
+mh3_model_matrix_selectors ReadNativeModelSelectors();
+void SetNativeModelSelectors(const mh3_model_matrix_selectors& state);
 void PublishNativeModelMatrixRows(const uint32_t rows[8]);
 /* Actual native matrix setter publications, shared with UI/effects. Selectors
  * are PN rows0..27 and main texture rows30..57, step3; post rows64+ do not

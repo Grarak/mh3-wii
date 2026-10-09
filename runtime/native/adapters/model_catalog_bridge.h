@@ -11,6 +11,11 @@ void RetireNativeResourceOwner(uint32_t address, uint32_t bytes);
  * Generic overwrites notify it even when no disc interval is tracked. */
 using NativeModelVertexRetireHook = void (*)(uint32_t address, uint32_t bytes);
 void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook);
+/* Copies the game replica of the host draw state into the render replica
+ * (draw_replica.h), before game mutations start being mirrored. */
+void SeedNativeCatalogReplica();
+void SeedNativeTextureObjectReplica();
+void SeedNativeVertexReplica();
 /* Only a verified native material producer may use these. Exact block bounds
  * preserve the certified allocation/model identity while content revisions
  * change. Generic memcpy/DI/free/unknown overwrite always retires overlapping

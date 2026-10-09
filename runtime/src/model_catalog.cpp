@@ -6,7 +6,9 @@
 #include "model_assets.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
+#include "draw_replica.h"
 #include <array>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -19,9 +21,6 @@
 
 namespace {
 constexpr size_t capacity = 8192;
-std::array<mh3_source_range, capacity> ranges{}, work{}, transfer{};
-mh3_source_tracker tracker{};
-bool initialized = false;
 struct Pack {
     const mh3_mesh_pack* pack;
     const mh3_model_catalog* catalog;
@@ -37,11 +36,6 @@ struct Pack {
     };
     std::map<std::pair<uint64_t, uint32_t>, Origin> origins;
 };
-std::vector<Pack> packs;
-// source_epoch: any provenance/structure change (copies, loads, retirement).
-// block_epoch: typed material group writes, which change block provenance
-// but never a resource header, so resolved resources stay valid across them.
-uint64_t source_epoch = 0, block_epoch = 0;
 struct CachedOwner {
     NativeModelOwner owner;
     mh3_source_owner certificate;
@@ -56,26 +50,61 @@ struct CachedBlock {
     uint64_t resident_generation;
     uint32_t material_index;
 };
-std::unordered_map<uint32_t, CachedOwner> owners;
-std::unordered_map<uint64_t, CachedResource> resources;
-std::unordered_map<uint64_t, CachedBlock> blocks;
-std::map<uint64_t, NativeLiveMaterialBlock> live_blocks;
-uint64_t material_revision = 0;
+// One replica of the provenance state (draw_replica.h). Admitted packs are
+// immutable and shared by both replicas.
+struct Catalog {
+    std::array<mh3_source_range, capacity> ranges{}, work{}, transfer{};
+    mh3_source_tracker tracker{};
+    bool initialized = false;
+    std::vector<std::shared_ptr<const Pack>> packs;
+    // source_epoch: any provenance/structure change (copies, loads, retirement).
+    // block_epoch: typed material group writes, which change block provenance
+    // but never a resource header, so resolved resources stay valid across them.
+    uint64_t source_epoch = 0, block_epoch = 0;
+    std::unordered_map<uint32_t, CachedOwner> owners;
+    std::unordered_map<uint64_t, CachedResource> resources;
+    std::unordered_map<uint64_t, CachedBlock> blocks;
+    std::map<uint64_t, NativeLiveMaterialBlock> live_blocks;
+    uint64_t material_revision = 0;
+};
+std::array<Catalog, DrawReplica::Count> replicas;
+Catalog& C() {
+    return replicas[DrawReplica::current];
+}
+// The current replica's admitted packs, by reference.
+struct PackIterator {
+    std::vector<std::shared_ptr<const Pack>>::const_iterator it;
+    const Pack& operator*() const { return **it; }
+    PackIterator& operator++() {
+        ++it;
+        return *this;
+    }
+    bool operator!=(const PackIterator& other) const { return it != other.it; }
+};
+struct PackList {
+    const std::vector<std::shared_ptr<const Pack>>& packs;
+    PackIterator begin() const { return {packs.begin()}; }
+    PackIterator end() const { return {packs.end()}; }
+};
+PackList Packs() {
+    return {C().packs};
+}
 NativeModelVertexRetireHook vertex_retire = nullptr;
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
         throw std::runtime_error("Native model provenance failed: " + std::to_string(status));
 }
 void Initialize() {
-    if (!initialized) {
-        Checked(mh3_source_tracker_init(&tracker, ranges.data(), work.data(), transfer.data(), capacity));
-        initialized = true;
+    auto& c = C();
+    if (!c.initialized) {
+        Checked(mh3_source_tracker_init(&c.tracker, c.ranges.data(), c.work.data(), c.transfer.data(), capacity));
+        c.initialized = true;
     }
 }
 uint64_t NextGeneration() {
-    if (tracker.generation == UINT64_MAX)
+    if (C().tracker.generation == UINT64_MAX)
         throw std::runtime_error("Native model provenance generation overflow");
-    return tracker.generation + 1;
+    return C().tracker.generation + 1;
 }
 uint32_t Canonical(uint32_t address, uint32_t bytes) {
     uint32_t canonical = 0;
@@ -83,20 +112,20 @@ uint32_t Canonical(uint32_t address, uint32_t bytes) {
     return canonical;
 }
 void InvalidateSourceCache() {
-    if (source_epoch == UINT64_MAX)
+    if (C().source_epoch == UINT64_MAX)
         throw std::runtime_error("Native model source cache epoch overflow");
-    ++source_epoch;
+    ++C().source_epoch;
 }
 void InvalidateBlockCache() {
-    if (block_epoch == UINT64_MAX)
+    if (C().block_epoch == UINT64_MAX)
         throw std::runtime_error("Native model block cache epoch overflow");
-    ++block_epoch;
+    ++C().block_epoch;
 }
 bool RetireCertificates(uint32_t address, uint32_t bytes) {
     bool retired = false;
-    for (auto it = owners.begin(); it != owners.end();) {
+    for (auto it = C().owners.begin(); it != C().owners.end();) {
         if (mh3_source_owner_intersects(&it->second.certificate, address, bytes)) {
-            it = owners.erase(it);
+            it = C().owners.erase(it);
             retired = true;
         } else
             ++it;
@@ -104,7 +133,7 @@ bool RetireCertificates(uint32_t address, uint32_t bytes) {
     return retired;
 }
 void CheckTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_material_block kind) {
-    for (const auto& item : owners) {
+    for (const auto& item : C().owners) {
         const auto status = mh3_source_owner_material_write(&item.second.certificate, item.second.owner.catalog, address, bytes, uint32_t(kind));
         if (status != MH3_RES_OK && status != MH3_RES_ABSENT)
             Checked(status);
@@ -120,12 +149,12 @@ bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
     // Every admitted group is at most480 bytes. Avoid walking all records for
     // unrelated generic copies, while still finding a partially hit record.
     const uint32_t start = address > 480 ? address - 480 : 0;
-    auto it = live_blocks.lower_bound(uint64_t(start) << 3);
+    auto it = C().live_blocks.lower_bound(uint64_t(start) << 3);
     const uint64_t end = (uint64_t)address + bytes;
-    while (it != live_blocks.end() && it->second.address < end) {
+    while (it != C().live_blocks.end() && it->second.address < end) {
         const auto& block = it->second;
         if ((uint64_t)block.address + block.bytes > address) {
-            it = live_blocks.erase(it);
+            it = C().live_blocks.erase(it);
             retired = true;
         } else
             ++it;
@@ -134,8 +163,8 @@ bool RetireLiveBlocks(uint32_t address, uint32_t bytes) {
 }
 std::vector<NativeLiveMaterialBlock> SnapshotLiveCopy(uint32_t source, uint32_t destination, uint32_t bytes) {
     std::vector<NativeLiveMaterialBlock> result;
-    auto it = live_blocks.lower_bound(uint64_t(source) << 3);
-    while (it != live_blocks.end() && it->second.address < (uint64_t)source + bytes) {
+    auto it = C().live_blocks.lower_bound(uint64_t(source) << 3);
+    while (it != C().live_blocks.end() && it->second.address < (uint64_t)source + bytes) {
         const auto& block = it->second;
         if ((uint64_t)block.address + block.bytes <= (uint64_t)source + bytes) {
             auto copy = block;
@@ -149,7 +178,7 @@ std::vector<NativeLiveMaterialBlock> SnapshotLiveCopy(uint32_t source, uint32_t 
 }
 std::vector<CachedOwner> SnapshotOwnerCopy(uint32_t source, uint32_t destination, uint32_t bytes, uint64_t generation) {
     std::vector<CachedOwner> result;
-    for (const auto& item : owners) {
+    for (const auto& item : C().owners) {
         const auto& certificate = item.second.certificate;
         if (certificate.container_address < source || (uint64_t)certificate.container_address + certificate.file_bytes > (uint64_t)source + bytes)
             continue;
@@ -163,6 +192,20 @@ std::vector<CachedOwner> SnapshotOwnerCopy(uint32_t source, uint32_t destination
         result.push_back(copy);
     }
     return result;
+}
+void InstallPack(const std::shared_ptr<const Pack>& pack) {
+    const DrawReplica::Mutation mutation([=] { InstallPack(pack); });
+    auto& c = C();
+    c.packs.push_back(pack);
+    c.resources.clear();
+    c.blocks.clear();
+}
+// Certificates carry state the tracker alone cannot rebuild once typed writes
+// retire content provenance, so both replicas hold every game certificate.
+void Certify(const std::vector<CachedOwner>& certified) {
+    const DrawReplica::Mutation mutation([=] { Certify(certified); });
+    for (const auto& item : certified)
+        C().owners.insert_or_assign(item.owner.model_address, item);
 }
 void Copy(CpuContext* cpu) {
     const uint32_t destination = cpu->gpr[3], source = cpu->gpr[4], bytes = cpu->gpr[5];
@@ -181,9 +224,10 @@ void Copy(CpuContext* cpu) {
 void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes) {
     if (!bytes)
         return;
+    const DrawReplica::Mutation mutation([=] { RecordNativeDiscWrite(destination, offset, bytes); });
     Initialize();
     destination = Canonical(destination, bytes);
-    Checked(mh3_source_record_disc(&tracker, destination, bytes, offset, NextGeneration()));
+    Checked(mh3_source_record_disc(&C().tracker, destination, bytes, offset, NextGeneration()));
     RetireNativeModelPose(destination, bytes);
     if (vertex_retire)
         vertex_retire(destination, bytes);
@@ -194,6 +238,7 @@ void RecordNativeDiscWrite(uint32_t destination, uint64_t offset, uint32_t bytes
 void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t bytes) {
     if (!bytes || destination == source)
         return;
+    const DrawReplica::Mutation mutation([=] { RecordNativeResourceCopy(destination, source, bytes); });
     Initialize();
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
@@ -201,12 +246,12 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
         return;
     // Most runtime copies have no disc ownership. Avoid walking all intervals
     // unless a source or overwritten destination intersects tracked bytes.
-    const bool tracked = mh3_source_intersects(&tracker, source, bytes) || mh3_source_intersects(&tracker, destination, bytes);
+    const bool tracked = mh3_source_intersects(&C().tracker, source, bytes) || mh3_source_intersects(&C().tracker, destination, bytes);
     const auto copies = SnapshotLiveCopy(source, destination, bytes);
     const uint64_t generation = NextGeneration();
     const auto owner_copies = SnapshotOwnerCopy(source, destination, bytes, generation);
     if (tracked || !owner_copies.empty())
-        Checked(mh3_source_record_copy(&tracker, destination, source, bytes, generation));
+        Checked(mh3_source_record_copy(&C().tracker, destination, source, bytes, generation));
     RetireNativeModelPose(destination, bytes);
     if (vertex_retire)
         vertex_retire(destination, bytes);
@@ -217,20 +262,21 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     // structure, including typed material holes. Partial copies never certify
     // a model. Snapshots also preserve overlapping memmove source semantics.
     for (const auto& copy : owner_copies)
-        owners.insert_or_assign(copy.owner.model_address, copy);
+        C().owners.insert_or_assign(copy.owner.model_address, copy);
     for (const auto& copy : copies)
-        live_blocks.insert_or_assign(LiveKey(copy.address, copy.kind), copy);
+        C().live_blocks.insert_or_assign(LiveKey(copy.address, copy.kind), copy);
     if (retired_owner || retired_block || tracked || !copies.empty() || !owner_copies.empty())
         InvalidateSourceCache();
 }
 void RetireNativeResourceOwner(uint32_t address, uint32_t bytes) {
     if (!bytes)
         return;
+    const DrawReplica::Mutation mutation([=] { RetireNativeResourceOwner(address, bytes); });
     Initialize();
     address = Canonical(address, bytes);
-    const bool tracked = mh3_source_intersects(&tracker, address, bytes);
+    const bool tracked = mh3_source_intersects(&C().tracker, address, bytes);
     if (tracked)
-        Checked(mh3_source_retire(&tracker, address, bytes));
+        Checked(mh3_source_retire(&C().tracker, address, bytes));
     RetireNativeModelPose(address, bytes);
     if (vertex_retire)
         vertex_retire(address, bytes);
@@ -246,27 +292,29 @@ void SetNativeModelVertexRetireHook(NativeModelVertexRetireHook hook) {
 void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_material_block kind) {
     if (!bytes)
         return;
+    const DrawReplica::Mutation mutation([=] { RecordNativeTypedMaterialWrite(address, bytes, kind); });
     Initialize();
     address = Canonical(address, bytes);
     CheckTypedMaterialWrite(address, bytes, kind);
     // Retire content provenance, not the independently certified load owner.
     // A reader without the newly published typed record now fails explicitly.
-    if (mh3_source_intersects(&tracker, address, bytes))
-        Checked(mh3_source_retire(&tracker, address, bytes));
+    if (mh3_source_intersects(&C().tracker, address, bytes))
+        Checked(mh3_source_retire(&C().tracker, address, bytes));
     RetireLiveBlocks(address, bytes);
     InvalidateBlockCache();
 }
 void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32_t bytes, mh3_model_material_block kind) {
     if (!bytes || destination == source)
         return;
+    const DrawReplica::Mutation mutation([=] { RecordNativeTypedMaterialCopy(destination, source, bytes, kind); });
     Initialize();
     destination = Canonical(destination, bytes);
     source = Canonical(source, bytes);
     if (destination == source)
         return;
     CheckTypedMaterialWrite(destination, bytes, kind);
-    if (mh3_source_intersects(&tracker, source, bytes) || mh3_source_intersects(&tracker, destination, bytes))
-        Checked(mh3_source_record_copy(&tracker, destination, source, bytes, NextGeneration()));
+    if (mh3_source_intersects(&C().tracker, source, bytes) || mh3_source_intersects(&C().tracker, destination, bytes))
+        Checked(mh3_source_record_copy(&C().tracker, destination, source, bytes, NextGeneration()));
     RetireLiveBlocks(destination, bytes);
     InvalidateBlockCache();
 }
@@ -283,7 +331,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
     trace("validate", 0);
     if (!handle || !generation || mh3_model_catalog_validate_pack(catalog, pack) != MH3_PACK_OK)
         throw std::runtime_error("Invalid external native model pack registration");
-    for (const auto& p : packs) {
+    for (const auto& p : Packs()) {
         if (p.handle == handle)
             throw std::runtime_error("Native model resident handle already registered");
         for (uint32_t i = 0; i < catalog->model_count; i++) {
@@ -369,26 +417,26 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog*
             }
         }
     }
-    packs.push_back(std::move(admitted));
-    resources.clear();
-    blocks.clear();
+    InstallPack(std::make_shared<const Pack>(std::move(admitted)));
     trace("publish", 0);
 }
 void UnregisterNativeModelPack(uintptr_t handle) {
-    for (auto it = packs.begin(); it != packs.end(); ++it)
-        if (it->handle == handle) {
-            packs.erase(it);
-            resources.clear();
-            blocks.clear();
-            for (auto owner = owners.begin(); owner != owners.end();) {
+    // Frames already recorded may still draw the pack on the render replica.
+    const DrawReplica::Mutation mutation([=] { UnregisterNativeModelPack(handle); }, true);
+    for (auto it = C().packs.begin(); it != C().packs.end(); ++it)
+        if ((*it)->handle == handle) {
+            C().packs.erase(it);
+            C().resources.clear();
+            C().blocks.clear();
+            for (auto owner = C().owners.begin(); owner != C().owners.end();) {
                 if (owner->second.owner.resident_handle == handle)
-                    owner = owners.erase(owner);
+                    owner = C().owners.erase(owner);
                 else
                     ++owner;
             }
-            for (auto block = live_blocks.begin(); block != live_blocks.end();) {
+            for (auto block = C().live_blocks.begin(); block != C().live_blocks.end();) {
                 if (block->second.resident_handle == handle)
-                    block = live_blocks.erase(block);
+                    block = C().live_blocks.erase(block);
                 else
                     ++block;
             }
@@ -397,16 +445,16 @@ void UnregisterNativeModelPack(uintptr_t handle) {
     throw std::runtime_error("Unknown native model resident handle");
 }
 bool NativeModelPackHasLiveSources(uintptr_t handle) {
-    for (const auto& owner : owners)
+    for (const auto& owner : C().owners)
         if (owner.second.owner.resident_handle == handle)
             return true;
-    for (const auto& block : live_blocks)
+    for (const auto& block : C().live_blocks)
         if (block.second.resident_handle == handle)
             return true;
-    for (const auto& pack : packs)
+    for (const auto& pack : Packs())
         if (pack.handle == handle) {
             int live = 0;
-            Checked(mh3_source_catalog_live(&tracker, pack.catalog, &live));
+            Checked(mh3_source_catalog_live(&C().tracker, pack.catalog, &live));
             return live != 0;
         }
     return false;
@@ -414,18 +462,19 @@ bool NativeModelPackHasLiveSources(uintptr_t handle) {
 NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
     Initialize();
     model_address = Canonical(model_address, 16);
-    const auto cached = owners.find(model_address);
-    if (cached != owners.end())
+    const auto cached = C().owners.find(model_address);
+    if (cached != C().owners.end())
         return cached->second.owner;
     mh3_source_identity identity{};
-    const auto source_status = mh3_source_resolve(&tracker, model_address, 16, &identity);
-    if (source_status == MH3_RES_OK)
+    const auto source_status = mh3_source_resolve(&C().tracker, model_address, 16, &identity);
+    // Only the game thread admits packs; the render replica sees them mirrored.
+    if (source_status == MH3_RES_OK && DrawReplica::current == DrawReplica::Game)
         EnsureNativeModelAssets(identity.partition_offset, 16);
     else if (source_status != MH3_RES_ABSENT)
         Checked(source_status);
-    for (const auto& p : packs) {
+    for (const auto& p : Packs()) {
         mh3_source_owner certificate{};
-        const auto status = mh3_source_owner_certify(&tracker, p.catalog, model_address, &certificate);
+        const auto status = mh3_source_owner_certify(&C().tracker, p.catalog, model_address, &certificate);
         if (status == MH3_RES_ABSENT)
             continue;
         Checked(status);
@@ -452,8 +501,7 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
             siblings.push_back({related, sibling});
         }
         NativeModelOwner owner{p.pack, p.catalog, index, container, model_address, p.handle, p.generation, generation};
-        for (const auto& sibling : siblings)
-            owners.insert_or_assign(sibling.owner.model_address, sibling);
+        Certify(siblings);
         return owner;
     }
     throw std::runtime_error("Model has no complete native loader provenance or external converted pack");
@@ -465,8 +513,8 @@ mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, u
         throw std::runtime_error("Native model owner was invalidated");
     resource = Canonical(resource, material ? 16 : 64);
     const uint64_t key = (uint64_t(resource) << 1) | uint32_t(material);
-    const auto cached = resources.find(key);
-    if (cached != resources.end() && cached->second.epoch == source_epoch && cached->second.generation == owner.source_generation) {
+    const auto cached = C().resources.find(key);
+    if (cached != C().resources.end() && cached->second.epoch == C().source_epoch && cached->second.generation == owner.source_generation) {
         if (cached->second.resource.model_index != owner.catalog_model_index)
             throw std::runtime_error("Native model resource cache has a different owner");
         return cached->second.resource;
@@ -478,21 +526,21 @@ mh3_catalog_resource ResolveNativeModelResource(const NativeModelOwner& owner, u
     if (mh3_model_catalog_find_resource(owner.catalog, owner.catalog_model_index, material, id, &r) != MH3_PACK_OK || resource - owner.container_address != r.source_offset ||
         DrawMemory::Read32(resource) != r.source_bytes || Canonical(resource + DrawMemory::Read32(resource + 4), 1) != owner.model_address)
         throw std::runtime_error("Native model subresource identity differs from registered source");
-    resources.insert_or_assign(key, CachedResource{source_epoch, owner.source_generation, r});
+    C().resources.insert_or_assign(key, CachedResource{C().source_epoch, owner.source_generation, r});
     return r;
 }
 const mh3_prepared_mesh& ReadNativePreparedMesh(const NativeModelOwner& owner, uint32_t shape) {
     const mh3_catalog_resource resource = ResolveNativeModelResource(owner, shape, false);
     if (resource.pack_index == UINT32_MAX)
         throw std::runtime_error("Native model shape has no converted mesh");
-    for (const auto& pack : packs)
+    for (const auto& pack : Packs())
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
             return pack.meshes.at(resource.pack_index);
     throw std::runtime_error("Native model resident allocation was retired");
 }
 const NativePreparedMaterial& ReadNativePreparedMaterial(const NativeModelOwner& owner, uint32_t material) {
     const mh3_catalog_resource resource = ResolveNativeModelResource(owner, material, true);
-    for (const auto& pack : packs)
+    for (const auto& pack : Packs())
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation)
             return pack.materials.at(resource.pack_index);
     throw std::runtime_error("Native model material resident allocation was retired");
@@ -501,7 +549,7 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
     const mh3_catalog_resource resource = ResolveNativeModelResource(owner, material, true);
     if (kind < 0 || kind >= MH3_MODEL_MATERIAL_BLOCK_COUNT)
         throw std::runtime_error("Invalid native material block kind");
-    for (const auto& pack : packs)
+    for (const auto& pack : Packs())
         if (pack.handle == owner.resident_handle && pack.generation == owner.resident_generation) {
             const auto& block = pack.material_blocks.at(resource.pack_index)[kind];
             if (!(block.flags & 1))
@@ -511,42 +559,43 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
             // so their admitted index fits the lower29 bits. Keep shared TEV
             // scopes separate instead of evicting each other on alternate draws.
             const uint64_t key = (uint64_t(actual_block) << 32) | (uint64_t(resource.pack_index) << 3) | uint32_t(kind);
-            const auto cached = blocks.find(key);
+            const auto cached = C().blocks.find(key);
             uint64_t generation = 0;
-            if (cached != blocks.end() && cached->second.epoch == source_epoch && cached->second.block_epoch == block_epoch && cached->second.resident_handle == owner.resident_handle &&
+            if (cached != C().blocks.end() && cached->second.epoch == C().source_epoch && cached->second.block_epoch == C().block_epoch && cached->second.resident_handle == owner.resident_handle &&
                 cached->second.resident_generation == owner.resident_generation && cached->second.material_index == resource.pack_index)
                 generation = cached->second.source_generation;
             else {
-                Checked(mh3_source_resolve_material_block(&tracker, owner.catalog, actual_block, pack.material_catalog_indices.at(resource.pack_index), uint32_t(kind), &generation));
-                blocks.insert_or_assign(key, CachedBlock{source_epoch, block_epoch, generation, owner.resident_handle, owner.resident_generation, resource.pack_index});
+                Checked(mh3_source_resolve_material_block(&C().tracker, owner.catalog, actual_block, pack.material_catalog_indices.at(resource.pack_index), uint32_t(kind), &generation));
+                C().blocks.insert_or_assign(key, CachedBlock{C().source_epoch, C().block_epoch, generation, owner.resident_handle, owner.resident_generation, resource.pack_index});
             }
             return {&pack.materials.at(resource.pack_index), actual_block, block.source_bytes, kind, generation};
         }
     throw std::runtime_error("Native material block resident owner was retired");
 }
 uint64_t NextNativeMaterialRevision() {
-    if (material_revision == UINT64_MAX)
+    if (C().material_revision == UINT64_MAX)
         throw std::runtime_error("Native material producer revision overflow");
-    return ++material_revision;
+    return ++C().material_revision;
 }
 const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address, mh3_model_material_block kind) {
     Initialize();
     address = Canonical(address, 1);
     const auto key = LiveKey(address, kind);
-    const auto cached = live_blocks.find(key);
-    if (cached != live_blocks.end())
+    const auto cached = C().live_blocks.find(key);
+    if (cached != C().live_blocks.end())
         return cached->second;
     mh3_source_identity identity{};
-    Checked(mh3_source_resolve(&tracker, address, 1, &identity));
-    EnsureNativeModelAssets(identity.partition_offset, 1);
-    for (const auto& pack : packs) {
+    Checked(mh3_source_resolve(&C().tracker, address, 1, &identity));
+    if (DrawReplica::current == DrawReplica::Game)
+        EnsureNativeModelAssets(identity.partition_offset, 1);
+    for (const auto& pack : Packs()) {
         const auto origin = pack.origins.find(std::make_pair(identity.partition_offset, uint32_t(kind)));
         if (origin == pack.origins.end())
             continue;
         const auto& source = origin->second;
         Canonical(address, source.bytes);
         uint64_t generation = 0;
-        Checked(mh3_source_resolve_material_block(&tracker, pack.catalog, address, pack.material_catalog_indices.at(source.material_index), uint32_t(kind), &generation));
+        Checked(mh3_source_resolve_material_block(&C().tracker, pack.catalog, address, pack.material_catalog_indices.at(source.material_index), uint32_t(kind), &generation));
         // If this is the complete original container, certify its model before
         // this producer removes nonstructural byte provenance. A standalone
         // copied block needs only its own complete source proof.
@@ -556,7 +605,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
             const uint64_t candidate = (uint64_t)address - source.source_offset + model.model_offset;
             if (candidate <= UINT32_MAX) {
                 mh3_source_owner owner{};
-                const auto status = mh3_source_owner_certify(&tracker, pack.catalog, uint32_t(candidate), &owner);
+                const auto status = mh3_source_owner_certify(&C().tracker, pack.catalog, uint32_t(candidate), &owner);
                 if (status == MH3_RES_OK)
                     (void)ResolveNativeModelOwner(uint32_t(candidate));
                 else if (status != MH3_RES_ABSENT)
@@ -565,7 +614,7 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
         }
         NativeLiveMaterialBlock block{pack.materials.at(source.material_index).state, address, source.bytes, kind, pack.handle, pack.generation, identity.partition_offset, generation};
         block.fields.generation = NextNativeMaterialRevision();
-        return live_blocks.emplace(key, std::move(block)).first->second;
+        return C().live_blocks.emplace(key, std::move(block)).first->second;
     }
     std::ostringstream detail;
     detail << "Material block has no admitted typed source extent: address=0x" << std::hex << address << " kind=" << std::dec << uint32_t(kind) << " partition_offset=0x" << std::hex
@@ -576,14 +625,15 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_
     return ReadNativeLiveMaterialBlockView(address, kind);
 }
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
-    if (!block.fields.generation || block.fields.generation > material_revision || Canonical(block.address, block.bytes) != block.address)
+    const DrawReplica::Mutation mutation([=] { PublishNativeLiveMaterialBlock(block); });
+    if (!block.fields.generation || block.fields.generation > C().material_revision || Canonical(block.address, block.bytes) != block.address)
         throw std::runtime_error("Invalid typed native material publication");
-    for (const auto& pack : packs)
+    for (const auto& pack : Packs())
         if (pack.handle == block.resident_handle && pack.generation == block.resident_generation) {
             const auto origin = pack.origins.find(std::make_pair(block.origin_offset, uint32_t(block.kind)));
             if (origin == pack.origins.end() || origin->second.bytes != block.bytes)
                 throw std::runtime_error("Native material publication changed source layout identity");
-            live_blocks.insert_or_assign(LiveKey(block.address, block.kind), block);
+            C().live_blocks.insert_or_assign(LiveKey(block.address, block.kind), block);
             return;
         }
     throw std::runtime_error("Native material publication refers to a retired resident allocation");
@@ -592,7 +642,7 @@ void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t
     if (!mapping || !known)
         throw std::runtime_error("Native coordinate mapping requires outputs");
     const auto& block = ReadNativeLiveMaterialBlockView(pipeline, MH3_MODEL_MATERIAL_PIPELINE);
-    for (const auto& pack : packs)
+    for (const auto& pack : Packs())
         if (pack.handle == block.resident_handle && pack.generation == block.resident_generation) {
             const auto origin = pack.origins.find(std::make_pair(block.origin_offset, uint32_t(MH3_MODEL_MATERIAL_PIPELINE)));
             if (origin == pack.origins.end())
@@ -627,3 +677,12 @@ extern "C" void MH3_ModelMemmove(CpuContext* cpu) {
     Copy(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8045BC18, MH3_ModelMemmove, "NativeResourceMemmove");
+void SeedNativeCatalogReplica() {
+    auto& render = replicas[DrawReplica::Render];
+    render = replicas[DrawReplica::Game];
+    render.tracker.ranges = render.ranges.data();
+    render.tracker.work = render.work.data();
+    render.tracker.transfer = render.transfer.data();
+    // Render-side revisions (its own cache fills) never equal a game revision.
+    render.material_revision = uint64_t(1) << 62;
+}

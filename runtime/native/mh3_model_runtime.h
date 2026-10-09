@@ -27,6 +27,9 @@ typedef struct {
 /* The region holding [address, address + bytes), or NULL (no region starts at
  * or before the canonical address, or the range leaves the region). */
 const mh3_res_region *mh3_res_memory_region(const mh3_res_memory *, uint32_t address, size_t bytes, size_t *offset);
+/* Called for a MEM1 access that a memory with regions does not cover; the
+ * access is then served from the windows. Null when nobody listens. */
+extern void (*mh3_res_region_miss)(uint32_t address, size_t bytes);
 typedef struct {
     mh3_res_span span;
     size_t offset;

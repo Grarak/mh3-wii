@@ -4,7 +4,9 @@
 #include "abi_bridge.h"
 #include "memory.h"
 #include "draw_memory.h"
+#include "draw_replica.h"
 #include "native_graphics.h"
+#include "runtime/native/adapters/model_instance_bridge.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_material_bridge.h"
@@ -13,6 +15,7 @@
 #include "runtime/native/mh3_model_material_prep.h"
 #include "frame_split.h"
 #include "native_frame_packet.h"
+#include "native_shade_snapshot.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
@@ -24,11 +27,12 @@ const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 constexpr uint32_t genmode = 0x80685300, coordinate_cache = 0x8068530c, sync_address = 0x80796db0;
 constexpr mh3_matrix_runtime_locations locations{0x80685530, 0x80685510, 0x80796db4, 0x80688d94, 0x80686368};
-mh3_model_texcoord_sizes map_sizes{}, coordinate_sizes{};
-uint8_t coordinate_map_known = 0;
-uint32_t pipeline_address = 0, operator_address = 0;
-uint64_t pipeline_revision = 0;
-mh3_indirect_output current_operator{};
+// G3D cache mirrors are draw state: each drawing thread keeps its own.
+thread_local constinit mh3_model_texcoord_sizes map_sizes{}, coordinate_sizes{};
+thread_local constinit uint8_t coordinate_map_known = 0;
+thread_local constinit uint32_t pipeline_address = 0, operator_address = 0;
+thread_local constinit uint64_t pipeline_revision = 0;
+thread_local constinit mh3_indirect_output current_operator{};
 void Checked(mh3_res_status status) {
     if (status != MH3_RES_OK)
         throw std::runtime_error("Native model scope failed: " + std::to_string(status));
@@ -198,7 +202,7 @@ struct ShapeSources {
     std::array<mh3_native_vertex_source, 12> source;
     uint16_t known;
 };
-std::unordered_map<uint32_t, ShapeSources> shape_sources;
+thread_local std::unordered_map<uint32_t, ShapeSources> shape_sources;
 const ShapeSources& Sources(const NativeModelOwner& owner, uint32_t reference, uint32_t shape) {
     const uint32_t key = Canonical(shape);
     const auto cached = shape_sources.find(key);
@@ -359,7 +363,56 @@ struct ModelStore {
 std::array<ModelStore, 3> stores;
 // Frames that are not recorded still prepare (guest/selector side effects).
 ModelStore scratch;
+// The render thread draws a model instance's items as they are prepared.
+ModelStore instance;
+// Render thread: an instance prepares all its items first and then draws each
+// under the drawing state of its preparation, as the frame packet replays the
+// game thread's items. Drawing an item loads matrices that the preparation of
+// the items after it must not see.
+template <class T>
+struct Snapshots {
+    std::vector<T> items;
+    uint32_t count = 0, revision = 0;
+    bool valid = false;
+};
+struct Deferred {
+    Snapshots<NativeDrawSnapshot> draws;
+    Snapshots<NativeMaterialSnapshot> materials;
+    Snapshots<NativeLightingSnapshot> lighting;
+    Snapshots<NativePostSnapshot> posts;
+    Snapshots<NativeTextureSnapshot> textures;
+    std::vector<std::array<uint32_t, NATIVE_STATE_COMPONENTS>> state; // per item
+} deferred;
+template <class T, void (*Capture)(T&)>
+uint32_t Keep(Snapshots<T>& pool, NativeStateComponent component) {
+    const uint32_t revision = nativeStateRevision[component];
+    if (pool.valid && pool.revision == revision)
+        return pool.count - 1;
+    if (pool.count == pool.items.size())
+        pool.items.emplace_back();
+    Capture(pool.items[pool.count]);
+    pool.revision = revision;
+    pool.valid = true;
+    return pool.count++;
+}
+template <class T>
+void Clear(Snapshots<T>& pool) {
+    pool.count = 0;
+    pool.valid = false;
+}
+void Defer() {
+    auto& d = deferred;
+    std::array<uint32_t, NATIVE_STATE_COMPONENTS> state{};
+    state[NATIVE_STATE_DRAW] = Keep<NativeDrawSnapshot, CaptureNativeDrawSnapshot>(d.draws, NATIVE_STATE_DRAW);
+    state[NATIVE_STATE_MATERIAL] = Keep<NativeMaterialSnapshot, CaptureNativeMaterialSnapshot>(d.materials, NATIVE_STATE_MATERIAL);
+    state[NATIVE_STATE_LIGHTING] = Keep<NativeLightingSnapshot, CaptureNativeLightingSnapshot>(d.lighting, NATIVE_STATE_LIGHTING);
+    state[NATIVE_STATE_POST] = Keep<NativePostSnapshot, CaptureNativePostSnapshot>(d.posts, NATIVE_STATE_POST);
+    state[NATIVE_STATE_TEXTURES] = Keep<NativeTextureSnapshot, CaptureNativeTextureSnapshot>(d.textures, NATIVE_STATE_TEXTURES);
+    d.state.push_back(state);
+}
 ModelStore& Store() {
+    if (DrawReplica::current == DrawReplica::Render)
+        return instance;
     if (!NativeGraphicsFrameShouldRender()) {
         scratch.itemCount = scratch.poseCount = scratch.poseShared = 0;
         return scratch;
@@ -537,6 +590,15 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
         PrepareModelItem(capture, item, context, direct_position, direct_normal);
     }
     item.coordinate_sizes = coordinate_sizes;
+#ifdef MH3_DEVELOPMENT
+    if (NoteNativeModelInstanceItem(item.prepared))
+        return;
+#endif
+    if (&capture == &instance) {
+        Defer();
+        capture.itemCount++;
+        return;
+    }
     if (&capture == &scratch)
         return;
     MH3_SPLIT_SCOPE(MH3_SPLIT_MODEL_RECORD);
@@ -546,6 +608,37 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
 void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32_t direct_normal) {
     if (Resource(reference))
         SubmitShape(ResolveShape(reference), direct_position, direct_normal);
+}
+void BeginNativeModelInstance() {
+    instance.itemCount = instance.poseCount = instance.poseShared = 0;
+    auto& d = deferred;
+    Clear(d.draws);
+    Clear(d.materials);
+    Clear(d.lighting);
+    Clear(d.posts);
+    Clear(d.textures);
+    d.state.clear();
+}
+void DrawNativeModelInstanceItems() {
+    const auto& d = deferred;
+    std::array<uint32_t, NATIVE_STATE_COMPONENTS> applied;
+    applied.fill(UINT32_MAX);
+    for (uint32_t i = 0; i < instance.itemCount; i++) {
+        const auto& state = d.state[i];
+        // Draw state first: the material snapshot holds its raster import.
+        if (applied[NATIVE_STATE_DRAW] != state[NATIVE_STATE_DRAW])
+            RestoreNativeDrawSnapshot(d.draws.items[state[NATIVE_STATE_DRAW]]);
+        if (applied[NATIVE_STATE_LIGHTING] != state[NATIVE_STATE_LIGHTING])
+            RestoreNativeLightingSnapshot(d.lighting.items[state[NATIVE_STATE_LIGHTING]]);
+        if (applied[NATIVE_STATE_POST] != state[NATIVE_STATE_POST])
+            RestoreNativePostSnapshot(d.posts.items[state[NATIVE_STATE_POST]]);
+        if (applied[NATIVE_STATE_TEXTURES] != state[NATIVE_STATE_TEXTURES])
+            RestoreNativeTextureSnapshot(d.textures.items[state[NATIVE_STATE_TEXTURES]]);
+        if (applied[NATIVE_STATE_MATERIAL] != state[NATIVE_STATE_MATERIAL])
+            RestoreNativeMaterialSnapshot(d.materials.items[state[NATIVE_STATE_MATERIAL]]);
+        applied = state;
+        ExecuteModelItem(instance, instance.items[i]);
+    }
 }
 void BeginNativeModelDraw() {
     auto& capture = Store();

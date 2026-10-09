@@ -12,6 +12,9 @@
 namespace DrawMemory {
 // The installed view, or nullptr for live guest memory.
 extern thread_local const mh3_res_memory* view;
+// A recording view over live memory: writes outside its regions go to live
+// memory instead of failing.
+extern thread_local bool liveWrites;
 // Host bytes of [address, address + length) in the installed view; throws when
 // the range is unmapped, or for a write outside a writable region.
 uint8_t* ViewPointer(uint32_t address, size_t length, bool write);

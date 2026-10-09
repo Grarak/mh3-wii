@@ -57,6 +57,7 @@ static mh3_res_status mapped_region(const mh3_res_memory *m, uint32_t address, s
     out->guest_base = address - (uint32_t)offset;
     return MH3_RES_OK;
 }
+void (*mh3_res_region_miss)(uint32_t address, size_t bytes);
 static mh3_res_status mapped(const mh3_res_memory *m, uint32_t address, size_t bytes, view *out) {
     uint32_t physical = address & UINT32_C(0x3fffffff), offset;
     mh3_res_span span;
@@ -66,8 +67,15 @@ static mh3_res_status mapped(const mh3_res_memory *m, uint32_t address, size_t b
         return MH3_RES_RANGE;
     if (m->regions) {
         const mh3_res_status status = mapped_region(m, address, bytes, out);
-        if (status != MH3_RES_ABSENT)
+        if (status == MH3_RES_OK)
             return status;
+        /* A MEM1 read outside the captured regions (or past one's end) is
+         * served from the windows and reported, so its lines get captured. */
+        const int mem1 = address < UINT32_C(0xe0000000) && physical < UINT32_C(0x01800000) && bytes <= UINT32_C(0x01800000) - physical;
+        if (!mem1 && status != MH3_RES_ABSENT)
+            return status;
+        if (mem1 && mh3_res_region_miss)
+            mh3_res_region_miss(address, bytes);
     }
     if (address >= UINT32_C(0xe0000000) && address < UINT32_C(0xe0004000)) {
         offset = address - UINT32_C(0xe0000000);

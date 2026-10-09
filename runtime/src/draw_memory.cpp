@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 thread_local const mh3_res_memory* DrawMemory::view = nullptr;
+thread_local bool DrawMemory::liveWrites = false;
 
 uint8_t* DrawMemory::ViewPointer(uint32_t address, size_t length, bool write) {
     char message[96];
@@ -16,6 +17,8 @@ uint8_t* DrawMemory::ViewPointer(uint32_t address, size_t length, bool write) {
         throw std::runtime_error(message);
     }
     mh3_res_memory_view mapped{};
+    if (write && liveWrites)
+        return Memory::GetPointer(address, length);
     if (!write && mh3_res_runtime_map(view, address, length, &mapped) == MH3_RES_OK)
         return const_cast<uint8_t*>(mapped.span.data + mapped.offset);
     std::snprintf(message, sizeof message, "Draw view %s outside its regions at %08x+%zu", write ? "write" : "read", address, length);
