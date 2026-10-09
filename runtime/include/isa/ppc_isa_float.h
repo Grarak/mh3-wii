@@ -502,23 +502,33 @@ inline float PpcFmaFloatViaDoubleInline(float a, float b, float c)
     return static_cast<float>(sum);
 }
 
-// MH3_INEXACT_FMA (an experiment, never a release build): every guest fused
-// multiply-add is a separate multiply and add, rounding twice.
+// Guest fused multiply-adds round once. Where the host has a fused
+// instruction (AArch64, x86 with FMA) that costs nothing, so it is used. The
+// Cortex-A9 (VFPv3/NEONv1) has none, and there the default is a separate
+// multiply and add, rounding twice: an exact result needs libm's software fma
+// for doubles and a double-precision detour for floats, about 0.56 ms of the
+// Pi 5 game thread per frame, and in play the inexact results showed no
+// difference in movement, collision, audio or frames beyond 1-level pixels.
+// MH3_EXACT_FMA keeps the exact forms on such a host.
+#if defined(MH3_EXACT_FMA) || !defined(__arm__) || defined(__ARM_FEATURE_FMA)
+#define MH3_FUSED_MADD 1
+#endif
+
 inline double PpcFmaDoubleInline(double a, double b, double c)
 {
-#if defined(MH3_INEXACT_FMA)
-    return a * b + c;
-#else
+#if defined(MH3_FUSED_MADD)
     return std::fma(a, b, c);
+#else
+    return a * b + c;
 #endif
 }
 
-// Float fused multiply-add: one instruction where the host has it; the
-// Cortex-A9 (VFPv3/NEONv1, whose vmla rounds twice) uses the exact double form
-// instead of glibc's software fmaf.
+// Float fused multiply-add: one instruction where the host has it; with
+// MH3_EXACT_FMA on the Cortex-A9 (whose vmla rounds twice), the exact double
+// form instead of glibc's software fmaf; otherwise a multiply and an add.
 inline float PpcFmaFloatInline(float a, float b, float c)
 {
-#if defined(MH3_INEXACT_FMA)
+#if !defined(MH3_FUSED_MADD)
     return a * b + c;
 #elif defined(__arm__) && !defined(__ARM_FEATURE_FMA)
     return PpcFmaFloatViaDoubleInline(a, b, c);

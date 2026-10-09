@@ -5,8 +5,8 @@
 # multiarch packages are used (see docker/armhf-cross.Dockerfile).
 # MH3_ARM32_CPU / MH3_ARM32_FPU override the defaults (cortex-a9 / neon, i.e.
 # VFPv3-D32 + NEON; use vfpv3-d16 for an A9 without NEON). VFPv3 has no fused
-# multiply-add: the float fused ops are computed exactly in double
-# (PpcFmaFloatViaDoubleInline) and the double ones call libm's fma.
+# multiply-add: guest fused ops become a separate multiply and add unless
+# MH3_EXACT_FMA is defined (see PpcFmaFloatInline in ppc_isa_float.h).
 # MH3_CLANG selects the compiler (default clang-21). --target is repeated in
 # the flags because some dependency probes (libpng genout) call the compiler
 # with CMAKE_C_FLAGS but without CMAKE_C_COMPILER_TARGET. Debian armhf is
