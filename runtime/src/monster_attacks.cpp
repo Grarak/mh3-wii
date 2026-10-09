@@ -1526,6 +1526,209 @@ void Em040RockPort(CpuContext* ctx) {
     }
 }
 
+// Agnaktor's turn rate: 0.5 + 65536 * (deg * the motion's frames) / 360 in
+// whole units, over the step's advance (rate * s) where the originals took
+// the rate: a call's turn was a tick's.
+int32_t Em019TurnUnits(GuestCall& game, uint32_t work, float degrees) {
+    game.Call<0x8012F948>({work}); // the motion's rate
+    const float advance = float(game.F1() * GameStep::Scale());
+    const float turn = degrees * advance;
+    const float units = 65536.0f * turn / 360.0f;
+    return int32_t(0.5f + units) & 0xFFFF;
+}
+
+// kind 19 0x8037C73C (r4 1-12): Agnaktor's turn (motion 0xD3 at 1.25, voices):
+// r4 1-10 spin by 0.27, 0.6, 0.23, 0.37 or 0.67 degrees per frame of the
+// motion (odd left, even right) from frame 70 while turning (toward 1200);
+// r4 11/12 first move its mark a quarter turn aside (1650 times 0x8013570C
+// over 2 / rate) and turn 0x400 a step from frame 70; then 0xD4 to its end
+// and 0x80128158. 0x8012CF84, 0x80131ED8 and 0x803790E8 each step. The
+// original spun a tick's turn each call.
+void Em019TurnPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x40);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, aside = frame[0x10];
+    const uint8_t how = uint8_t(frame.Arg(4));
+    game.Call<0x8012CF84>({work});
+    game.Call<0x80131ED8>({work});
+    game.Call<0x803790E8>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        em.SetMotion(0xD3, 0, 0);
+        game.Call<SetMotionSpeed>({work}, {1.25});
+        game.Call<0x80130450>({work}, {0.0});
+
+        if (how - 1u < 10u)
+            game.Call<TurnSetUp>({work, 0}, {1200.0});
+        else if (how == 11 || how == 12) {
+            const uint32_t angle = game.Call<0x80050AF4>({work + 0x188, work + 0x36C}); // calcVecAng2
+            game.Call<0x8012F948>({work});                                              // the motion's rate
+            const float perRate = 2.0f / game.F1();
+            game.Call<0x8013570C>({work}, {3.0, double(0.3f), 2000.0});
+            const float reach = 1650.0f * game.F1();
+            game.Call<Em::Vec3Set>({aside}, {0.0, 0.0, double(reach * perRate)});
+            game.Call<0x800510C8>({aside, angle + (how == 11 ? 0x4000u : uint32_t(-0x4000))}); // rotVecY
+            game.Call<0x80073FCC>({work + 0x36C, aside});                                      // VecAddInPlace
+            game.Call<TurnSetUp>({work, 0}, {200.0});
+        } else
+            game.Call<TurnSetUp>({work, 0}, {1000.0});
+
+        game.Call<0x80379000>({work, 0xFF});
+        game.Call<RoarVoice>({work, 0, 0x14, 8});
+        game.Call<RoarVoice>({work, 1, 0x19, 0x18});
+        game.Call<0x80136D78>({work});
+        break;
+    case 1: {
+        if (em.At(120.0f))
+            game.Call<RoarVoice>({work, 0, 0x10, 0x13});
+
+        if (em.At(30.0f, 2))
+            game.Call<0x80136D78>({work});
+
+        static constexpr float kDegrees[5]{0.26666668f, 0.6f, 0.23333333f, 0.36666667f, 0.6666667f};
+        uint32_t max = 0x100, turn = 0;
+
+        if (how - 1u < 10u) {
+            max = 0;
+            const uint32_t units = uint32_t(Em019TurnUnits(game, work, kDegrees[(how - 1) / 2]));
+            turn = how % 2 ? units : uint32_t(-int32_t(units));
+        } else if (how == 11 || how == 12) {
+            max = em.At(70.0f, 1) ? 0x400 : 0;
+            turn = 0;
+        }
+
+        if (em.At(70.0f, 1))
+            Memory::Write32(work + kAngles + 4, Memory::Read32(work + kAngles + 4) + turn);
+
+        if (game.Call<TurnStep>({work, 0, max}) == 1) {
+            em.NextState();
+            em.SetMotion(0xD4, 4, 0);
+        }
+
+        break;
+    }
+    case 2:
+        if (em.At(18.0f))
+            game.Call<0x80129788>({work, 0});
+
+        if (em.At(60.0f, 1))
+            game.Call<0x80136D78>({work});
+
+        if (em.Ended())
+            game.Call<0x80128158>({work});
+
+        break;
+    default:
+        break;
+    }
+}
+
+// kind 19 0x8037CD94: Agnaktor's dive into the lava (motion 0xCD at 1.25,
+// +0x8A0 less 15, voices and glows), the leap (0xD5, +0x314 50 times the
+// rate and its scale) turning 10 degrees per frame of the motion until it
+// is in (0x8012FF18 within 700 of the lava, 0xCE, a splash) or 0x80379510;
+// glows every 8 steps and sparks every 12. The original turned a tick's
+// turn each call.
+void Em019DivePort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x40);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x10];
+    game.Call<0x8012CF84>({work});
+    game.Call<0x80131ED8>({work});
+    game.Call<0x803790E8>({work});
+
+    const auto glow = [&](uint32_t kind) { game.Call<0x80104918>({work, 0x19, kind, 0}, {1.0}); }; // the joint effect
+
+    const auto spawn = [&](uint32_t kind, uint32_t joint) {
+        game.Call<Em::Vec3Set>({at}, {0.0, 0.0, 0.0});
+        game.Call<Em::Spawn>({work, kind, joint, at}, {1.0});
+    };
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 0});
+        game.Call<Adjust8A0>({work, uint32_t(-15)});
+        em.SetMotion(0xCD, 0, 0);
+        game.Call<SetMotionSpeed>({work}, {1.25});
+        game.Call<0x80130450>({work}, {0.0});
+        game.Call<0x80379000>({work, 0xFF});
+        game.Call<0x80136D78>({work});
+        break;
+    case 1:
+        if (em.At(70.0f, 1))
+            game.Call<SetMotionSpeed>({work}, {1.0});
+
+        if (em.At(94.0f, 2))
+            game.Call<0x80136D78>({work});
+
+        if (em.At(24.0f))
+            game.Call<RoarVoice>({work, 0, 0x21, 2});
+
+        if (em.At(74.0f))
+            game.Call<RoarVoice>({work, 0, 0x12, 3});
+
+        if (em.At(2.0f))
+            glow(0x65);
+
+        if (em.At(12.0f, 3, 62.0f) && StepCounter::Every(8))
+            glow(99);
+
+        if (em.At(86.0f))
+            glow(100);
+
+        if (em.Ended()) {
+            em.NextState();
+            game.Call<0x801306A0>({work, Memory::Read32(work + 0x204)});
+            em.SetMotion(0xD5, 0, 0);
+            game.Call<0x8013545C>({work});
+            game.Call<0x801359B4>({work}); // get_em_chg_scale
+            const float scale = game.F1();
+            game.Call<0x8012F948>({work}); // the motion's rate
+            const float speed = 50.0f * game.F1();
+            Memory::WriteFloat32(work + 0x314, speed * scale);
+        }
+
+        break;
+    case 2: {
+        const uint32_t turn = uint32_t(Em019TurnUnits(game, work, 10.0f));
+        Memory::Write32(work + kAngles + 4, Memory::Read32(work + kAngles + 4) + turn);
+        game.Call<0x8013547C>({work}); // EnemyAddVelocity
+
+        if (em.At(2.0f, 3, 62.0f) && StepCounter::Every(12))
+            spawn(0x85, 3);
+
+        if (Memory::Read8(work + 0x23C) || Memory::ReadFloat32(work + 0x18C) < 4000.0f + Memory::ReadFloat32(work + 0x20C)) {
+            if (game.Call<0x8012FF18>({work}, {700.0}) == 1) {
+                em.NextState();
+                game.Call<0x80136E58>({work});
+                em.SetMotion(0xCE, 0, 0);
+                spawn(100, 0x19);
+                game.Call<0x80129788>({work, 0});
+            }
+        } else
+            game.Call<0x80379510>({work});
+
+        break;
+    }
+    case 3:
+        if (em.At(30.0f, 3, 60.0f) && StepCounter::Every(8))
+            spawn(99, 0x19);
+
+        if (em.Ended())
+            game.Call<0x80379510>({work});
+
+        break;
+    default:
+        break;
+    }
+}
+
 // kind 18 0x801981B4 (r4 1: the second voice, r5 1: spinning the other way),
 // actions 7.23 and 7.25-7.27: Gobul's spin. State 0 sets it up (motion 0xD4
 // at the ground, 0x801923BC 8, +0x8A0 less 12); at the motion's end state 1
@@ -1744,3 +1947,15 @@ extern "C" void MH3_Em040Rock(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em040Rock", func_801BA438, Em040RockPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801BA438, MH3_Em040Rock, "Em040Rock");
+
+extern "C" void func_8037C73C(CpuContext* ctx);
+extern "C" void MH3_Em019Turn(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em019Turn", func_8037C73C, Em019TurnPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8037C73C, MH3_Em019Turn, "Em019Turn");
+
+extern "C" void func_8037CD94(CpuContext* ctx);
+extern "C" void MH3_Em019Dive(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em019Dive", func_8037CD94, Em019DivePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8037CD94, MH3_Em019Dive, "Em019Dive");
