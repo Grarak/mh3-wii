@@ -4,10 +4,25 @@
 #include <cstdio>
 #include <stdexcept>
 
-thread_local const mh3_res_memory* DrawMemory::view = nullptr;
+static_assert(std::atomic<bool>::is_always_lock_free);
+std::atomic<bool> DrawMemory::detail::viewsEverEnabled{false};
+namespace DrawMemory::detail {
+thread_local const mh3_res_memory* view = nullptr;
+const mh3_res_memory* EnabledView() { return view; }
+}
 thread_local bool DrawMemory::liveWrites = false;
 
+void DrawMemory::InstallView(const mh3_res_memory* next) {
+    if (next) {
+        detail::viewsEverEnabled.store(true, std::memory_order_relaxed);
+        detail::view = next;
+    } else if (detail::viewsEverEnabled.load(std::memory_order_relaxed)) {
+        detail::view = nullptr;
+    }
+}
+
 uint8_t* DrawMemory::ViewPointer(uint32_t address, size_t length, bool write) {
+    const mh3_res_memory* view = detail::view;
     char message[96];
     size_t offset = 0;
     if (const auto* region = mh3_res_memory_region(view, address, length, &offset)) {

@@ -329,7 +329,7 @@ void StopNativeModelInstances() {
 bool CaptureNativeModelInstance(uint32_t owner, uint32_t options, bool* learn) {
     *learn = false;
     // Scenes drawn inside a learning draw stay on the game thread.
-    if (!NativeModelInstancesEnabled() || !NativeFramePacketRecording() || DrawMemory::view)
+    if (!NativeModelInstancesEnabled() || !NativeFramePacketRecording() || DrawMemory::CurrentView())
         return false;
     // The render thread runs only the native scene task, without callbacks.
     if (Memory::Read32(Memory::Read32(owner) + 0x0c) != 0x8007de60 || Memory::Read32(owner + 0xd4))
@@ -407,13 +407,13 @@ NativeModelInstanceLearning::NativeModelInstanceLearning(uint32_t owner_) : owne
     recorderRegion = {ScratchBase, {recorderBytes, sizeof recorderBytes}, 0};
     recorder.regions = &recorderRegion;
     recorder.region_count = 1;
-    DrawMemory::view = &recorder;
+    DrawMemory::InstallView(&recorder);
     DrawMemory::liveWrites = true;
     drawing = owner;
     misses.clear();
 }
 NativeModelInstanceLearning::~NativeModelInstanceLearning() {
-    DrawMemory::view = nullptr;
+    DrawMemory::InstallView(nullptr);
     DrawMemory::liveWrites = false;
     drawing = 0;
     std::sort(misses.begin(), misses.end());

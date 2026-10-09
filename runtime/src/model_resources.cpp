@@ -19,7 +19,8 @@ const mh3_res_memory& LiveMemory() {
 }
 // The draw path's installed view (draw_memory.h), else live guest memory.
 const mh3_res_memory& ResourceMemory() {
-    return DrawMemory::view ? *DrawMemory::view : LiveMemory();
+    const auto* view = DrawMemory::CurrentView();
+    return view ? *view : LiveMemory();
 }
 uint32_t Result(mh3_res_status status, uint32_t value) {
     if (status != MH3_RES_OK) {
