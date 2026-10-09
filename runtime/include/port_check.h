@@ -10,6 +10,9 @@
 
 #include "abi_bridge.h"
 
+#include <cstdint>
+#include <initializer_list>
+
 namespace PortCheck {
 bool Enabled(const char* name);
 // Runs original(ctx) and port(ctx) from the same state, reports differences,
@@ -24,6 +27,16 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
 enum class Returns { Gpr3, Fpr1 };
 void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*),
              void (*port)(CpuContext*));
+
+// For ports whose only guest writes (besides their stack frames) are a few
+// output buffers: runs the original and then, with the buffers restored, the
+// port on every call and compares the buffers' bytes, reporting each distinct
+// mismatch with the argument registers.
+struct Region {
+    uint32_t address, bytes;
+};
+void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*),
+               std::initializer_list<Region> outputs);
 
 // The port, checked against the original when MH3_PORT_CHECK names it.
 inline void Call(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {

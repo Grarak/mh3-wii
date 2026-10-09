@@ -169,4 +169,55 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
 #endif
 }
 
+void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*),
+               std::initializer_list<Region> outputs) {
+#ifdef MH3_DEVELOPMENT
+    static std::map<std::string, uint64_t> counts;
+    static std::set<std::string> reported;
+    std::vector<std::vector<uint8_t>> before, expected;
+    for (const Region& r : outputs) {
+        const uint8_t* out = Memory::GetPointer(r.address, r.bytes);
+        before.emplace_back(out, out + r.bytes);
+    }
+    const CpuContext entry = *ctx;
+    original(ctx);
+    size_t i = 0;
+    for (const Region& r : outputs) {
+        uint8_t* out = Memory::GetPointer(r.address, r.bytes);
+        expected.emplace_back(out, out + r.bytes);
+        std::memcpy(out, before[i++].data(), r.bytes);
+    }
+    *ctx = entry;
+    port(ctx);
+    uint64_t& checks = counts[name];
+    ++checks;
+    bool same = true;
+    i = 0;
+    for (const Region& r : outputs) {
+        const uint8_t* out = Memory::GetPointer(r.address, r.bytes);
+        const std::vector<uint8_t>& want = expected[i++];
+        size_t at = 0;
+        while (at < r.bytes && out[at] == want[at]) ++at;
+        if (at == r.bytes) continue;
+        same = false;
+        char line[256];
+        std::snprintf(line, sizeof line,
+                      "MH3 port check: %s writes %02x at %08x, the original %02x (r3 %08x r4 %08x r5 %08x r6 %08x "
+                      "r7 %08x r8 %08x)\n",
+                      name, out[at], r.address + uint32_t(at), want[at], entry.gpr[3], entry.gpr[4], entry.gpr[5],
+                      entry.gpr[6], entry.gpr[7], entry.gpr[8]);
+        if (reported.size() < 64 && reported.insert(line).second) std::printf("%s", line);
+        break;
+    }
+    if (same && (checks & (checks - 1)) == 0)
+        std::printf("MH3 port check: %s matches the original (%llu calls)\n", name, (unsigned long long)checks);
+    std::fflush(stdout);
+#else
+    (void)name;
+    (void)original;
+    (void)outputs;
+    port(ctx);
+#endif
+}
+
 } // namespace PortCheck

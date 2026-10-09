@@ -664,3 +664,6 @@
 80082f7c FloatToU16Gqr3
 8008bf6c AnmChrFVS32KeyValue
 8008be10 AnmChrFVS32KeySlope
+# Paired-single matrix library (ported in runtime/src/mtx.cpp).
+804c62c0 PSMTXCopy
+804c6300 PSMTXConcat

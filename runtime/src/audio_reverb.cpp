@@ -29,6 +29,9 @@
 #include "ppc_runtime.h"
 
 #include <cstring>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace {
 
@@ -96,6 +99,25 @@ uint32_t ToInt(float v) { return PPC_FprLowWordInline(PPC_Fctiwz(v)); }
 // A delay line: its samples and the guest RAM behind them.
 uint8_t* Line(uint32_t address, uint32_t length) { return Memory::GetPointer(address, size_t(length) * 4); }
 
+#if defined(__ARM_NEON)
+// The three channels as lanes 0-2 of a vector (lane 3 stays zero): each
+// access is a gather or scatter of one big-endian word per channel.
+float32x4_t Gather(const uint8_t* a0, const uint8_t* a1, const uint8_t* a2) {
+    uint32x4_t v = vdupq_n_u32(0);
+    v = vld1q_lane_u32(reinterpret_cast<const uint32_t*>(a0), v, 0);
+    v = vld1q_lane_u32(reinterpret_cast<const uint32_t*>(a1), v, 1);
+    v = vld1q_lane_u32(reinterpret_cast<const uint32_t*>(a2), v, 2);
+    return vreinterpretq_f32_u8(vrev32q_u8(vreinterpretq_u8_u32(v)));
+}
+void Scatter(uint32x4_t v, uint8_t* a0, uint8_t* a1, uint8_t* a2) {
+    v = vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(v)));
+    vst1q_lane_u32(reinterpret_cast<uint32_t*>(a0), v, 0);
+    vst1q_lane_u32(reinterpret_cast<uint32_t*>(a1), v, 1);
+    vst1q_lane_u32(reinterpret_cast<uint32_t*>(a2), v, 2);
+}
+void Scatter(float32x4_t v, uint8_t* a0, uint8_t* a1, uint8_t* a2) { Scatter(vreinterpretq_u32_f32(v), a0, a1, a2); }
+#endif
+
 } // namespace
 
 static void AudioReverb(CpuContext* ctx) {
@@ -153,6 +175,85 @@ static void AudioReverb(CpuContext* ctx) {
     uint32_t preDelayPos = u32(kPreDelayPos);
     auto advance = [](uint32_t& pos, uint32_t length) { pos = pos + 1 < length ? pos + 1 : 0; };
 
+#if defined(__ARM_NEON)
+    // NEON always flushes denormals (as the guest's non-IEEE mode does) and
+    // rounds to nearest; with the host FZ bit set the vector lanes compute
+    // what the scalar code does. The float to integer conversions saturate
+    // like fctiwz (NaN aside, which the filter never makes).
+    if ((MkwGetHostFpControl() & kMkwFpControlFlushToZeroBits) != 0) {
+        const float32x4_t vCoef = vdupq_n_f32(coef), vCoefRest = vdupq_n_f32(coefRest);
+        const float32x4_t vWetScale = vdupq_n_f32(wetScale), vCross = vdupq_n_f32(cross);
+        const float32x4_t vApGain = vdupq_n_f32(apGain), vOutGain = vdupq_n_f32(outGain);
+        const float32x4_t vSendGain = vdupq_n_f32(sendGain);
+        float32x4_t vEarlyGain[3], vCombGain[3];
+        for (unsigned k = 0; k < 3; ++k) {
+            vEarlyGain[k] = vdupq_n_f32(earlyGain[k]);
+            vCombGain[k] = vdupq_n_f32(combGain[k]);
+        }
+        float32x4_t vLowpass = {lowpassState[0], lowpassState[1], lowpassState[2], 0.0f};
+        for (unsigned s = 0; s < kSamples; ++s) {
+            const unsigned o = 4 * s;
+            uint32x4_t samples = vreinterpretq_u32_f32(Gather(in[0] + o, in[1] + o, in[2] + o));
+            if (aux[0]) samples = vaddq_u32(samples, vreinterpretq_u32_f32(Gather(aux[0] + o, aux[1] + o, aux[2] + o)));
+            const float32x4_t x = vcvtq_f32_s32(vreinterpretq_s32_u32(samples));
+
+            const unsigned t0 = 4 * taps[0], t1 = 4 * taps[1], t2 = 4 * taps[2];
+            const float32x4_t e0 = vmulq_f32(vEarlyGain[0], Gather(early[0] + t0, early[1] + t0, early[2] + t0));
+            const float32x4_t e1 = vmulq_f32(vEarlyGain[1], Gather(early[0] + t1, early[1] + t1, early[2] + t1));
+            const float32x4_t tap2 = Gather(early[0] + t2, early[1] + t2, early[2] + t2);
+            Scatter(x, early[0] + t2, early[1] + t2, early[2] + t2);
+            const float32x4_t sum = vaddq_f32(vmulq_f32(vEarlyGain[2], tap2), vaddq_f32(e0, e1));
+
+            float32x4_t delayed = x;
+            if (preDelayLength) {
+                const unsigned pd = 4 * preDelayPos;
+                delayed = Gather(preDelay[0] + pd, preDelay[1] + pd, preDelay[2] + pd);
+                Scatter(x, preDelay[0] + pd, preDelay[1] + pd, preDelay[2] + pd);
+            }
+            float32x4_t combs = vdupq_n_f32(0.0f);
+            for (unsigned k = 0; k < 3; ++k) {
+                const unsigned cp = 4 * combPos[k];
+                const float32x4_t y = Gather(comb[0][k] + cp, comb[1][k] + cp, comb[2][k] + cp);
+                combs = vaddq_f32(combs, y);
+                Scatter(vaddq_f32(delayed, vmulq_f32(y, vCombGain[k])), comb[0][k] + cp, comb[1][k] + cp,
+                        comb[2][k] + cp);
+            }
+            float32x4_t through = combs;
+            for (unsigned k = 0; k < 2; ++k) {
+                const unsigned ap = 4 * apPos[k];
+                const float32x4_t y = Gather(allpass[0][k] + ap, allpass[1][k] + ap, allpass[2][k] + ap);
+                const float32x4_t v = vaddq_f32(through, vmulq_f32(y, vApGain));
+                Scatter(v, allpass[0][k] + ap, allpass[1][k] + ap, allpass[2][k] + ap);
+                through = vsubq_f32(y, vmulq_f32(v, vApGain));
+            }
+            vLowpass = vaddq_f32(vmulq_f32(vCoefRest, through), vmulq_f32(vCoef, vLowpass));
+
+            uint8_t* const l0 = last[0] + 4 * lastPos[0];
+            uint8_t* const l1 = last[1] + 4 * lastPos[1];
+            uint8_t* const l2 = last[2] + 4 * lastPos[2];
+            const float32x4_t y = Gather(l0, l1, l2);
+            const float32x4_t v = vaddq_f32(vLowpass, vmulq_f32(y, vApGain));
+            Scatter(v, l0, l1, l2);
+            for (unsigned c = 0; c < 3; ++c) advance(lastPos[c], lastLength[c]);
+            const float32x4_t wet = vaddq_f32(vmulq_f32(vsubq_f32(y, vmulq_f32(v, vApGain)), vWetScale), sum);
+
+            // Each channel gets the other two: (w1 + w2, w0 + w2, w0 + w1).
+            const float32x4_t a = {wet[1], wet[0], wet[0], 0.0f}, b = {wet[2], wet[2], wet[1], 0.0f};
+            const float32x4_t others = vaddq_f32(a, b);
+            const float32x4_t out = vaddq_f32(wet, vmulq_f32(others, vCross));
+            Scatter(vreinterpretq_u32_s32(vcvtq_s32_f32(vmulq_f32(out, vOutGain))), in[0] + o, in[1] + o, in[2] + o);
+            if (send[0])
+                Scatter(vreinterpretq_u32_s32(vcvtq_s32_f32(vmulq_f32(out, vSendGain))), send[0] + o, send[1] + o,
+                        send[2] + o);
+
+            for (unsigned k = 0; k < 3; ++k) advance(taps[k], earlyLength);
+            if (preDelayLength) advance(preDelayPos, preDelayLength);
+            for (unsigned k = 0; k < 3; ++k) advance(combPos[k], combLength[k]);
+            for (unsigned k = 0; k < 2; ++k) advance(apPos[k], apLength[k]);
+        }
+        for (unsigned c = 0; c < 3; ++c) lowpassState[c] = vLowpass[c];
+    } else
+#endif
     for (unsigned s = 0; s < kSamples; ++s) {
         float wet[3];
         for (unsigned c = 0; c < 3; ++c) {
