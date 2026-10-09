@@ -3,7 +3,8 @@
 
 Each DOL text/data section becomes a PROGBITS section (plus .bss), and every
 name from build/MAP.txt and symbols.txt becomes a FUNC symbol, so disassemblers
-start with our labels. The ELF is an analysis artefact, not something to run.
+start with our labels. Data names exported by the disc's mh3.sel become OBJECT
+symbols. The ELF is an analysis artefact, not something to run.
 """
 import argparse
 import struct
@@ -13,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--dol", type=Path, default=ROOT / "Assets/DATA/sys/main.dol")
 parser.add_argument("--out", type=Path, default=ROOT / "build/ghidra/main.elf")
+parser.add_argument("--inventory", type=Path, default=ROOT / "build/disc-inventory.json",
+                    help="disc inventory holding the parsed mh3.sel static exports")
 parser.add_argument("--symbols", type=Path, nargs="*", default=[ROOT / "build/MAP.txt", ROOT / "symbols.txt"])
 args = parser.parse_args()
 
@@ -44,6 +47,28 @@ for path in args.symbols:
             except ValueError:
                 pass
 
+# mh3.sel numbers sections as in Capcom's mh3.elf, not by DOL slot. Only the
+# data sections that carry exports are listed; each base was checked against a
+# global the code uses (system_w is the block the main loop clears at
+# 0x8065AA60, Rmode is the render-mode pointer at r13-0x46B8, set_widemode_param
+# is the byte at r13-0x7FFF the frame pacer reads). .text exports (sections 1-2)
+# are already in build/MAP.txt.
+SEL_DATA_BASES = {
+    6: 0x8057CFE0,   # .data
+    7: 0x8065A980,   # .bss
+    8: 0x807932E0,   # .sdata
+    11: 0x80796C20,  # .sbss
+}
+objects = {}
+if args.inventory.exists():
+    import json
+    for export in json.loads(args.inventory.read_text())["static_exports"]["exports"]:
+        base = SEL_DATA_BASES.get(export["section"])
+        if base is not None:
+            objects[base + export["offset"]] = export["name"]
+        elif export["section"] == 0xFFF1:  # SHN_ABS: _SDA_BASE_, _SDA2_BASE_
+            objects[export["offset"]] = export["name"]
+
 
 def section_index(address):
     for index, (_, _, _, base, data) in enumerate(sections[:-1]):
@@ -55,9 +80,11 @@ def section_index(address):
 shstrtab = bytearray(b"\0")
 strtab = bytearray(b"\0")
 symtab = bytearray(b"\0" * 16)
-for address, name in sorted(symbols.items()):
+entries = {address: (name, None) for address, name in symbols.items()}
+entries.update({address: (name, 1) for address, name in objects.items() if address not in symbols})
+for address, (name, forced) in sorted(entries.items()):
     shndx = section_index(address)
-    kind = 2 if shndx != 0xFFF1 and sections[shndx - 1][2] & 0x4 else 1  # FUNC / OBJECT
+    kind = forced or (2 if shndx != 0xFFF1 and sections[shndx - 1][2] & 0x4 else 1)  # FUNC / OBJECT
     symtab += struct.pack(">IIIBBH", len(strtab), address, 0, (1 << 4) | kind, 0, shndx)
     strtab += name.encode() + b"\0"
 
@@ -89,4 +116,7 @@ out[0:52] = ident + struct.pack(">HHIIIIIHHHHHH", 2, 20, 1, entry, 0, section_he
                                 len(layout) + 1, len(layout))
 args.out.parent.mkdir(parents=True, exist_ok=True)
 args.out.write_bytes(out)
-print(f"{args.out}: {len(sections)} sections, {len(symbols)} symbols")
+# Ghidra's decompile script labels these in the existing (read-only) project too.
+(args.out.parent / "data_symbols.txt").write_text(
+    "".join(f"{address:08x} {name}\n" for address, name in sorted(objects.items())))
+print(f"{args.out}: {len(sections)} sections, {len(symbols)} code symbols, {len(objects)} data symbols")

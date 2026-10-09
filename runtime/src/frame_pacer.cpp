@@ -14,11 +14,11 @@
 
 namespace {
 
-// Small-data globals (offsets from r13).
+// Small-data globals (offsets from r13; lower-case names are mh3.sel exports).
 enum : int32_t {
     kBlackPending = -0x8000,       // u8: clear VI black on the next flip
-    kPendingRenderMode = -0x7FFF,  // u8: render mode to apply (0xFF = none)
-    kRenderModeChange = -0x4690,   // u8: a render mode change is pending
+    kWidemodeParam = -0x7FFF,      // u8 set_widemode_param: 4:3/16:9 mode to apply (0xFF = none)
+    kWidemodeFlag = -0x4690,       // u8 set_widemode_flag: a widescreen switch is pending
     kFrameCount = -0x45B8,         // u32: frames paced so far
     kRetracesThisFrame = -0x4680,  // s32: retraces since the last flip
     kRetracesPerFrame = -0x4684,   // s32: frame budget in retraces
@@ -33,7 +33,7 @@ enum : int32_t {
 constexpr uint32_t kBusClock = 0x800000F8; // OS globals: bus clock in Hz
 
 enum : uint32_t {
-    ApplyRenderMode = 0x8003FA48,     // reconfigures VI/copy for a render mode
+    ApplyWidemode = 0x8003FA48,       // reconfigures VI/copy for 4:3 or 16:9
     OSSleepTicks = 0x804D5320,
     VIFlush = 0x804E9010,
     VISetNextFrameBuffer = 0x804E9130,
@@ -82,10 +82,10 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
         os(VISetBlack, {0});
         Memory::Write8(at(kBlackPending), 0);
     }
-    if (Memory::Read8(at(kRenderModeChange))) {
-        os(ApplyRenderMode, {Memory::Read8(at(kPendingRenderMode))});
-        Memory::Write8(at(kRenderModeChange), 0);
-        Memory::Write8(at(kPendingRenderMode), 0xFF);
+    if (Memory::Read8(at(kWidemodeFlag))) {
+        os(ApplyWidemode, {Memory::Read8(at(kWidemodeParam))});
+        Memory::Write8(at(kWidemodeFlag), 0);
+        Memory::Write8(at(kWidemodeParam), 0xFF);
     }
     os(VIFlush);
     SetViFlag(sda, Memory::Read8(at(kViFlag)));

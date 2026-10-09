@@ -106,8 +106,12 @@
 800401a8 FramePacer
 # Returns the frame budget in VI retraces (r13-0x4684).
 8003f588 GetRetracesPerFrame
-# Reconfigures VI and copy settings for a render mode index.
-8003fa48 ApplyRenderMode
+# Reconfigures VI and copy settings for 4:3 or 16:9 (set_widemode_param).
+8003fa48 ApplyWidemode
+# Picks the render mode from the TV format (assert string "RenderInit: invalid TV format").
+8003f794 RenderInit
+# Returns the TV format: 0 NTSC, 1 PAL (50 Hz), 5 EuRGB60.
+804e9360 VIGetTvFormat
 804e9130 VISetNextFrameBuffer
 # `sc; blr`
 804777d0 SystemCall
