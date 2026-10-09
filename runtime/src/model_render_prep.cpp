@@ -2,6 +2,7 @@
 // original 80076220 step order and the 800879DC/80087B34 shape setup exactly,
 // against a host mirror of the G3DState caches and the given owner's state.
 #include "model_render_prep.h"
+#include "fast_map.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "native_frame_packet.h"
@@ -37,18 +38,28 @@ mh3_res_span Span(const uint8_t* data, size_t size) {
 }
 ModelPrepMirror renderMirror;
 uint32_t pendingInvalidate = 0;
-// Game thread: the frozen typed blocks of recently captured material scopes.
-// While the live material revision is unchanged, every live block keeps its
-// version and its frozen copy, so a scope with the same records reuses the
-// pointers; after a change it asks its blocks again (the live blocks own the
-// copies, NativeFrozenCopy).
-struct FrozenSet {
+// Game thread: the shared records of captured material scopes, keyed by the
+// material and its selected resource slots, with the live typed blocks they
+// were read from. Node pointers stay valid while the live material revision is
+// unchanged (in-place producer updates keep nodes); the pipeline record stays
+// valid while its block keeps the frozen generation.
+struct MaterialEntry {
     uint32_t material = 0;
     uint32_t slots[MH3_MAT_RESOURCE_COUNT]{};
-    uint64_t live = UINT64_MAX;
-    const NativeFrozenMaterialBlock *pipeline = nullptr, *pixel = nullptr, *colors = nullptr, *indirect = nullptr, *texgen = nullptr;
+    uint64_t live = 0, objects = 0, pipeline_generation = 0;
+    const NativeLiveMaterialBlock* blocks[MH3_MODEL_MATERIAL_BLOCK_COUNT]{};
+    const ModelPrepMaterial* record = nullptr;
 };
-std::array<FrozenSet, 512> frozenSets;
+FastMap<uint64_t, MaterialEntry> materialEntries;
+void ReleaseRecord(const ModelPrepMaterial* record) {
+    if (!record)
+        return;
+    if (!NativeRenderThreadRunning()) {
+        delete record;
+        return;
+    }
+    QueueNativeGraphicsTask(NativeTaskOrder::AfterDraws, [record] { delete record; });
+}
 // Copies the presence word and the present 32/12-byte objects only: the
 // cache producer reads nothing else.
 void CopyObjects(uint8_t* out, const uint8_t* objects, uint32_t stride) {
@@ -60,10 +71,13 @@ void CopyObjects(uint8_t* out, const uint8_t* objects, uint32_t stride) {
 }
 
 // One dispatch's execution context.
+// Group publication sources of the Render and Shadow owners.
+mh3_native_material_state groupStates[2];
 struct Prep {
     NativeOwner owner;
     ModelPrepMirror& m;
     const ModelPrepInputs& in;
+    const ModelPrepSrt* srt;
     uint8_t& sync() { return *m.At(Sync, 1).data; }
     mh3_model_genmode Mode() {
         mh3_model_genmode mode{};
@@ -78,8 +92,34 @@ struct Prep {
         if (apply)
             OverlayNativeMaterialTop(top, value.texgens, value.channels, value.tevs, value.indirect, value.cull, owner);
     }
-    void Group(const NativeFrozenMaterialBlock* block, mh3_model_material_block kind, bool xf = false) {
-        if (!block)
+    // The captured group fields as a material state; a group's publication
+    // reads only its own fields (mh3_material_group_publish).
+    const mh3_native_material_state& GroupState(mh3_model_material_block kind) {
+        auto& state = groupStates[owner == NativeOwner::Render ? 0 : 1];
+        state.tev_count = state.indirect_count = 0;
+        switch (kind) {
+        case MH3_MODEL_MATERIAL_PIXEL:
+            state.pixel = in.pixel;
+            break;
+        case MH3_MODEL_MATERIAL_COLORS:
+            std::memcpy(state.color, in.color, sizeof in.color);
+            std::memcpy(state.konst, in.konst, sizeof in.konst);
+            break;
+        case MH3_MODEL_MATERIAL_INDIRECT:
+            std::memcpy(state.indirect_matrix, in.indirect_matrix, sizeof in.indirect_matrix);
+            std::memcpy(state.indirect, in.indirect, sizeof in.indirect);
+            break;
+        case MH3_MODEL_MATERIAL_TEXGEN:
+            std::memcpy(state.texgen, in.texgen, sizeof in.texgen);
+            state.texgen_count = in.texgen_count;
+            break;
+        default:
+            throw std::runtime_error("Deferred model preparation has no group fields for this block");
+        }
+        return state;
+    }
+    void Group(mh3_model_material_block kind, bool xf = false) {
+        if (!(in.groups & (1u << kind)))
             return;
         const auto mode = Mode();
         const uint32_t count = kind == MH3_MODEL_MATERIAL_INDIRECT ? mode.indirect : kind == MH3_MODEL_MATERIAL_TEXGEN ? mode.texgens : 1;
@@ -87,7 +127,7 @@ struct Prep {
             PublishGenmode(false);
         sync() = 0;
         if (count)
-            OverlayNativeModelMaterialGroup(block->fields, kind, count, owner);
+            OverlayNativeModelMaterialGroup(GroupState(kind), kind, count, owner);
         if (xf)
             PublishGenmode(true);
     }
@@ -100,10 +140,10 @@ struct Prep {
             m.coordinate_sizes = sizes;
     }
     void Pipeline() {
-        const uint32_t resource = in.pipeline_address;
-        if (!resource || !in.pipeline)
+        if (!in.record || !in.record->pipeline)
             return;
-        const auto& block = *in.pipeline;
+        const uint32_t resource = in.record->pipeline_address;
+        const auto& block = *in.record->pipeline;
         const uint64_t generation = block.fields.generation;
         if (Word(m.At(::Pipeline, 4).data) == resource && m.pipeline_address == resource && m.pipeline_revision == generation)
             return;
@@ -118,33 +158,34 @@ struct Prep {
         CoordinateSizes(Mode().texgens);
     }
     void Indirect() {
-        if (in.indirect)
-            Group(in.indirect, MH3_MODEL_MATERIAL_INDIRECT);
+        Group(MH3_MODEL_MATERIAL_INDIRECT);
         if (!in.indirect_operator)
             return;
         mh3_pack_indirect_matrix base[3]{}, matrices[3];
-        if (in.indirect)
-            std::memcpy(base, in.indirect->fields.indirect_matrix, sizeof base);
+        if (in.groups & (1u << MH3_MODEL_MATERIAL_INDIRECT))
+            std::memcpy(base, in.indirect_matrix, sizeof base);
         Checked(mh3_model_indirect_matrices(base, &in.op, matrices));
         OverlayNativeMaterialIndirectMatrices(matrices, owner);
     }
     void Palettes() {
+        const auto& record = *in.record;
         uint8_t changed = 0;
-        Checked(mh3_resource_objects_cache(m.At(PaletteCache, 98), Span(in.palette_objects, 100), 1, &changed));
-        const uint32_t present = Word(in.palette_objects);
+        Checked(mh3_resource_objects_cache(m.At(PaletteCache, 98), Span(record.palette_objects, 100), 1, &changed));
+        const uint32_t present = Word(record.palette_objects);
         for (uint32_t i = 0; i < 8; i++)
             if (present & (1u << i))
-                BindNativePalette(i, in.palettes[i], owner);
+                BindNativePalette(i, record.palettes[i], owner);
         Checked(mh3_texture_cache_palette_changed(m.At(TextureCache, 257), changed));
     }
     void Textures() {
+        const auto& record = *in.record;
         uint8_t changed = 0;
-        Checked(mh3_resource_objects_cache(m.At(TextureCache, 257), Span(in.texture_objects, 260), 0, &changed));
-        const uint32_t present = Word(in.texture_objects);
+        Checked(mh3_resource_objects_cache(m.At(TextureCache, 257), Span(record.texture_objects, 260), 0, &changed));
+        const uint32_t present = Word(record.texture_objects);
         for (uint32_t i = 0; i < 8; i++) {
             if (!(present & (1u << i)))
                 continue;
-            auto binding = in.textures[i];
+            auto binding = record.textures[i];
             binding.map_id = i;
             BindNativeTexture(binding, owner);
             if (changed & (1u << i)) {
@@ -166,9 +207,11 @@ struct Prep {
         PublishGenmode(true);
     }
     void Srt() {
+        if (!srt)
+            throw std::runtime_error("Deferred model preparation has no texture SRT inputs");
         mh3_texture_matrices matrices{};
         uint32_t next = 0;
-        Checked(mh3_texture_matrices_prepare(&in.srt, in.maps, in.map_sources, Word(m.At(PostIdentity, 4).data), &matrices, &next));
+        Checked(mh3_texture_matrices_prepare(&srt->srt, srt->maps, srt->map_sources, Word(m.At(PostIdentity, 4).data), &matrices, &next));
         for (uint32_t i = 0; i < 8; i++) {
             PutWord(m.At(TextureSources + i * 4, 4).data, matrices.source[i]);
             if (matrices.apply & (1u << i))
@@ -192,12 +235,12 @@ struct Prep {
         if (has(MH3_MAT_GENERAL_MODE))
             Checked(mh3_model_genmode_select(m.At(Genmode, 12), Span(in.genmode, 8)));
         Pipeline();
-        Group(in.pixel, MH3_MODEL_MATERIAL_PIXEL);
-        Group(in.colors, MH3_MODEL_MATERIAL_COLORS);
+        Group(MH3_MODEL_MATERIAL_PIXEL);
+        Group(MH3_MODEL_MATERIAL_COLORS);
         Indirect();
         if (has(MH3_MAT_CHANNELS))
             Channels();
-        Group(in.texgen, MH3_MODEL_MATERIAL_TEXGEN, true);
+        Group(MH3_MODEL_MATERIAL_TEXGEN, true);
         if (has(MH3_MAT_TEXTURE_SRT))
             Srt();
     }
@@ -298,72 +341,168 @@ void NoteNativeModelPrepInvalidate(uint32_t fields) {
     pendingInvalidate |= fields;
 }
 
-void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scope& scope) {
+namespace {
+// Copies the fields a typed block's group publication reads.
+void CopyGroup(ModelPrepInputs& in, const mh3_native_material_state& fields, mh3_model_material_block kind) {
+    switch (kind) {
+    case MH3_MODEL_MATERIAL_PIXEL:
+        in.pixel = fields.pixel;
+        break;
+    case MH3_MODEL_MATERIAL_COLORS:
+        std::memcpy(in.color, fields.color, sizeof in.color);
+        std::memcpy(in.konst, fields.konst, sizeof in.konst);
+        break;
+    case MH3_MODEL_MATERIAL_INDIRECT:
+        std::memcpy(in.indirect_matrix, fields.indirect_matrix, sizeof in.indirect_matrix);
+        std::memcpy(in.indirect, fields.indirect, sizeof in.indirect);
+        break;
+    case MH3_MODEL_MATERIAL_TEXGEN:
+        std::memcpy(in.texgen, fields.texgen, sizeof in.texgen);
+        in.texgen_count = uint8_t(fields.texgen_count);
+        break;
+    default:
+        throw std::runtime_error("Deferred model preparation copies no fields of this block");
+    }
+    in.groups |= uint8_t(1u << kind);
+}
+const uint8_t* Bytes(uint32_t address, size_t size) {
+    return static_cast<const uint8_t*>(Memory::GetPointer(address, size));
+}
+// The typed block addresses of a material's slots, by mh3_model_material_block.
+void BlockAddresses(const uint32_t* slots, uint32_t out[MH3_MODEL_MATERIAL_BLOCK_COUNT]) {
+    if (slots[MH3_MAT_TEV] > UINT32_MAX - 32)
+        throw std::runtime_error("Model pipeline offset overflows");
+    out[MH3_MODEL_MATERIAL_PIPELINE] = slots[MH3_MAT_TEV] ? slots[MH3_MAT_TEV] + 32 : 0;
+    out[MH3_MODEL_MATERIAL_PIXEL] = slots[MH3_MAT_PIXEL_STATE];
+    out[MH3_MODEL_MATERIAL_COLORS] = slots[MH3_MAT_TEV_COLORS];
+    out[MH3_MODEL_MATERIAL_INDIRECT] = slots[MH3_MAT_INDIRECT_MATRIX_SCALE];
+    out[MH3_MODEL_MATERIAL_TEXGEN] = slots[MH3_MAT_TEXCOORD_GENERATION];
+}
+// The object records' bytes and typed bindings.
+void CaptureObjects(ModelPrepMaterial& record, const uint32_t* slots) {
+    if (const uint32_t objects = slots[MH3_MAT_PALETTE_OBJECTS]) {
+        CopyObjects(record.palette_objects, Bytes(objects, 100), 12);
+        const uint32_t present = Word(record.palette_objects);
+        for (uint32_t i = 0; i < 8; i++)
+            if (present & (1u << i))
+                record.palettes[i] = ReadNativePaletteObject(objects + 4 + i * 12);
+    }
+    if (const uint32_t objects = slots[MH3_MAT_TEXTURE_OBJECTS]) {
+        CopyObjects(record.texture_objects, Bytes(objects, 260), 32);
+        const uint32_t present = Word(record.texture_objects);
+        for (uint32_t i = 0; i < 8; i++)
+            if (present & (1u << i))
+                record.textures[i] = ReadNativeTextureObject(objects + 4 + i * 32);
+    }
+}
+// The record's object bytes still match guest memory (present objects only).
+bool SameObjectBytes(const uint8_t* captured, uint32_t objects, uint32_t stride) {
+    const uint8_t* guest = Bytes(objects, 4 + 8 * stride);
+    if (std::memcmp(captured, guest, 4))
+        return false;
+    const uint32_t present = Word(captured) & 255u;
+    for (uint32_t i = 0; i < 8; i++)
+        if ((present & (1u << i)) && std::memcmp(captured + 4 + i * stride, guest + 4 + i * stride, stride))
+            return false;
+    return true;
+}
+bool SameObjects(const ModelPrepMaterial& a, const ModelPrepMaterial& b) {
+    return !std::memcmp(a.palette_objects, b.palette_objects, sizeof a.palette_objects) && !std::memcmp(a.texture_objects, b.texture_objects, sizeof a.texture_objects) &&
+           !std::memcmp(a.palettes, b.palettes, sizeof a.palettes) && !std::memcmp(a.textures, b.textures, sizeof a.textures);
+}
+} // namespace
+
+void CaptureModelPrepGroup(ModelPrepInputs& in, uint32_t address, mh3_model_material_block kind) {
+    CopyGroup(in, ReadNativeLiveMaterialBlockView(address, kind).fields, kind);
+}
+
+void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scope& scope, ModelPrepSrtList& srts) {
     const auto& slots = scope.selected.resource_slots;
     in.present = 0;
     for (unsigned i = 0; i < MH3_MAT_RESOURCE_COUNT; i++)
         if (slots[i])
             in.present |= uint16_t(1u << i);
-    const auto bytes = [](uint32_t address, size_t size) { return static_cast<const uint8_t*>(Memory::GetPointer(address, size)); };
     if (slots[MH3_MAT_MISC]) {
         mh3_model_material_misc misc{};
-        Checked(mh3_model_material_misc_read({bytes(slots[MH3_MAT_MISC], 12), 12}, &misc));
+        Checked(mh3_model_material_misc_read({Bytes(slots[MH3_MAT_MISC], 12), 12}, &misc));
         in.depth_before_texture = misc.depth_before_texture;
     }
-    if (const uint32_t objects = slots[MH3_MAT_PALETTE_OBJECTS]) {
-        CopyObjects(in.palette_objects, bytes(objects, 100), 12);
-        const uint32_t present = Word(in.palette_objects);
-        for (uint32_t i = 0; i < 8; i++)
-            if (present & (1u << i))
-                in.palettes[i] = ReadNativePaletteObject(objects + 4 + i * 12);
-    }
-    if (const uint32_t objects = slots[MH3_MAT_TEXTURE_OBJECTS]) {
-        CopyObjects(in.texture_objects, bytes(objects, 260), 32);
-        const uint32_t present = Word(in.texture_objects);
-        for (uint32_t i = 0; i < 8; i++)
-            if (present & (1u << i))
-                in.textures[i] = ReadNativeTextureObject(objects + 4 + i * 32);
-    }
     if (slots[MH3_MAT_GENERAL_MODE])
-        std::memcpy(in.genmode, bytes(slots[MH3_MAT_GENERAL_MODE], 8), 8);
-    in.pipeline_address = slots[MH3_MAT_TEV];
-    if (in.pipeline_address > UINT32_MAX - 32)
-        throw std::runtime_error("Model pipeline offset overflows");
-    auto& set = frozenSets[((scope.material_address >> 4) * 2654435761u) >> 23];
-    if (set.material != scope.material_address || set.live != ReadNativeLiveMaterialRevision() || std::memcmp(set.slots, slots, sizeof set.slots)) {
-        // A live block changed (animated materials publish every frame) or the
-        // set held another scope: take each block's current frozen copy (made
-        // only for a block whose version moved).
-        const auto freeze = [](uint32_t address, mh3_model_material_block kind) -> const NativeFrozenMaterialBlock* {
-            return address ? FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(address, kind)) : nullptr;
-        };
-        set.pipeline = freeze(in.pipeline_address ? in.pipeline_address + 32 : 0, MH3_MODEL_MATERIAL_PIPELINE);
-        set.pixel = freeze(slots[MH3_MAT_PIXEL_STATE], MH3_MODEL_MATERIAL_PIXEL);
-        set.colors = freeze(slots[MH3_MAT_TEV_COLORS], MH3_MODEL_MATERIAL_COLORS);
-        set.indirect = freeze(slots[MH3_MAT_INDIRECT_MATRIX_SCALE], MH3_MODEL_MATERIAL_INDIRECT);
-        set.texgen = freeze(slots[MH3_MAT_TEXCOORD_GENERATION], MH3_MODEL_MATERIAL_TEXGEN);
-        // Freezing may admit blocks; record the revision they were read at.
-        set.material = scope.material_address;
-        std::memcpy(set.slots, slots, sizeof set.slots);
-        set.live = ReadNativeLiveMaterialRevision();
-    }
-    in.pipeline = set.pipeline;
-    in.pixel = set.pixel;
-    in.colors = set.colors;
-    in.indirect = set.indirect;
-    in.texgen = set.texgen;
+        std::memcpy(in.genmode, Bytes(slots[MH3_MAT_GENERAL_MODE], 8), 8);
     if (slots[MH3_MAT_CHANNELS])
-        std::memcpy(in.channels, bytes(slots[MH3_MAT_CHANNELS], 40), 40);
+        std::memcpy(in.channels, Bytes(slots[MH3_MAT_CHANNELS], 40), 40);
+
+    // The shared record: reused while the slots, the live block nodes, the
+    // pipeline block's version, the typed texture/palette objects and the
+    // object bytes are unchanged.
+    uint32_t hash = scope.material_address;
+    for (unsigned i = 0; i < MH3_MAT_RESOURCE_COUNT; i++)
+        hash = (hash ^ slots[i]) * 0x9E3779B1u;
+    if (materialEntries.size() >= 4096) {
+        for (auto& item : materialEntries)
+            ReleaseRecord(item.second.record);
+        materialEntries.clear();
+    }
+    auto& entry = materialEntries[uint64_t(scope.material_address) << 32 | hash];
+    const bool same = entry.record && entry.material == scope.material_address && !std::memcmp(entry.slots, slots, sizeof entry.slots);
+    uint32_t addresses[MH3_MODEL_MATERIAL_BLOCK_COUNT];
+    BlockAddresses(slots, addresses);
+    if (!same || entry.live != ReadNativeLiveMaterialRevision()) {
+        for (unsigned kind = 0; kind < MH3_MODEL_MATERIAL_BLOCK_COUNT; kind++)
+            entry.blocks[kind] = addresses[kind] ? &ReadNativeLiveMaterialBlockView(addresses[kind], mh3_model_material_block(kind)) : nullptr;
+        // Reading may admit blocks; record the revision they were read at.
+        entry.live = ReadNativeLiveMaterialRevision();
+    }
+    const auto* pipeline = entry.blocks[MH3_MODEL_MATERIAL_PIPELINE];
+    bool rebuild = !same || (pipeline ? pipeline->fields.generation : 0) != entry.pipeline_generation;
+    if (!rebuild && slots[MH3_MAT_PALETTE_OBJECTS] && !SameObjectBytes(entry.record->palette_objects, slots[MH3_MAT_PALETTE_OBJECTS], 12))
+        rebuild = true;
+    if (!rebuild && slots[MH3_MAT_TEXTURE_OBJECTS] && !SameObjectBytes(entry.record->texture_objects, slots[MH3_MAT_TEXTURE_OBJECTS], 32))
+        rebuild = true;
+    std::unique_ptr<ModelPrepMaterial> record;
+    if (!rebuild && entry.objects != ReadNativeTextureObjectRevision()) {
+        // Some typed object changed: rebuild only if this material's did.
+        record = std::make_unique<ModelPrepMaterial>();
+        CaptureObjects(*record, slots);
+        rebuild = !SameObjects(*record, *entry.record);
+        entry.objects = ReadNativeTextureObjectRevision();
+    }
+    if (rebuild) {
+        if (!record) {
+            record = std::make_unique<ModelPrepMaterial>();
+            CaptureObjects(*record, slots);
+        }
+        record->pipeline_address = slots[MH3_MAT_TEV];
+        // The live block owns its frozen copy; a newer version replaces it only
+        // after the generation check above made this record stale.
+        record->pipeline = pipeline ? FreezeNativeLiveMaterialBlock(*pipeline) : nullptr;
+        ReleaseRecord(entry.record);
+        entry.record = record.release();
+        entry.material = scope.material_address;
+        std::memcpy(entry.slots, slots, sizeof entry.slots);
+        entry.pipeline_generation = pipeline ? pipeline->fields.generation : 0;
+        entry.objects = ReadNativeTextureObjectRevision();
+    }
+    in.record = entry.record;
+
+    // Group fields: per dispatch, from the live blocks (animated in place).
+    in.groups = 0;
+    for (unsigned kind = 0; kind < MH3_MODEL_MATERIAL_BLOCK_COUNT; kind++)
+        if (kind != MH3_MODEL_MATERIAL_PIPELINE && entry.blocks[kind])
+            CopyGroup(in, entry.blocks[kind]->fields, mh3_model_material_block(kind));
+
+    in.srt = -1;
     if (const uint32_t resource = slots[MH3_MAT_TEXTURE_SRT]) {
-        Checked(mh3_texture_srt_read_for_prepare({bytes(resource, 0x248), 0x248}, &in.srt));
+        auto& out = srts.Next(&in.srt);
+        Checked(mh3_texture_srt_read_for_prepare({Bytes(resource, 0x248), 0x248}, &out.srt));
         // The constructor defines these exact built-in mapping functions. Custom
         // slots may change their callback and type at runtime; reject those until
         // their own typed native producer is implemented.
         constexpr uint32_t functions[]{0x800850a0, 0x80084694, 0x80084a78, 0x80084694, 0x80084c00};
         constexpr uint32_t kinds[]{0, 1, 2, 1, 1};
         for (uint32_t i = 0; i < 8; i++) {
-            in.map_sources[i] = 0;
-            const auto& slot = in.srt.slot[i];
+            out.map_sources[i] = 0;
+            const auto& slot = out.srt.slot[i];
             if (!(slot.flags & 1) || !slot.map_mode)
                 continue;
             const uint32_t mode = slot.map_mode, entry = 0x80685560 + mode * 8;
@@ -372,23 +511,23 @@ void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scop
                 throw std::runtime_error("Custom model texture mapping has no native producer: " + std::to_string(mode));
             if (builtin) {
                 mh3_texture_mapping_input input{};
-                Checked(mh3_texture_mapping_read({Memory::GetPointer(0x80688d94, 0x1a34), 0x1a34}, {bytes(0x80686368, MH3_LIGHT_STATE_BYTES), MH3_LIGHT_STATE_BYTES}, builtin,
+                Checked(mh3_texture_mapping_read({Memory::GetPointer(0x80688d94, 0x1a34), 0x1a34}, {Bytes(0x80686368, MH3_LIGHT_STATE_BYTES), MH3_LIGHT_STATE_BYTES}, builtin,
                                                  slot.camera_reference, slot.light_reference, &input));
-                Checked(mh3_texture_mapping(builtin, &input, &in.maps[i]));
+                Checked(mh3_texture_mapping(builtin, &input, &out.maps[i]));
             } else
-                Checked(mh3_texture_mapping(0, nullptr, &in.maps[i]));
-            in.map_sources[i] = kinds[builtin];
+                Checked(mh3_texture_mapping(0, nullptr, &out.maps[i]));
+            out.map_sources[i] = kinds[builtin];
         }
     }
 }
 
-void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPrepInputs& in, const mh3_matrix34* direct_position, const mh3_matrix34* direct_normal,
-                      ModelPrepShapeResult* shape) {
+void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPrepInputs& in, const ModelPrepSrt* srt, const mh3_matrix34* direct_position,
+                      const mh3_matrix34* direct_normal, ModelPrepShapeResult* shape) {
     if (in.invalidate)
         mirror.Invalidate(in.invalidate);
     if (in.selectors)
         mirror.selectors = in.selector_state;
-    Prep prep{owner, mirror, in};
+    Prep prep{owner, mirror, in, srt};
     if (in.material)
         prep.Material();
     else if (in.indirect_operator)

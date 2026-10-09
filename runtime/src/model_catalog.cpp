@@ -69,12 +69,17 @@ struct Catalog {
     // erased). Change both through PutLiveBlock and EraseLiveBlock.
     std::map<uint64_t, NativeLiveMaterialBlock> live_blocks;
     FastMap<uint64_t, NativeLiveMaterialBlock*> live_index;
+    // Advanced when the owner set changes or a new live block node appears:
+    // a block marked writable at the current version is still the only block
+    // over its bytes and its typed write was validated against these owners.
+    uint64_t write_version = 1;
     uint64_t material_revision = 0;
     NativeModelPreparationDiagnostics* diagnostics = nullptr;
     bool diagnostics_initialized = false;
 };
 Catalog catalog;
-// Advanced by every live block erase or (re)publication.
+// Advanced by every live block erase or full (re)publication; not by an
+// in-place producer update (WritableNativeLiveMaterialBlock).
 uint64_t live_version = 1;
 NativeModelPreparationDiagnostics diagnostics;
 struct DiagnosticConfig {
@@ -128,9 +133,13 @@ Catalog& C() {
     return catalog;
 }
 NativeLiveMaterialBlock& PutLiveBlock(uint64_t key, NativeLiveMaterialBlock block) {
-    auto& node = C().live_blocks.insert_or_assign(key, std::move(block)).first->second;
-    C().live_index.insert_or_assign(key, &node);
-    return node;
+    block.writable = 0;
+    const auto [it, inserted] = C().live_blocks.insert_or_assign(key, std::move(block));
+    if (inserted) {
+        C().live_index.insert_or_assign(key, &it->second);
+        ++C().write_version;
+    }
+    return it->second;
 }
 std::map<uint64_t, NativeLiveMaterialBlock>::iterator EraseLiveBlock(std::map<uint64_t, NativeLiveMaterialBlock>::iterator it) {
     C().live_index.erase(it->first);
@@ -198,6 +207,7 @@ bool RetireCertificates(uint32_t address, uint32_t bytes) {
     for (auto it = C().owners.begin(); it != C().owners.end();) {
         if (mh3_source_owner_intersects(&it->second.certificate, address, bytes)) {
             it = C().owners.erase(it);
+            ++C().write_version;
             retired = true;
         } else
             ++it;
@@ -280,6 +290,8 @@ void InstallPack(const std::shared_ptr<const Pack>& pack, uint32_t diagnostic_fr
 void Certify(const std::vector<CachedOwner>& certified) {
     for (const auto& item : certified)
         C().owners.insert_or_assign(item.owner.model_address, item);
+    if (!certified.empty())
+        ++C().write_version;
 }
 void Copy(CpuContext* cpu, NativeSourceEpochProducer producer) {
     const uint32_t destination = cpu->gpr[3], source = cpu->gpr[4], bytes = cpu->gpr[5];
@@ -406,6 +418,8 @@ void RecordNativeResourceCopy(uint32_t destination, uint32_t source, uint32_t by
     // a model. Snapshots also preserve overlapping memmove source semantics.
     for (const auto& copy : owner_copies)
         C().owners.insert_or_assign(copy.owner.model_address, copy);
+    if (!owner_copies.empty())
+        ++C().write_version;
     for (const auto& copy : copies)
         PutLiveBlock(LiveKey(copy.address, copy.kind), copy);
     if (!copies.empty())
@@ -577,9 +591,10 @@ void UnregisterNativeModelPack(uintptr_t handle, uint32_t diagnostic_frame) {
             C().resources.clear();
             C().blocks.clear();
             for (auto owner = C().owners.begin(); owner != C().owners.end();) {
-                if (owner->second.owner.resident_handle == handle)
+                if (owner->second.owner.resident_handle == handle) {
                     owner = C().owners.erase(owner);
-                else
+                    ++C().write_version;
+                } else
                     ++owner;
             }
             for (auto block = C().live_blocks.begin(); block != C().live_blocks.end();) {
@@ -772,6 +787,25 @@ const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address,
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
     return ReadNativeLiveMaterialBlockView(address, kind);
 }
+NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
+    auto& c = Initialize();
+    const auto found = c.live_index.find(LiveKey(Canonical(address, 1), kind));
+    if (found == c.live_index.end())
+        return nullptr;
+    auto* block = found->second;
+    // A disc write or copy over the bytes would have erased the node; the
+    // tracker check keeps the in-place path to untracked bytes regardless.
+    if (block->writable != c.write_version || mh3_source_intersects(&c.tracker, block->address, block->bytes))
+        return nullptr;
+    return block;
+}
+void MarkNativeLiveMaterialBlockWritable(uint32_t address, mh3_model_material_block kind) {
+    auto& c = Initialize();
+    const auto found = c.live_index.find(LiveKey(Canonical(address, 1), kind));
+    if (found == c.live_index.end())
+        throw std::runtime_error("Writable native material block is not live");
+    found->second->writable = c.write_version;
+}
 void PublishNativeLiveMaterialBlock(const NativeLiveMaterialBlock& block) {
     if (!block.fields.generation || block.fields.generation > C().material_revision || Canonical(block.address, block.bytes) != block.address)
         throw std::runtime_error("Invalid typed native material publication");
@@ -831,19 +865,36 @@ const NativeFrozenMaterialBlock* FreezeNativeLiveMaterialBlock(const NativeLiveM
     return block.frozen.get();
 }
 void CopyNativeLiveMaterialBlock(uint32_t destination, uint32_t source, mh3_model_material_block kind) {
-    auto block = ReadNativeLiveMaterialBlock(source, kind);
-    destination = Canonical(destination, block.bytes);
-    source = Canonical(source, block.bytes);
-    void* output = GuestRange(destination, block.bytes);
-    const void* input = GuestRange(source, block.bytes);
+    const auto& from = ReadNativeLiveMaterialBlockView(source, kind);
+    const uint32_t bytes = from.bytes;
+    destination = Canonical(destination, bytes);
+    source = Canonical(source, bytes);
+    void* output = GuestRange(destination, bytes);
+    const void* input = GuestRange(source, bytes);
     if (destination == source)
         return;
+    // Instance materials re-copy their groups every frame (8007E4FC). Onto a
+    // writable block of the same size the copy replaces its fields in place;
+    // the destination keeps no byte provenance, as after a typed write.
+    if (auto* to = WritableNativeLiveMaterialBlock(destination, kind); to && to->bytes == bytes && to->address == destination &&
+        (uint64_t(destination) + bytes <= source || uint64_t(source) + bytes <= destination)) {
+        mh3_model_copy_bytes(output, input, bytes);
+        to->fields = from.fields;
+        to->fields.generation = NextNativeMaterialRevision();
+        to->resident_handle = from.resident_handle;
+        to->resident_generation = from.resident_generation;
+        to->origin_offset = from.origin_offset;
+        to->source_generation = from.source_generation;
+        return;
+    }
+    auto block = from;
     const uint64_t revision = NextNativeMaterialRevision();
-    RecordNativeTypedMaterialCopy(destination, source, block.bytes, kind);
-    mh3_model_copy_bytes(output, input, block.bytes);
+    RecordNativeTypedMaterialCopy(destination, source, bytes, kind);
+    mh3_model_copy_bytes(output, input, bytes);
     block.address = destination;
     block.fields.generation = revision;
     PublishNativeLiveMaterialBlock(block);
+    MarkNativeLiveMaterialBlockWritable(destination, kind);
 }
 extern "C" void MH3_ModelMemcpy(CpuContext* cpu) {
     Copy(cpu, NativeSourceEpochProducer::Memcpy);

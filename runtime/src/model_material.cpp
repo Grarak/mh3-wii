@@ -2,6 +2,7 @@
 // platform mapping and typed backend publication remain at this boundary.
 // All 14 verified wrappers form one coordinated family. No GX fallback.
 #include "abi_bridge.h"
+#include "guest_span.h"
 #include "memory.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
@@ -40,6 +41,13 @@ void Copy(CpuContext* cpu, mh3_model_material_block kind) {
 }
 template <class Producer>
 void Update(CpuContext* cpu, mh3_model_material_block kind, Producer producer) {
+    // Per-frame setters (alpha compare, konst colours) of a block written
+    // before: update its fields and bytes in place. Producers validate their
+    // arguments before writing either.
+    if (auto* live = WritableNativeLiveMaterialBlock(Data(cpu), kind)) {
+        Checked(producer(&live->fields, mh3_res_mut_span{GuestRange(live->address, live->bytes), live->bytes}, NextNativeMaterialRevision()));
+        return;
+    }
     auto block = ReadNativeLiveMaterialBlock(Data(cpu), kind);
     std::array<uint8_t, 160> compatibility{};
     if (block.bytes > compatibility.size())
@@ -52,6 +60,7 @@ void Update(CpuContext* cpu, mh3_model_material_block kind, Producer producer) {
     RecordNativeTypedMaterialWrite(block.address, block.bytes, kind);
     std::memcpy(output, compatibility.data(), block.bytes);
     PublishNativeLiveMaterialBlock(block);
+    MarkNativeLiveMaterialBlockWritable(block.address, kind);
 }
 std::array<uint8_t, 4> Color(uint32_t address) {
     std::array<uint8_t, 4> result{};

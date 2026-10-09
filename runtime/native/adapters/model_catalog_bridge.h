@@ -17,8 +17,10 @@ uint64_t ReadNativeModelStructureRevision();
 /* Advances on every typed material group write or copy. With the structure
  * revision unchanged, every live material block keeps its node and version. */
 uint64_t ReadNativeMaterialBlockRevision();
-/* Advances whenever a live material block node is erased or (re)published.
- * While it is unchanged, every live block keeps its node, version and fields. */
+/* Advances whenever a live material block node is erased or fully
+ * (re)published. While it is unchanged every live block keeps its node; an
+ * in-place producer update (WritableNativeLiveMaterialBlock) changes only the
+ * node's fields and fields.generation. */
 uint64_t ReadNativeLiveMaterialRevision();
 /* A vertex producer installs this before retaining any sources/revisions.
  * Generic overwrites notify it even when no disc interval is tracked. */
@@ -111,8 +113,21 @@ struct NativeLiveMaterialBlock {
     uint64_t resident_generation, origin_offset, source_generation;
     // The frozen copy of fields.generation, made on demand.
     mutable NativeFrozenCopy frozen;
+    // The catalog's write version at which typed writes may update this node
+    // in place (0: not writable; any publication clears it).
+    uint64_t writable = 0;
 };
 NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
+/* Game thread. The live block a typed producer may update in place: its
+ * fields, fields.generation (NextNativeMaterialRevision) and guest bytes, with
+ * no provenance event and no publication. Null when the write must take
+ * RecordNativeTypedMaterialWrite and PublishNativeLiveMaterialBlock: before the
+ * block's first such write, while its bytes have tracked provenance, or after
+ * the owner set changed or another block was admitted. */
+NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind);
+/* After a full typed write or copy of exactly this block was recorded and
+ * published: its next writes may take the in-place path. */
+void MarkNativeLiveMaterialBlockWritable(uint32_t address, mh3_model_material_block kind);
 /* Owner-only immediate read view. The cache owns these bytes; consume them
  * before any producer publication, source write/retirement or guest callback.
  * Mutable setters must use ReadNativeLiveMaterialBlock's private snapshot. */

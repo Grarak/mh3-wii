@@ -15,6 +15,8 @@ namespace {
 struct Objects {
     FastMap<uint32_t, mh3_native_texture_binding> textures;
     FastMap<uint32_t, mh3_native_palette_source> palettes;
+    // Advanced by every change of either map (ReadNativeTextureObjectRevision).
+    uint64_t revision = 1;
 } objects;
 Objects& O() {
     return objects;
@@ -44,13 +46,16 @@ uint32_t Resource(uint32_t reference) {
 }
 void PutTexture(uint32_t object, const mh3_native_texture_binding& binding) {
     O().textures.insert_or_assign(object, binding);
+    ++O().revision;
 }
 void PutPalette(uint32_t object, const mh3_native_palette_source& palette) {
     O().palettes.insert_or_assign(object, palette);
+    ++O().revision;
 }
 void PutCopiedObjects(uint32_t destination, bool palette, const std::array<bool, 8>& present, const std::array<mh3_native_texture_binding, 8>& textures,
                       const std::array<mh3_native_palette_source, 8>& colors) {
     auto& o = O();
+    ++o.revision;
     for (uint32_t i = 0; i < 8; i++) {
         if (palette) {
             const uint32_t target = destination + 4 + i * 12;
@@ -90,6 +95,7 @@ void MarkNativeTextureProduced(uint32_t payload, uint64_t generation) {
             throw std::runtime_error("Native texture producer generation went backwards");
         previous = generation;
     }
+    ++O().revision;
     for (auto& item : O().textures)
         if (item.second.source.payload_address == payload)
             mh3_texture_source_updated(&item.second.source, generation);
@@ -116,6 +122,9 @@ void StoreNativeTextureObject(uint32_t object, const mh3_native_texture_binding&
     auto copy = binding;
     mh3_texture_source_updated(&copy.source, ReadNativeTextureGeneration(copy.source.payload_address));
     PutTexture(object, copy);
+}
+uint64_t ReadNativeTextureObjectRevision() {
+    return O().revision;
 }
 mh3_native_texture_binding ReadNativeTextureObject(uint32_t object) {
     const auto& textures = O().textures;

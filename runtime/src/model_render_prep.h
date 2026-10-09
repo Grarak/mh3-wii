@@ -2,10 +2,11 @@
 // setup of one model dispatch (80076220, 800879DC, 80087B34), executed by the
 // render thread against its own state instead of by the game thread.
 //
-// The game thread captures only the dispatch's inputs: the material's resource
-// records (genmode, texture/palette objects, channels, texture SRT), frozen
-// immutable versions of its typed material blocks, the selected lights' masks,
-// the indirect operator and the shape's matrix inputs. Fog and light-set
+// The game thread captures only the dispatch's inputs: a shared immutable
+// record of the material's static inputs (texture/palette objects, frozen
+// pipeline block), its small per-draw records (genmode, channels, texture
+// SRT) and typed group fields (pixel, colours, indirect, texgen), the
+// selected lights' masks, the indirect operator and the shape's matrix inputs. Fog and light-set
 // selection stay on the game thread (they publish the lighting snapshot).
 // The render thread replays the original step order against a host mirror of
 // the G3DState CPU caches and the Render owner's material, texture and post
@@ -18,6 +19,7 @@
 #include "runtime/native/mh3_texture_matrices.h"
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 // MH3_RENDER_PREP: 0 prepares on the game thread (the original path),
 // 1 (default) defers preparation to the render thread, 2 (development) runs
@@ -25,6 +27,39 @@
 // against it for every dispatch.
 enum class ModelPrepMode : uint8_t { GameThread, Deferred, Verify };
 ModelPrepMode NativeModelPrepMode();
+
+// A material's static dispatch inputs, immutable once captured and shared
+// with the render thread: its texture and palette object records with their
+// typed bindings, and its frozen pipeline block (TEV stages, swaps and the
+// coordinate map, which change only with a new material version). Captures
+// reuse a record while these are unchanged; a replaced record is deleted
+// after the packets recorded meanwhile have rendered.
+struct ModelPrepMaterial {
+    uint8_t palette_objects[100]{}, texture_objects[260]{};
+    mh3_native_palette_source palettes[8]{};
+    mh3_native_texture_binding textures[8]{};
+    uint32_t pipeline_address = 0;
+    // Owned by its live block; valid while the record is (see CaptureModelPrepMaterial).
+    const NativeFrozenMaterialBlock* pipeline = nullptr;
+};
+// The texture SRT inputs of a dispatch whose material has a TEXTURE_SRT
+// record (written by texture animations every frame).
+struct ModelPrepSrt {
+    mh3_native_texture_srt srt{};
+    mh3_matrix34 maps[8]{};
+    uint32_t map_sources[8]{};
+};
+// A packet's SRT inputs, referenced by index from its items.
+struct ModelPrepSrtList {
+    std::vector<ModelPrepSrt> items;
+    uint32_t count = 0;
+    ModelPrepSrt& Next(int32_t* index) {
+        if (count == items.size())
+            items.emplace_back();
+        *index = int32_t(count);
+        return items[count++];
+    }
+};
 
 struct ModelPrepInputs {
     uint32_t flags = 0;      // dispatch flags (2: no primitive setup, 4: front cull, 8: lights off)
@@ -37,21 +72,25 @@ struct ModelPrepInputs {
     // Indirect operator from 80077814 (dispatch descriptor), when nonzero.
     bool indirect_operator = false;
     mh3_indirect_output op{};
+    // The material's shared static inputs (null when the material steps don't run).
+    const ModelPrepMaterial* record = nullptr;
+    // Small resource records, copied per dispatch.
     uint8_t depth_before_texture = 0;
     uint8_t genmode[8]{};
-    uint8_t palette_objects[100]{}, texture_objects[260]{};
-    mh3_native_palette_source palettes[8]{};
-    mh3_native_texture_binding textures[8]{};
-    uint32_t pipeline_address = 0;
-    // Frozen copies are owned by their live blocks; a replaced copy is
-    // deleted only after the packets recorded meanwhile have rendered.
-    const NativeFrozenMaterialBlock *pipeline = nullptr, *pixel = nullptr, *colors = nullptr, *indirect = nullptr, *texgen = nullptr;
     uint8_t channels[40]{};
+    // The fields the pixel, colour, indirect and texgen typed blocks publish
+    // (mh3_material_group_publish), copied per dispatch: per-instance
+    // alpha compare, blend and konst colours change between draws.
+    uint8_t groups = 0; // 1 << mh3_model_material_block of each group copied
+    uint8_t texgen_count = 0;
+    mh3_pack_pixel_inputs pixel{};
+    mh3_pack_tev_color color[4]{}, konst[4]{};
+    mh3_pack_indirect_matrix indirect_matrix[3]{};
+    mh3_pack_indirect_stage indirect[4]{};
+    mh3_pack_texgen texgen[8]{};
     uint32_t light_masks[4]{};
     uint8_t ambient[4]{};
-    mh3_native_texture_srt srt{};
-    mh3_matrix34 maps[8]{};
-    uint32_t map_sources[8]{};
+    int32_t srt = -1; // index in the packet's ModelPrepSrtList, or -1
     uint8_t shape_cache[12]{};
     // Shape matrix inputs (80087B34).
     int32_t matrix_id = 0;
@@ -80,8 +119,11 @@ ModelPrepMirror& RenderModelPrepMirror();
 void ForgetNativeModelPrepCaches();
 
 // Game thread capture helpers (model_render_prep.cpp).
-// Reads the material's resource records and freezes its typed blocks.
-void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scope& scope);
+// Reads the material's resource records: the shared record (made or reused),
+// the per-dispatch records and typed groups, and its texture SRT into `srts`.
+void CaptureModelPrepMaterial(ModelPrepInputs& in, const mh3_model_material_scope& scope, ModelPrepSrtList& srts);
+// Copies one typed block's group fields into `in` (in.groups).
+void CaptureModelPrepGroup(ModelPrepInputs& in, uint32_t address, mh3_model_material_block kind);
 // Pending G3DState::Invalidate fields since the previous capture.
 uint32_t TakeNativeModelPrepInvalidate();
 void NoteNativeModelPrepInvalidate(uint32_t fields);
@@ -93,5 +135,5 @@ struct ModelPrepShapeResult {
     mh3_shape_matrix_input input{};
     mh3_model_texcoord_sizes coordinate_sizes{};
 };
-void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPrepInputs& in, const mh3_matrix34* direct_position, const mh3_matrix34* direct_normal,
-                      ModelPrepShapeResult* shape);
+void ExecuteModelPrep(NativeOwner owner, ModelPrepMirror& mirror, const ModelPrepInputs& in, const ModelPrepSrt* srt, const mh3_matrix34* direct_position,
+                      const mh3_matrix34* direct_normal, ModelPrepShapeResult* shape);

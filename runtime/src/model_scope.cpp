@@ -444,6 +444,7 @@ struct ModelPose {
 struct ModelStore {
     std::vector<ModelItem> items;
     std::vector<ModelPose> poses;
+    ModelPrepSrtList srts;
     // Poses are shared only within one model draw: a later view pass may
     // rewrite the same matrix arrays.
     size_t itemCount = 0, poseCount = 0, poseShared = 0;
@@ -455,12 +456,14 @@ ModelStore scratch;
 ModelStore& Store() {
     if (!NativeGraphicsFrameShouldRender()) {
         scratch.itemCount = scratch.poseCount = scratch.poseShared = 0;
+        scratch.srts.count = 0;
         return scratch;
     }
     auto& store = stores.at(NativeFramePacketSlot());
     if (store.sequence != NativeFramePacketSequence()) {
         store.sequence = NativeFramePacketSequence();
         store.itemCount = store.poseCount = store.poseShared = 0;
+        store.srts.count = 0;
     }
     return store;
 }
@@ -677,8 +680,8 @@ void ExecuteNativeModelDraw(uint32_t slot, uint32_t index) {
         return;
     }
     ModelPrepShapeResult shape;
-    ExecuteModelPrep(NativeOwner::Render, RenderModelPrepMirror(), item.prep, item.direct_position ? &item.storage.direct_position : nullptr,
-                     item.direct_normal ? &item.storage.direct_normal : nullptr, &shape);
+    ExecuteModelPrep(NativeOwner::Render, RenderModelPrepMirror(), item.prep, item.prep.srt >= 0 ? &capture.srts.items[item.prep.srt] : nullptr,
+                     item.direct_position ? &item.storage.direct_position : nullptr, item.direct_normal ? &item.storage.direct_normal : nullptr, &shape);
     if (!item.prep.visible)
         return;
     ApplyNativeRenderRaster();
@@ -802,9 +805,9 @@ void PrePrimitiveSources(const ShapeContext& context) {
             StoreNativeVertexSource(i, sources.source[i]);
 }
 uint64_t capturedSelectors = UINT64_MAX, capturedSequence = UINT64_MAX;
-void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_model_material_scope& scope, bool ignore) {
+void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_model_material_scope& scope, bool ignore, ModelPrepSrtList& srts) {
     if (!ignore) {
-        CaptureModelPrepMaterial(in, scope);
+        CaptureModelPrepMaterial(in, scope, srts);
         const auto& lights = GetNativeModelLights();
         in.light_masks[0] = lights.diffuse_color;
         in.light_masks[1] = lights.diffuse_alpha;
@@ -813,11 +816,13 @@ void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_
         std::memcpy(in.ambient, &lights.ambient, 4);
     } else {
         in.present = 0;
-        in.pipeline_address = 0;
-        in.pipeline = in.pixel = in.colors = in.texgen = nullptr;
+        in.record = nullptr;
+        in.groups = 0;
+        in.srt = -1;
         // An ignored material still applies a replaced indirect matrix block.
         const uint32_t indirect = (scope.replacement_mask & (1u << MH3_MAT_INDIRECT_MATRIX_SCALE)) ? scope.selected.resource_slots[MH3_MAT_INDIRECT_MATRIX_SCALE] : 0;
-        in.indirect = indirect ? FreezeNativeLiveMaterialBlock(ReadNativeLiveMaterialBlockView(indirect, MH3_MODEL_MATERIAL_INDIRECT)) : nullptr;
+        if (indirect)
+            CaptureModelPrepGroup(in, indirect, MH3_MODEL_MATERIAL_INDIRECT);
     }
     in.indirect_operator = d.descriptor != 0;
     if (in.indirect_operator) {
@@ -899,7 +904,7 @@ void DispatchDeferred(const NativeModelDispatch& d) {
                 capturedSelectors = selectors;
                 capturedSequence = NativeFramePacketSequence();
             }
-            CaptureInputs(in, d, scope, ignore);
+            CaptureInputs(in, d, scope, ignore, capture->srts);
         }
     }
     uint32_t visible = 0;
@@ -937,6 +942,7 @@ void DispatchDeferred(const NativeModelDispatch& d) {
 // inputs on the Shadow owner from the same starting state and compare.
 struct Verify {
     ModelPrepMirror mirror;
+    ModelPrepSrtList srts;
     uint64_t dispatches = 0, mismatches = 0, reported = 0;
 } verify;
 void DispatchVerify(const NativeModelDispatch& d) {
@@ -961,7 +967,8 @@ void DispatchVerify(const NativeModelDispatch& d) {
     in.flags = d.flags;
     in.material = !ignore;
     in.visible = lastSubmitted != nullptr;
-    CaptureInputs(in, d, scope, ignore);
+    verify.srts.count = 0;
+    CaptureInputs(in, d, scope, ignore, verify.srts);
     mh3_matrix34 position{}, normal{};
     if (in.visible) {
         const auto shape = ResolveShape(d.shape);
@@ -976,7 +983,8 @@ void DispatchVerify(const NativeModelDispatch& d) {
         }
     }
     ModelPrepShapeResult shape;
-    ExecuteModelPrep(NativeOwner::Shadow, m, in, d.position ? &position : nullptr, d.position && d.normal ? &normal : nullptr, &shape);
+    ExecuteModelPrep(NativeOwner::Shadow, m, in, in.srt >= 0 ? &verify.srts.items[in.srt] : nullptr, d.position ? &position : nullptr, d.position && d.normal ? &normal : nullptr,
+                     &shape);
     std::string diff = CompareNativeMaterialOwners(NativeOwner::Game, NativeOwner::Shadow);
     if (!EqualNativeTextureBindings(NativeOwner::Game, NativeOwner::Shadow))
         diff += " textures";
