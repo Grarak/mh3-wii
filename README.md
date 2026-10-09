@@ -158,11 +158,20 @@ and executable modifications. It does not claim those operations succeeded.
 
 Aurora already supports native Metal in the supplied WiiCompiled checkout
 (`aurora-main/lib/dawn/MetalBinding.mm`), so MoltenVK is unnecessary. The current
-MH3 executable has no renderer linked yet. `./scripts/build-aurora.sh` builds
-Aurora core and GX libraries with Metal enabled in `build/aurora`, using the
-sibling source (override with `AURORA_ROOT`). Both libraries build successfully;
-this does not yet verify a rendered frame. The local CMake hook fixes SDK header
-ordering and standard-header visibility without changing the sibling checkout.
+headless executable remains available at `build/native/MH3`.
+`./scripts/build-aurora.sh` builds an Aurora-linked executable at `build/metal/MH3`,
+using the sibling source (override with `AURORA_ROOT`). Dependency sources are
+cached under `build/aurora/_deps`. The local CMake hook fixes SDK header ordering
+and standard-header visibility without changing the sibling checkout.
+
+`build/metal/MH3 --graphics-check` initializes native Metal, opens a 640×480
+window, submits 30 frames, and exits. This checks the host renderer path only;
+guest GX bridging and actual game frames are still incomplete. Renderer caches
+are kept under `saves/graphics`. On this Apple M2 Max, the check selected Metal,
+created a BGRA8Unorm presentation surface, submitted all 30 frames, and exited
+successfully. The Aurora-linked executable also passes the runtime self-test.
+A sandbox that denies macOS display access must allow the graphics run to access
+the desktop; a denied display is not a Metal backend failure.
 
 ## Tools and evidence
 
