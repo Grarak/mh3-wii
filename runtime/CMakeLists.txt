@@ -338,6 +338,11 @@ if(VITA)
   # pthread-embedded fixes: leaking mutex semaphores, polling waits.
   target_sources(MH3 PRIVATE vita/pthread_embedded.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=pte_osSemaphorePost" "-Wl,--wrap=pte_cancellable_wait")
+
+  # gettimeofday from the process time instead of a system call (6 us):
+  # steady_clock, and with it the guest time base, read it.
+  target_sources(MH3 PRIVATE vita/fast_clock.c)
+  target_link_options(MH3 PRIVATE "-Wl,--wrap=gettimeofday")
   option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)
 
   if(MH3_VITA_FAST_TLS)
