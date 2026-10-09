@@ -380,13 +380,15 @@ extern "C" void MH3_ObjectListScrollUpdate(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8031ED54, MH3_ObjectListScrollUpdate, "ObjectListScrollUpdate");
 
+// MH3_TRACE=srt (development builds): the texture-SRT animation objects'
+// (AnmObjTexSrtRes, vtable 0x8058DC9x) virtual SetFrame (0x8006D0E8, f1 the
+// frame) and UpdateFrame (0x8006D668): per object and caller the first call
+// and every 120th, with its FrameCtrl (+0x18: frame, rate), NW4R's base rate
+// and the step counter. A frame set once a step from a count of the game's
+// own runs as fast as the step rate. Registered in every build: the build's
+// generated dispatch profile names these natives, so a release build without
+// them stopped at the first quest ("omits translated winner 0x8006d668").
 #ifdef MH3_DEVELOPMENT
-// MH3_TRACE=srt: the texture-SRT animation objects' (AnmObjTexSrtRes,
-// vtable 0x8058DC9x) virtual SetFrame (0x8006D0E8, f1 the frame) and
-// UpdateFrame (0x8006D668): per object and caller the first call and every
-// 120th, with its FrameCtrl (+0x18: frame, rate), NW4R's base rate and the
-// step counter. A frame set once a step from a count of the
-// game's own runs as fast as the step rate.
 namespace {
 void TraceTexSrtFrame(const char* what, CpuContext* ctx) {
     static std::unordered_map<uint64_t, uint32_t> calls;
@@ -397,26 +399,28 @@ void TraceTexSrtFrame(const char* what, CpuContext* ctx) {
                      Memory::ReadFloat32(object + 0x18), Memory::ReadFloat32(object + 0x1C), Memory::ReadFloat32(0x80793628), Memory::Read32(0x8065AA6C));
 }
 } // namespace
+#endif
 
 extern "C" void func_8006D0E8(CpuContext* ctx);
 extern "C" void MH3_AnmTexSrtSetFrame(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
     static const bool traced = TraceOptions().Has("srt");
 
     if (traced) [[unlikely]]
         TraceTexSrtFrame("set", ctx);
-
+#endif
     func_8006D0E8(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8006D0E8, MH3_AnmTexSrtSetFrame, "AnmTexSrtSetFrame");
 
 extern "C" void func_8006D668(CpuContext* ctx);
 extern "C" void MH3_AnmTexSrtUpdateFrame(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
     static const bool traced = TraceOptions().Has("srt");
 
     if (traced) [[unlikely]]
         TraceTexSrtFrame("update", ctx);
-
+#endif
     func_8006D668(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8006D668, MH3_AnmTexSrtUpdateFrame, "AnmTexSrtUpdateFrame");
-#endif
