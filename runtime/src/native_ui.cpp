@@ -7,6 +7,7 @@
 #include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "native_shade_snapshot.h"
+#include "port_check.h"
 #include "../native/mh3_ui.h"
 #include "../native/mh3_system_ui.h"
 #include "../native/adapters/model_state_bridge.h"
@@ -955,6 +956,42 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
     Memory::Write32(font + 0x168CC, queued);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8005C174, MH3_FontFlush, "FontFlush");
+
+// 0x8005B52C flfntStackReset: empties the font's draw stacks before a frame's
+// logic, once a frame. Each of the two stack banks (+0x15094, +0x168C8 u16
+// counts) gets its 32 runs of 32 u16 slots (+0x15098, 0x800 bytes each) set
+// to 0xFFFF; the 1024 u16 entries at +0x160A0 and the words +0x15090,
+// +0x16098, +0x1505C (queued), +0x168CC (flushed), +0x1507C and +0x15080 are
+// zeroed; +0x44 points at bank +0x50's 0x15000-byte buffer at +0x54. The
+// original stored halfword by halfword (about 3,000 stores a frame).
+namespace {
+void FontStackReset(CpuContext*) {
+    const uint32_t font = Memory::Read32(0x80796D98);
+
+    if (!font)
+        return;
+
+    for (uint32_t bank = 0; bank < 2; ++bank) {
+        Memory::Write16(font + 0x15094 + bank * 2, 0);
+        Memory::Write16(font + 0x168C8 + bank * 2, 0);
+    }
+
+    std::memset(Memory::GetPointer(font + 0x15098, 0x1000), 0xFF, 0x1000);
+    Memory::Write32(font + 0x15090, 0);
+    std::memset(Memory::GetPointer(font + 0x160A0, 0x800), 0, 0x800);
+
+    for (const uint32_t word : {0x16098u, 0x1505Cu, 0x168CCu, 0x1507Cu, 0x15080u})
+        Memory::Write32(font + word, 0);
+
+    Memory::Write32(font + 0x44, font + Memory::Read32(font + 0x50) * 0x15000 + 0x54);
+}
+} // namespace
+
+extern "C" void func_8005B52C(CpuContext* cpu);
+extern "C" void MH3_FontStackReset(CpuContext* cpu) {
+    PortCheck::Call(cpu, "FontStackReset", func_8005B52C, FontStackReset);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8005B52C, MH3_FontStackReset, "FontStackReset");
 
 // net_data.rso, the online menus (connection, terms, CAPCOM ID), draws its
 // sprites with GX itself. Two overlay functions, decompiled with Ghidra and

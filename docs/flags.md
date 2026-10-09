@@ -64,6 +64,7 @@ changes the interval).
 | `every` | check every call (default: one check per 500 ms, per port one per 2 s) |
 | `dump=DIR` | the first differing GX streams, as `NAME-N-{original,port}.gx` |
 | `originals` | sound engine entry points not named run their translated originals ([native audio](native-audio.md#checking-the-engine-port)) |
+| `tolerance=R` | approximated ports: two differing words that read as finite floats within R of each other (relative to the larger, absolute below 1) count as close, not different; a `words within the tolerance` line counts them |
 | `P:0xADDR`, `E:0xADDR`, `C:0xADDR` | fuzz: player and enemy functions called from made-up states (name their ports too); `C:` starts something once |
 | `fuzz-after=N` | the fuzz hooks fire on their Nth call (default 900) |
 | `A:0xADDR[:KIND]` | fuzz an enemy action: run once (from the player's hook, from `fuzz-after` on) on an active enemy of that kind (+3), one in the current area if any, over 4 × `fuzz-samples` states (+5 each of 0-15, substate, count +0x20, motion frame, the event demo clock, the step counter); for actions only an event demo reaches (`monster_intros.cpp`) or that no organic run reaches soon (name their ports too) |

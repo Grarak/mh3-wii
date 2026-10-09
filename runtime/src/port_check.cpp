@@ -8,7 +8,10 @@
 #include "gx_host.h"
 #include "memory.h"
 
+#include <algorithm>
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +27,7 @@ namespace {
 // MH3_PORT_CHECK (port_check.h, docs/flags.md): port names or `all`, fuzz
 // entries (P:/E:/C:0xADDR) and the options.
 const DevOptions& Options() {
-    static const DevOptions options("MH3_PORT_CHECK", {"every", "originals", "dump", "fuzz-after", "fuzz-samples", "fuzz-demo", "fuzz-frames"}, DevOptions::Words::Allowed);
+    static const DevOptions options("MH3_PORT_CHECK", {"every", "originals", "dump", "fuzz-after", "fuzz-samples", "fuzz-demo", "fuzz-frames", "tolerance"}, DevOptions::Words::Allowed);
     return options;
 }
 } // namespace
@@ -87,6 +90,22 @@ uint32_t Word(const std::vector<uint8_t>& b, size_t i) {
     return uint32_t(b[i]) << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3];
 }
 
+// tolerance=R (approximated ports): two differing words that read as finite
+// floats within R of each other (relative to the larger, absolute below 1)
+// count as close, not different; the summary counts them.
+bool Close(uint32_t a, uint32_t b) {
+    static const double tolerance = [] {
+        const char* value = Options().Value("tolerance");
+        return value ? std::strtod(value, nullptr) : 0.0;
+    }();
+
+    if (tolerance <= 0)
+        return false;
+
+    const double x = std::bit_cast<float>(a), y = std::bit_cast<float>(b);
+    return std::isfinite(x) && std::isfinite(y) && std::fabs(x - y) <= tolerance * std::max({1.0, std::fabs(x), std::fabs(y)});
+}
+
 } // namespace
 #endif
 
@@ -135,7 +154,7 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     Snapshot actual;
     actual.Save();
     const uint32_t sp = entry.gpr[1];
-    size_t differences = 0;
+    size_t differences = 0, close = 0;
     std::string lines;
 
     for (size_t i = 0; i + 4 <= actual.bytes.size(); i += 4) {
@@ -154,6 +173,11 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
         // Callee stack frames, and the LR save word the callee stores in the caller's.
         if (address < sp + 8 && address >= sp - 0x10000)
             continue;
+
+        if (Close(a, b)) {
+            ++close;
+            continue;
+        }
 
         if (++differences <= 32) {
             char line[96];
@@ -214,6 +238,11 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     } else if ((checks & (checks - 1)) == 0) {
         std::printf("MH3 port check: %s matches the original (%u checks)\n", name, checks);
     }
+
+    static uint64_t closeWords = 0;
+
+    if (close && (closeWords += close, (checks & (checks - 1)) == 0))
+        std::printf("MH3 port check: %s: %llu words within the tolerance so far\n", name, static_cast<unsigned long long>(closeWords));
 
     std::fflush(stdout);
 #else

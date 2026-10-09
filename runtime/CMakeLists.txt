@@ -270,7 +270,7 @@ add_executable(MH3
   ${MKW_BASE_REGISTRATION_SOURCES})
 target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/model_submission_trace.cpp
   native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
-target_sources(MH3 PRIVATE src/ground_hit.cpp src/creature_groups.cpp src/scene_changes.cpp)
+target_sources(MH3 PRIVATE src/ground_hit.cpp src/land_sweep.cpp src/creature_groups.cpp src/scene_changes.cpp)
 set_source_files_properties(src/ground_hit.cpp
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE src/model_draw_dispatch.cpp native/mh3_model_draw_dispatch.c)
