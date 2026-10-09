@@ -1,5 +1,6 @@
 #include "abi_bridge.h"
 #include "ios_host.h"
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <deque>
@@ -19,6 +20,7 @@ std::map<uint32_t, std::string> devices;
 struct EventHook { uint32_t fd, output, callback, argument; };
 std::optional<EventHook> eventHook;
 std::deque<IosCompletion> completions;
+std::array<uint8_t, 20> ledSettings{}, dimmingSettings{};
 uint32_t nextHandle = 100;
 int32_t Error() {
     switch (errno) {
@@ -90,7 +92,13 @@ REGISTER_NATIVE_FUNCTION(0x804BB950, MH3_IPCWriteReg);
 
 extern "C" void MH3_IOSOpen(CpuContext* ctx) {
     const std::string path = GuestPath(ctx->gpr[3]);
-    if (path == "/dev/stm/immediate" || path == "/dev/stm/eventhook") {
+    // No WiiConnect24 background-download daemon is running on the host.
+    // Let the SDK's existing unavailable-service path handle offline startup.
+    if (path == "/dev/net/kd/request" || path == "/dev/net/kd/time") {
+        ctx->gpr[3] = -6; return;
+    }
+    if (path == "/dev/stm/immediate" || path == "/dev/stm/eventhook" ||
+        path == "/dev/fs" || path == "/dev/es") {
         uint32_t handle = nextHandle++;
         devices.emplace(handle, path);
         ctx->gpr[3] = handle;
@@ -158,3 +166,110 @@ extern "C" void MH3_IOSIoctlAsync(CpuContext* ctx) {
     throw std::runtime_error("IOS async ioctl needs a host implementation");
 }
 REGISTER_NATIVE_FUNCTION(0x804BCE70, MH3_IOSIoctlAsync);
+
+extern "C" void MH3_IOSIoctl(CpuContext* ctx) {
+    const auto device = devices.find(ctx->gpr[3]);
+    if (device == devices.end()) { ctx->gpr[3] = -4; return; }
+    const uint32_t command = ctx->gpr[4];
+    if (device->second == "/dev/stm/immediate") {
+        // Hardware presentation settings, retained without driving Wii LEDs.
+        // IDs/layout: Dolphin Core/IOS/STM/STM.h and MH3 0x804D6230.
+        if (command == 0x6002 || command == 0x5001) {
+            if (ctx->gpr[6] < 20 || !Memory::Contains(ctx->gpr[5], 20)) {
+                ctx->gpr[3] = -4; return;
+            }
+            auto& settings = command == 0x6002 ? ledSettings : dimmingSettings;
+            for (uint32_t i = 0; i < 20; ++i) settings[i] = Memory::Read8(ctx->gpr[5] + i);
+            ctx->gpr[3] = 0;
+            return;
+        }
+        if (command == 0x3002) {
+            if (!eventHook) { ctx->gpr[3] = -6; return; }
+            TriggerStmEvent(0);
+            ctx->gpr[3] = 0;
+            return;
+        }
+    }
+    throw std::runtime_error("IOS ioctl needs a host implementation: " + device->second +
+                             " command " + std::to_string(command));
+}
+REGISTER_NATIVE_FUNCTION(0x804BCFB0, MH3_IOSIoctl);
+
+// ES_GetTitleID and ES_GetDataDir, verified at MH3's ESP wrappers
+// 0x804B0060 and 0x804AFFC0. Title ID comes from this disc's signed TMD.
+extern "C" void MH3_IOSIoctlv(CpuContext* ctx) {
+    const auto device = devices.find(ctx->gpr[3]);
+    if (device == devices.end()) { ctx->gpr[3] = -4; return; }
+    const uint32_t command = ctx->gpr[4], inputs = ctx->gpr[5], outputs = ctx->gpr[6];
+    const uint32_t vectors = ctx->gpr[7];
+    if (inputs > 16 || outputs > 16 || !Memory::Contains(vectors, (inputs + outputs) * 8)) {
+        ctx->gpr[3] = -4; return;
+    }
+    if (device->second == "/dev/es" && outputs == 1 &&
+        ((command == 0x20 && inputs == 0) || (command == 0x1D && inputs == 1))) {
+        const uint32_t out = Memory::Read32(vectors + inputs * 8);
+        const uint32_t size = Memory::Read32(vectors + inputs * 8 + 4);
+        constexpr uint64_t title = 0x00010000524D4850ull;
+        constexpr char directory[] = "/title/00010000/524d4850/data";
+        const uint32_t required = command == 0x20 ? 8 : sizeof(directory);
+        if (size < required || !Memory::Contains(out, size)) { ctx->gpr[3] = -4; return; }
+        if (command == 0x20) Memory::Write64(out, title);
+        else {
+            const uint32_t in = Memory::Read32(vectors);
+            if (Memory::Read32(vectors + 4) != 8 || !Memory::Contains(in, 8)) {
+                ctx->gpr[3] = -4; return;
+            }
+            if (Memory::Read64(in) != title) { ctx->gpr[3] = -106; return; }
+            for (uint32_t i = 0; i < sizeof(directory); ++i) Memory::Write8(out + i, directory[i]);
+        }
+        ctx->gpr[3] = 0;
+        return;
+    }
+    throw std::runtime_error("IOS ioctlv needs a host implementation: " + device->second +
+                             " command " + std::to_string(command));
+}
+REGISTER_NATIVE_FUNCTION(0x804BD310, MH3_IOSIoctlv);
+
+namespace {
+void AsyncFile(CpuContext* ctx, void (*operation)(CpuContext*), uint32_t callback, uint32_t argument) {
+    if (!callback) { ctx->gpr[3] = -4; return; }
+    operation(ctx);
+    completions.push_back({callback, static_cast<int32_t>(ctx->gpr[3]), argument});
+    ctx->gpr[3] = 0;
+}
+}
+extern "C" void MH3_IOSOpenAsync(CpuContext* ctx) {
+    AsyncFile(ctx, MH3_IOSOpen, ctx->gpr[5], ctx->gpr[6]);
+}
+REGISTER_NATIVE_FUNCTION(0x804BC3E0, MH3_IOSOpenAsync);
+extern "C" void MH3_IOSReadAsync(CpuContext* ctx) {
+    AsyncFile(ctx, MH3_IOSRead, ctx->gpr[6], ctx->gpr[7]);
+}
+REGISTER_NATIVE_FUNCTION(0x804BC970, MH3_IOSReadAsync);
+extern "C" void MH3_IOSCloseAsync(CpuContext* ctx) {
+    AsyncFile(ctx, MH3_IOSClose, ctx->gpr[4], ctx->gpr[5]);
+}
+REGISTER_NATIVE_FUNCTION(0x804BC750, MH3_IOSCloseAsync);
+
+// Boot's SCCheckStatus loop is a safe event-pump boundary before OS scheduling
+// starts. Preserve the polling caller's full CPU state around each callback.
+// Process a bounded batch so callbacks that resubmit cannot starve the caller.
+void PumpIosCompletions(CpuContext* ctx) {
+    for (unsigned i = 0; i < 32; ++i) {
+        auto completion = TakeIosCompletion();
+        if (!completion) break;
+        const CpuContext saved = *ctx;
+        try {
+            ctx->gpr[3] = completion->result;
+            ctx->gpr[4] = completion->argument;
+            InvokeIndirectCpu(completion->callback, ctx);
+        } catch (...) { *ctx = saved; throw; }
+        *ctx = saved;
+    }
+}
+extern "C" void func_804DB770(CpuContext*);
+extern "C" void MH3_SCCheckStatus(CpuContext* ctx) {
+    PumpIosCompletions(ctx);
+    func_804DB770(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804DB770, MH3_SCCheckStatus, "MH3_SCCheckStatus");
