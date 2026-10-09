@@ -1298,6 +1298,75 @@ static void render_impl(std::vector<RenderPass>& renderPasses, int32_t interpola
 #endif
 }
 
+// Experimental CPU scheduling at the detached-command boundary. Do not cross
+// viewport/scissor, clear, copy/pass, blend, or depth-state dependencies. This
+// groups pass types, not textures: coplanar order between categories still needs
+// visual validation before enabling it by default.
+static void group_cutout_draws(std::vector<RenderPass>& passes) {
+  static const bool enabled = [] {
+    const char* value = std::getenv("AURORA_GROUP_CUTOUTS");
+    return value && std::strcmp(value, "1") == 0;
+  }();
+  if (!enabled) return;
+  ZoneScopedN("CPU cutout grouping");
+  const auto pipeline = [](const Command& command) -> const Pipeline* {
+    if (command.type != CommandType::Draw || command.data.draw.type != ShaderType::GX) return nullptr;
+    const auto* p = find_pipeline_object(command.data.draw.gx.pipeline);
+    if (!p || !p->program || p->program->replaces_depth()) return nullptr;
+    const auto& state = p->raster;
+    if (state.blend || !state.depthTest || !state.depthWrite || !state.colorMask[0] ||
+        !state.colorMask[1] || !state.colorMask[2]) return nullptr;
+    if (state.depthFunc != GL_LESS && state.depthFunc != GL_LEQUAL &&
+        state.depthFunc != GL_GREATER && state.depthFunc != GL_GEQUAL) return nullptr;
+    return p;
+  };
+  uint32_t regions = 0, draws = 0, transitionsBefore = 0, transitionsAfter = 0;
+  for (auto& pass : passes) {
+    auto& commands = pass.commands;
+    for (size_t begin = 0; begin < commands.size();) {
+      const auto* first = pipeline(commands[begin]);
+      if (!first) { ++begin; continue; }
+      size_t end = begin + 1;
+      bool lastDiscard = first->program->uses_discard();
+      bool anyDiscard = lastDiscard, anyOpaque = !lastDiscard;
+      uint32_t transitions = 0;
+      while (end < commands.size()) {
+        const auto* next = pipeline(commands[end]);
+        if (!next || next->raster.depthFunc != first->raster.depthFunc ||
+            next->raster.colorMask != first->raster.colorMask) break;
+        const bool discard = next->program->uses_discard();
+        transitions += discard != lastDiscard;
+        lastDiscard = discard;
+        anyDiscard |= discard;
+        anyOpaque |= !discard;
+        ++end;
+      }
+      if (anyDiscard && anyOpaque) {
+        // Command's tagged union is constructible but not assignable. Copy only
+        // this eligible region, retaining original order within each category.
+        CommandList ordered;
+        ordered.reserve(end - begin);
+        for (const bool discard : {false, true}) {
+          for (size_t i = begin; i < end; ++i) {
+            if (pipeline(commands[i])->program->uses_discard() == discard)
+              ordered.push_back(commands[i]);
+          }
+        }
+        for (size_t i = begin; i < end; ++i) {
+          std::destroy_at(&commands[i]);
+          std::construct_at(&commands[i], std::move(ordered[i - begin]));
+        }
+        ++regions;
+        draws += end - begin;
+        transitionsBefore += transitions;
+        ++transitionsAfter;
+      }
+      begin = end;
+    }
+  }
+  port_capture::schedule(g_frameIndex, regions, draws, transitionsBefore, transitionsAfter);
+}
+
 void seal_frame(SealedFrame& out) noexcept {
   out.data().depthMapping = depth_peek::capture_frame_mapping();
   out.data().skipDraws = frame_skipped();
@@ -1305,6 +1374,16 @@ void seal_frame(SealedFrame& out) noexcept {
   auto& passes = out.data().passes;
   recycle_render_passes(passes);
   passes.swap(g_renderPasses);
+  if (!out.data().skipDraws) group_cutout_draws(passes);
+  if (!out.data().skipDraws && port_capture::enabled()) {
+    for (u32 i = 0; i < passes.size(); ++i) {
+      const auto& pass = passes[i];
+      port_capture::pass(g_frameIndex, i, pass.color.get(), pass.depth.get(),
+          pass.resolveTarget ? pass.resolveTarget->texture.get() : nullptr,
+          pass.resolveSourceSnapshot ? pass.resolveSourceSnapshot->texture.get() : nullptr,
+          pass.targetSize.width, pass.targetSize.height, pass.commands.size());
+    }
+  }
   out.data().retiredBindGroups.clear();
   out.data().retiredBindGroups.swap(g_retiredBindGroups);
 #ifdef AURORA_GFX_DEBUG_GROUPS

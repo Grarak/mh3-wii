@@ -38,6 +38,23 @@ void write(const std::filesystem::path& path, std::string_view source) {
 }
 } // namespace
 bool enabled() noexcept { return capture().events != nullptr; }
+void pass(uint32_t frame, uint32_t index, const void* color, const void* depth,
+          const void* resolve, const void* snapshot, uint32_t width, uint32_t height,
+          uint32_t commands) noexcept {
+  auto& c = capture();
+  if (!c.events || frame % c.drawInterval != 0) return;
+  std::lock_guard lock(c.mutex);
+  std::fprintf(c.events, "pass_plan\t%u\t%u\t%p\t%p\t%p\t%p\t%u\t%u\t%u\n",
+               frame, index, color, depth, resolve, snapshot, width, height, commands);
+}
+void schedule(uint32_t frame, uint32_t regions, uint32_t draws,
+              uint32_t transitionsBefore, uint32_t transitionsAfter) noexcept {
+  auto& c = capture();
+  if (!c.events || frame % c.drawInterval != 0) return;
+  std::lock_guard lock(c.mutex);
+  std::fprintf(c.events, "schedule\t%u\t%u\t%u\t%u\t%u\n", frame, regions, draws,
+               transitionsBefore, transitionsAfter);
+}
 void draw(const DrawState& s, uint64_t vh, uint64_t fh, uint32_t vertices,
           uint32_t indices, uint32_t instances, bool discard, bool depthReplace) noexcept {
   auto& c = capture();

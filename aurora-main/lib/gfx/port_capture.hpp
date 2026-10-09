@@ -7,6 +7,11 @@
 // Safe on producer and render threads; AURORA_PORT_CAPTURE enables output.
 namespace aurora::gfx::port_capture {
 bool enabled() noexcept;
+void schedule(uint32_t frame, uint32_t regions, uint32_t draws,
+              uint32_t transitionsBefore, uint32_t transitionsAfter) noexcept;
+void pass(uint32_t frame, uint32_t index, const void* color, const void* depth,
+          const void* resolve, const void* snapshot, uint32_t width, uint32_t height,
+          uint32_t commands) noexcept;
 // Kept with the recorded draw, so merged batches and render-thread replay
 // retain the producer's frame and guest origin.
 struct DrawState {
