@@ -28,14 +28,16 @@
 // The window is the free tail of the GX worker's filling chunk
 // (graphics_host.cpp): while it has room a write is a big-endian store into
 // it; otherwise (no worker, GX synchronized, chunk full; `end` null when
-// closed) it goes the full way, GX_HLE_FIFO_WriteBurst.
+// closed) it goes the full way, GX_HLE_FIFO_WriteFull. The translator's
+// coalesced bursts (GX_HLE_FIFO_WriteBurst, a constant size) take the window
+// too: a few stores instead of a call and a memcpy each.
 struct GxFifoWindow {
     uint8_t* next;
     uint8_t* end;
 };
 extern GxFifoWindow gGxFifoWindow;
 extern "C" {
-void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t sizeBytes);
+void GX_HLE_FIFO_WriteFull(const uint8_t* data, uint32_t sizeBytes);
 inline void GX_HLE_FIFO_WriteBytesInline(const uint8_t* bytes, uint32_t size) {
     GxFifoWindow& w = gGxFifoWindow;
     if (static_cast<size_t>(w.end - w.next) >= size) [[likely]] {
@@ -43,7 +45,10 @@ inline void GX_HLE_FIFO_WriteBytesInline(const uint8_t* bytes, uint32_t size) {
         w.next += size;
         return;
     }
-    GX_HLE_FIFO_WriteBurst(bytes, size);
+    GX_HLE_FIFO_WriteFull(bytes, size);
+}
+inline void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t sizeBytes) {
+    GX_HLE_FIFO_WriteBytesInline(data, sizeBytes);
 }
 inline void GX_HLE_FIFO_Write8(uint8_t val) { GX_HLE_FIFO_WriteBytesInline(&val, 1); }
 inline void GX_HLE_FIFO_Write16(uint16_t val) {

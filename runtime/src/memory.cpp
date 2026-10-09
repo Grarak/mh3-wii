@@ -124,4 +124,4 @@ template <size_t N>
 void SubmitGuestGxFixed(const uint8_t* data) { SubmitGuestGxBytes(data, N); }
 #endif
 GxFifoWindow gGxFifoWindow{};
-extern "C" void GX_HLE_FIFO_WriteBurst(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }
+extern "C" void GX_HLE_FIFO_WriteFull(const uint8_t* data, uint32_t size) { SubmitGuestGxBytes(data, size); }
