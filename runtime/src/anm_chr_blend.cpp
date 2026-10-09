@@ -72,18 +72,7 @@ double SquareMag(uint32_t v) {
 constexpr uint32_t kResultBytes = 0x4C;
 
 uint32_t BlendResult(CpuContext* ctx) {
-    GuestFrame frame(ctx, 0x170);
-    const uint32_t self = frame.Arg(3), result = frame.Arg(4), node = frame.Arg(5);
-    GuestCall game{ctx};
-    auto call = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints,
-                    std::initializer_list<double> floats = {}) {
-        uint32_t r = 3, f = 1;
-        for (uint32_t v : ints) ctx->gpr[r++] = v;
-        for (double v : floats) ctx->fpr[f++].d = v;
-        fn(ctx);
-        return ctx->fpr[1].d;
-    };
-
+    const uint32_t self = ctx->gpr[3], result = ctx->gpr[4], node = ctx->gpr[5];
     const double zero = Load(0x80798208u), one = Load(0x8079820Cu);
     const int32_t count = int32_t(Read32(self + 0x18));
     const uint32_t anms = Read32(self + 0x1C), weights = Read32(self + 0x20);
@@ -98,11 +87,24 @@ uint32_t BlendResult(CpuContext* ctx) {
         sum = Fadds(sum, weight);
         if (first == 0) first = anm;
     }
+    // The usual cases, none or one animation on the node, need no frame: one
+    // is that animation's result, called as the original calls it.
     if (used == 0) {
         MemoryInline::FlatWrite32(result, 0);
         return result;
     }
-    if (used == 1) return game.Virtual(first, 0x38, {result, node});
+    if (used == 1) return GuestCall{ctx}.Virtual(first, 0x38, {result, node});
+
+    GuestFrame frame(ctx, 0x170);
+    GuestCall game{ctx};
+    auto call = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints,
+                    std::initializer_list<double> floats = {}) {
+        uint32_t r = 3, f = 1;
+        for (uint32_t v : ints) ctx->gpr[r++] = v;
+        for (double v : floats) ctx->fpr[f++].d = v;
+        fn(ctx);
+        return ctx->fpr[1].d;
+    };
 
     const uint32_t mode = Read32(self + 0xC);
     const bool slerp = (mode & 8) != 0, logScale = (mode & 0x10) != 0;

@@ -460,8 +460,10 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         func_800AC35C(ctx);
         return;
     }
-    const CpuContext saved = *ctx;
-    const uint32_t manager = ctx->gpr[3];
+    // One frame for the whole port: Calc runs inside it, and leaving it
+    // restores the caller's registers.
+    GuestFrame frame(ctx, 0x20);
+    const uint32_t manager = frame.Arg(3);
     const List list{manager + kManagerParticles};
     const uint32_t lastCalced = MemoryInline::FlatRead32(manager + kManagerLastCalced);
 
@@ -471,7 +473,9 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
         float momentum;
         Vec3 velocity, position;
     };
-    std::vector<Work> work;
+    // Calc does not nest: one list serves every call.
+    static std::vector<Work> work;
+    work.clear();
     for (uint32_t p = lastCalced ? list.Next(lastCalced) : list.First(); p; p = list.Next(p)) {
         if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive || MemoryInline::FlatRead32(p + kParticleEval) != kEvalWait)
             continue;
@@ -494,9 +498,7 @@ static void ParticleManagerCalcPort(CpuContext* ctx) {
     }
     func_800AC35C(ctx);
     for (const Work& w : work) betweenTicks.Erase(w.address);
-    *ctx = saved;
 
-    GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
     for (const Work& w : work) {
         const uint32_t p = w.address;
