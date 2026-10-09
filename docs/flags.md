@@ -104,7 +104,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_VERIFY`: native paths against what they replace
 
-`MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table]`
+`MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table][,replay]`
 
 | Item | Effect |
 | --- | --- |
@@ -113,6 +113,7 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `cull` | the game-side scene cull draws every model and checks each it would have rejected (`MH3 scene cull` line) |
 | `prep` | models are prepared on the game thread (the original path) and the render thread's preparation of the captured inputs is checked against it for every dispatch |
 | `draw-table` | indexed draw items resolve by address too, compared with their draw table (`MH3 draw tables` line) |
+| `replay` | the render thread compares its material and colour registers at every material geometry draw (effects, particles, layouts) with the game thread's snapshots for that draw; `MH3 replay check` lines report the first mismatches and the counts every 65,536 draws |
 
 ### `MH3_INPUT`: scripted controller input
 

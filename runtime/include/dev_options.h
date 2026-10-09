@@ -248,15 +248,17 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table]: in-run checks of
+// MH3_VERIFY=[pose][,material][,cull][,prep][,draw-table][,replay]: in-run checks of
 // a native path against what it replaces: `pose` compares every reused pose
 // version with the live view arrays (model_pose.cpp), `material` the material
 // programs' coefficients with mh3_shade_fill (native_material.cpp), `cull`
 // draws every model and checks each the scene cull would reject
 // (scene_cull.cpp), `prep` prepares models on the game thread and checks the
-// render thread's preparation against it, and `draw-table` resolves indexed
-// draw items by address too and compares them (model_scope.cpp).
+// render thread's preparation against it, `draw-table` resolves indexed
+// draw items by address too and compares them (model_scope.cpp), and
+// `replay` compares the render thread's material and colours at every
+// material geometry draw with the game thread's (native_frame_packet.cpp).
 inline const DevOptions& VerifyOptions() {
-    static const DevOptions options("MH3_VERIFY", {"pose", "material", "cull", "prep", "draw-table"});
+    static const DevOptions options("MH3_VERIFY", {"pose", "material", "cull", "prep", "draw-table", "replay"});
     return options;
 }

@@ -595,6 +595,33 @@ void Restore(const Packet& p, const StateIndices& state, StateIndices& applied) 
     if (forget)
         ForgetNativeModelPrepCaches();
 }
+#ifdef MH3_DEVELOPMENT
+// MH3_VERIFY=replay: the render thread's material and colours, as Restore
+// left them, against the game thread's snapshots for this draw.
+void VerifyReplayedState(const Packet& p, const StateIndices& state, uint32_t record) {
+    static const bool enabled = VerifyOptions().Has("replay");
+
+    if (!enabled)
+        return;
+
+    static uint32_t checks = 0, mismatches = 0;
+    NativeMaterialSnapshot expected = p.materials.items[state[NATIVE_STATE_MATERIAL]];
+    ApplyNativeColorSnapshot(expected.material, p.colors.items[state[NATIVE_STATE_COLORS]]);
+    const auto& actual = GetNativeMaterialState(NativeOwner::Render);
+    ++checks;
+
+    if (!BytesEqual(&actual, &expected.material, sizeof actual)) {
+        const bool colours = std::memcmp(actual.color, expected.material.color, sizeof actual.color) || std::memcmp(actual.konst, expected.material.konst, sizeof actual.konst);
+
+        if (++mismatches <= 20)
+            std::fprintf(stderr, "MH3 replay check: record %u (after %u) draws with another material%s\n", record, record ? unsigned(p.records[record - 1].kind) : 0u,
+                         colours ? " and other colours" : "");
+    }
+
+    if ((checks & 0xFFFF) == 0)
+        std::fprintf(stderr, "MH3 replay check: %u of %u material geometry draws mismatched\n", mismatches, checks);
+}
+#endif
 #ifdef __vita__
 // GXM reads vertices and indices in place when it executes the frame, so the
 // packet's heap arenas cannot be drawn from: copy each draw into the
@@ -710,6 +737,7 @@ void Draw(const Packet& p) {
     };
 
     forget();
+    bool afterModel = false;
 
     for (uint32_t index = 0; const auto& record : p.records) {
         MH3_RENDER_STAGE(RenderStage::Draw, index << 8 | uint32_t(record.kind));
@@ -753,12 +781,31 @@ void Draw(const Packet& p) {
             continue;
 #endif
         MH3_RENDER_PART(Restore);
-        Restore(p, record.state, applied);
 
+        // A model item prepared here (deferred) set the render thread's draw,
+        // material, post-matrix, texture and colour state for itself. The next
+        // draw that is not a model restores them even where its snapshots are
+        // the ones applied before the model: the game thread's copies did not
+        // change, so their indices did not either. Without this, effect
+        // particles drawn after a model in a sorted bucket took its material
+        // or colours (steam red for a frame, particles drawn as solid quads).
+        if (afterModel && record.kind != Kind::Model) {
+            for (const unsigned component : {NATIVE_STATE_DRAW, NATIVE_STATE_MATERIAL, NATIVE_STATE_POST, NATIVE_STATE_TEXTURES, NATIVE_STATE_COLORS})
+                applied[component] = UINT32_MAX;
+
+            afterModel = false;
+        }
+
+        Restore(p, record.state, applied);
+#ifdef MH3_DEVELOPMENT
+        if (record.kind == Kind::MaterialGeometry)
+            VerifyReplayedState(p, record.state, index - 1);
+#endif
         switch (record.kind) {
         case Kind::Model:
             MH3_RENDER_PART(ModelPrep);
             ExecuteNativeModelDraw(p.slot, record.payload);
+            afterModel = true;
             break;
         case Kind::MaterialGeometry: {
             MH3_RENDER_PART(MaterialGeometry);
