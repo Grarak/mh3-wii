@@ -83,6 +83,7 @@
 {0x8024ACD0u, TickSite::CountdownPastZero},
 {0x8024C224u, TickSite::Countdown, 1},
 {0x8024C314u, TickSite::Countdown},
+{0x80259EFCu, TickSite::PerStep},            // player anchored action (80259E3C, motion 422): offset z (+0x80) += this each step
 {0x80264378u, TickSite::Countdown},          // player condition (80264334): countdown (s16 +0x3EE), fires at 0
 {0x80264500u, TickSite::CountdownEvery, 90}, // player condition: countdown (s16 +0x404), tested % 90 == 0
 {0x80264760u, TickSite::Countdown},          // player condition: countdown (s16 +0x462), fires at 0
