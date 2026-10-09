@@ -1655,6 +1655,9 @@ void ExecuteNativeModelDraw(uint32_t slot, uint32_t index) {
     const auto& item = capture.items.at(index);
 
     if (!item.deferred) {
+#ifdef MH3_DEVELOPMENT
+        MarkNativeRenderModelDraw();
+#endif
         ExecuteModelItem(item, item.input, item.coordinate_sizes);
         return;
     }
@@ -1664,7 +1667,9 @@ void ExecuteNativeModelDraw(uint32_t slot, uint32_t index) {
                      item.direct_position ? &item.storage.direct_position : nullptr, item.direct_normal ? &item.storage.direct_normal : nullptr, &shape);
     if (!item.prep.visible)
         return;
-
+#ifdef MH3_DEVELOPMENT
+    MarkNativeRenderModelDraw();
+#endif
     ApplyNativeRenderRaster();
     ExecuteModelItem(item, shape.input, shape.coordinate_sizes);
 }

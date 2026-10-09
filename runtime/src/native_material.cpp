@@ -1189,6 +1189,7 @@ void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderV
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
 #ifdef MH3_DEVELOPMENT
     ReportMaterialGpu();
+    const NativeRenderPartScope part(NativeRenderSplit::ModelShade);
 #endif
     // A packet item's references (SetNativeMaterialGpuDraw) replace the
     // classification and Animated section derived from the Render owner.
@@ -1398,6 +1399,9 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         return;
 
     const GLuint program = ShadeProgram(variant)->get();
+#ifdef MH3_DEVELOPMENT
+    const NativeRenderPartScope gl(NativeRenderSplit::Gl);
+#endif
     aurora::gl::draw_shaded_mesh(*resident.buffer, layout, bind, resident.mesh->vertex_offset, resident.mesh->vertex_count, resident.mesh->index_offset + mesh.first_index * 2, mesh.index_count,
                                  program, *blocks, units);
 #ifdef MH3_DEVELOPMENT
@@ -1470,6 +1474,9 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
     CountFill(geometry, variant, shading);
+#endif
+#ifdef MH3_DEVELOPMENT
+    const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
     aurora::gl::draw_shaded_geometry(geometry, coordinates, program, *blocks, units);
 }

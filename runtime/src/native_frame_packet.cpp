@@ -245,8 +245,38 @@ void Stage(RenderStage stage, uint32_t step = 0) noexcept {
     renderStep.store(step, std::memory_order_relaxed);
 }
 #define MH3_RENDER_STAGE(...) Stage(__VA_ARGS__)
+
+// MH3_PROFILE=render: the render thread names the part of a packet's replay
+// it is in (NativeRenderSplit) with one relaxed store; a sampler thread
+// counts what it finds every 250 us. No clock reads on the render thread.
+bool renderSplit = false;
+std::atomic<unsigned> renderPart{NativeRenderSplit::Waiting};
+std::array<std::atomic<uint64_t>, NativeRenderSplit::Parts> renderPartSamples{};
+std::atomic<uint64_t> renderSplitPackets{0};
+
+// Detached for the process's life; on core 0 on the Vita, beside the audio
+// mixer and the display callback, off the game and render threads' cores.
+void SampleRenderParts() {
+#ifdef __vita__
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
+#endif
+    for (;;) {
+        renderPartSamples[renderPart.load(std::memory_order_relaxed)].fetch_add(1, std::memory_order_relaxed);
+#ifdef __vita__
+        sceKernelDelayThread(250);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
+#endif
+    }
+}
+#define MH3_RENDER_PART(part)                                                                                                                                  \
+    do {                                                                                                                                                       \
+        if (renderSplit)                                                                                                                                       \
+            renderPart.store(NativeRenderSplit::part, std::memory_order_relaxed);                                                                              \
+    } while (0)
 #else
 #define MH3_RENDER_STAGE(...)
+#define MH3_RENDER_PART(part)
 #endif
 bool synchronous = false;
 
@@ -676,6 +706,7 @@ void Draw(const Packet& p) {
 
     for (uint32_t index = 0; const auto& record : p.records) {
         MH3_RENDER_STAGE(RenderStage::Draw, index << 8 | uint32_t(record.kind));
+        MH3_RENDER_PART(Feedback);
 
         if (!aurora_native_frame_should_render())
             return;
@@ -714,13 +745,16 @@ void Draw(const Packet& p) {
         if (SkippedKinds() >> unsigned(record.kind) & 1)
             continue;
 #endif
+        MH3_RENDER_PART(Restore);
         Restore(p, record.state, applied);
 
         switch (record.kind) {
         case Kind::Model:
+            MH3_RENDER_PART(ModelPrep);
             ExecuteNativeModelDraw(p.slot, record.payload);
             break;
         case Kind::MaterialGeometry: {
+            MH3_RENDER_PART(MaterialGeometry);
 #ifdef __vita__
             AuroraNativeMaterialGeometry geometry;
 
@@ -732,6 +766,7 @@ void Draw(const Packet& p) {
             break;
         }
         case Kind::Geometry: {
+            MH3_RENDER_PART(Geometry);
 #ifdef __vita__
             AuroraNativeGeometry geometry;
 
@@ -743,6 +778,7 @@ void Draw(const Packet& p) {
             break;
         }
         case Kind::DepthClear:
+            MH3_RENDER_PART(Geometry);
             aurora::gl::clear_depth_full_target(0.f);
             break;
         default:
@@ -756,10 +792,12 @@ void Execute(const Packet& p) {
     renderPacket.store(p.sequence, std::memory_order_relaxed);
 #endif
     MH3_RENDER_STAGE(RenderStage::BeforeTasks);
+    MH3_RENDER_PART(Tasks);
     RunTasks(beforeTasks, p.sequence);
 
     if (p.render && !p.canceled) {
         MH3_RENDER_STAGE(RenderStage::Begin);
+        MH3_RENDER_PART(Begin);
 
         if (aurora_begin_native_frame())
             Draw(p);
@@ -768,6 +806,10 @@ void Execute(const Packet& p) {
             aurora_request_frame_capture(aurora::gfx::current_frame() + 1, p.capture.c_str());
 
         MH3_RENDER_STAGE(RenderStage::End);
+        MH3_RENDER_PART(End);
+#ifdef MH3_DEVELOPMENT
+        renderSplitPackets.fetch_add(renderSplit, std::memory_order_relaxed);
+#endif
 #ifdef MH3_DEVELOPMENT
         aurora::gl::set_present_game_time(p.gameUs);
 #endif
@@ -775,8 +817,10 @@ void Execute(const Packet& p) {
     }
 
     MH3_RENDER_STAGE(RenderStage::AfterTasks);
+    MH3_RENDER_PART(Tasks);
     RunTasks(afterTasks, p.sequence);
     MH3_RENDER_STAGE(RenderStage::Waiting);
+    MH3_RENDER_PART(Waiting);
 }
 
 // Waits until a packet after `ticket` is published (or the thread stops,
@@ -1082,6 +1126,12 @@ void StartNativeRenderThread() {
     // MH3_PROFILE=sync: wait for every packet to render (serial frames).
     synchronous = ProfileOptions().Has("sync");
     paced = !ProfileOptions().Has("unpaced");
+    renderSplit = ProfileOptions().Has("render");
+
+    if (static bool sampling = false; renderSplit && !sampling) {
+        std::thread(SampleRenderParts).detach();
+        sampling = true;
+    }
 #endif
     gameThread = std::this_thread::get_id();
     stopping = false;
@@ -1146,6 +1196,30 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept {
         }
     }
 
+    return result;
+}
+
+void MarkNativeRenderModelDraw() {
+    MH3_RENDER_PART(ModelDraw);
+}
+
+NativeRenderPartScope::NativeRenderPartScope(unsigned part) noexcept : previous_(renderPart.load(std::memory_order_relaxed)) {
+    if (renderSplit)
+        renderPart.store(part, std::memory_order_relaxed);
+}
+
+NativeRenderPartScope::~NativeRenderPartScope() {
+    if (renderSplit)
+        renderPart.store(previous_, std::memory_order_relaxed);
+}
+
+NativeRenderSplit TakeNativeRenderSplit() noexcept {
+    NativeRenderSplit result;
+
+    for (unsigned part = 0; part < NativeRenderSplit::Parts; ++part)
+        result.samples[part] = renderPartSamples[part].exchange(0, std::memory_order_relaxed);
+
+    result.packets = renderSplitPackets.exchange(0, std::memory_order_relaxed);
     return result;
 }
 

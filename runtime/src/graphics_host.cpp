@@ -596,6 +596,23 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
     } else
         std::fprintf(stderr, "MH3 native work: render replay unavailable\n");
 
+    if (const auto split = TakeNativeRenderSplit(); split.packets && renderWindow) {
+        uint64_t samples = 0;
+
+        for (const auto count : split.samples)
+            samples += count;
+
+        // Samples are evenly spaced in time: a part's share of the window.
+        const double scale = samples ? double(renderWindow) / (1e6 * double(samples) * double(split.packets)) : 0.0;
+        const auto ms = [&](unsigned part) { return double(split.samples[part]) * scale; };
+        std::fprintf(stderr,
+                     "MH3 render split: tasks %.2f begin %.2f feedback %.2f restore %.2f model prep %.2f model draw %.2f model shade %.2f material geometry %.2f "
+                     "geometry %.2f gl %.2f end %.2f waiting %.2f ms/packet (%llu packets, %llu samples)\n",
+                     ms(NativeRenderSplit::Tasks), ms(NativeRenderSplit::Begin), ms(NativeRenderSplit::Feedback), ms(NativeRenderSplit::Restore),
+                     ms(NativeRenderSplit::ModelPrep), ms(NativeRenderSplit::ModelDraw), ms(NativeRenderSplit::ModelShade), ms(NativeRenderSplit::MaterialGeometry),
+                     ms(NativeRenderSplit::Geometry), ms(NativeRenderSplit::Gl), ms(NativeRenderSplit::End), ms(NativeRenderSplit::Waiting), static_cast<unsigned long long>(split.packets), static_cast<unsigned long long>(samples));
+    }
+
     if (renderWindow && sameRenderThread && render.cpu.available && previousRender.cpu.available && render.cpu.running_us >= previousRender.cpu.running_us)
         std::fprintf(stderr, "MH3 native work: render CPU %.1f%%, thread %d core %d affinity %x (scheduled execution; window %.3f s)\n",
                      1e5 * double(render.cpu.running_us - previousRender.cpu.running_us) / double(renderWindow), render.cpu.thread, render.cpu.core, unsigned(render.cpu.affinity),

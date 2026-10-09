@@ -111,4 +111,36 @@ void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged);
 // Game thread, once per statistics interval: names the render thread's stage,
 // packet and record when it made no progress since the last two calls.
 void ReportNativeRenderThreadStall();
+
+// MH3_PROFILE=render: where the render thread was, sampled every 250 us by a
+// thread of its own, since the last call, and the drawn packets meanwhile.
+// Tasks: ordered resource tasks; Begin: frame begin, target binding and
+// clears; Feedback: scene captures, glare and clones; Restore: a record's state
+// snapshots; ModelPrep: deferred model preparation; ModelDraw: a model item's
+// palettes, mesh binding and culling; ModelShade: a mesh's uniform blocks and
+// program; MaterialGeometry: effects and particles; Geometry: other geometry
+// and depth clears; Gl: the graphics backend's draw calls of meshes and
+// material geometry; End: frame end and presentation; Waiting: no packet.
+struct NativeRenderSplit {
+    enum : unsigned { Tasks, Begin, Feedback, Restore, ModelPrep, ModelDraw, ModelShade, MaterialGeometry, Geometry, Gl, End, Waiting, Parts };
+    uint64_t samples[Parts]{};
+    uint64_t packets = 0;
+};
+
+NativeRenderSplit TakeNativeRenderSplit() noexcept;
+
+// Render thread: names the part of the replay it is in until the scope ends.
+class NativeRenderPartScope {
+  public:
+    explicit NativeRenderPartScope(unsigned part) noexcept;
+    ~NativeRenderPartScope();
+    NativeRenderPartScope(const NativeRenderPartScope&) = delete;
+    NativeRenderPartScope& operator=(const NativeRenderPartScope&) = delete;
+
+  private:
+    unsigned previous_;
+};
+
+// Render thread (model_scope.cpp): a model item's preparation ends, its draws begin.
+void MarkNativeRenderModelDraw();
 #endif
