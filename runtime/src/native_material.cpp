@@ -1636,6 +1636,100 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
 #endif
     aurora::gl::draw_shaded_geometry(geometry, coordinates, program, *blocks, units);
 }
+
+// The Quad block of a compact quad draw (NativeShaderVertex::Quad): the
+// draw's position matrix and projection as rows, the normal and colour of
+// its quads, and per role the coordinate it reads (0, 1, or 2: zero); w is
+// 1 for a reversed depth range (mh3_effect_material_vertices).
+struct ShadeQuad {
+    float position[12], projection[16], normal[4], color0[4];
+    int32_t mode[4];
+};
+
+static_assert(sizeof(ShadeQuad) == 160, "the Quad block of native_shader_source.cpp");
+
+void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
+    const auto& entry = ShadeMaterial();
+    const auto& shading = entry.shading;
+    RequireEarlyDepth(shading);
+    const auto* baked = RecordBlock(entry);
+    const bool gpu = baked != nullptr;
+    AuroraNativeUniforms memory{};
+    mh3_shade_draw* block = nullptr;
+    mh3_shade_vertex* vertexBlock;
+
+    if (gpu)
+        vertexBlock = ShadeGpuDrawMemory(sizeof(ShadeQuad), memory);
+    else {
+        block = ShadeDrawMemory(shading.model, sizeof(ShadeQuad), memory);
+        vertexBlock = block ? &block->vertex : nullptr;
+    }
+
+    if (!vertexBlock)
+        return;
+
+    std::memset(vertexBlock, 0, MH3_SHADE_FRAGMENT_OFFSET);
+    const auto lighting = ShadeChannels(shading, *vertexBlock);
+
+    // Built in the uniform memory.
+    auto& quad = *reinterpret_cast<ShadeQuad*>(static_cast<char*>(memory.data) + (gpu ? ShadeGpuPaletteOffset : ShadePaletteOffset(shading.model)));
+    const auto& draw = GetNativeDrawState(NativeOwner::Render);
+    std::memcpy(quad.position, draw.position, sizeof quad.position);
+    std::memcpy(quad.projection, draw.projection, sizeof quad.projection);
+    quad.normal[0] = normal[0];
+    quad.normal[1] = normal[1];
+    quad.normal[2] = normal[2];
+    quad.normal[3] = 0.0f;
+
+    for (unsigned c = 0; c < 4; ++c)
+        quad.color0[c] = float(color[c]) / 255.0f;
+
+    for (unsigned role = 0; role < 3; ++role) {
+        const uint8_t coordinate = role < shading.textures && shading.texture_coordinate[role] < 8 ? shading.texture_coordinate[role] : 0xff;
+        quad.mode[role] = coordinate < 2 ? coordinate : 2;
+    }
+
+    quad.mode[3] = draw.viewport[4] <= draw.viewport[5];
+    float bias[4];
+    const auto units = ShadeTextures(shading, bias);
+    auto variant = ShadeVariant(shading, NativeShaderVertex::Quad, lighting);
+
+    if (NativeShaderFoldsFog(variant))
+        vertexBlock->channel[3] |= kFoldFog;
+
+    std::optional<aurora::gl::ShadedBlocks> blocks;
+
+    if (gpu) {
+        // The coordinates are the producer's: no texgen, identity SRT.
+        mh3_shade_gpu_srt srt[3];
+
+        for (auto& role : srt)
+            mh3_shade_gpu_srt_identity(&role);
+
+        const auto animatedBlock = ShadeAnimated(entry, bias, srt, 0);
+        const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values[animated.last]) : std::nullopt;
+
+        if (!materialBlock)
+            return;
+
+        variant.material_gpu = true;
+        variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
+        blocks = ShadeGpuBlocks(memory, sizeof(ShadeQuad), *materialBlock, *animatedBlock);
+    } else {
+        std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
+        mh3_shade_fill(&shading, &render.material, block);
+        blocks = ShadeBlocks(memory, shading.model, sizeof(ShadeQuad));
+    }
+
+    if (!blocks)
+        return;
+
+    const GLuint program = ShadeProgram(variant)->get();
+#ifdef MH3_DEVELOPMENT
+    const NativeRenderPartScope gl(NativeRenderSplit::Gl);
+#endif
+    aurora::gl::draw_shaded_quads(vertices, count, program, *blocks, units);
+}
 } // namespace
 
 namespace {
@@ -2159,6 +2253,10 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
 
 void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     SubmitShadedMaterialGeometry(geometry);
+}
+
+void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
+    SubmitShadedQuads(vertices, count, normal, color);
 }
 
 NativeMaterialGpuStatistics ReadNativeMaterialGpuStatistics() {

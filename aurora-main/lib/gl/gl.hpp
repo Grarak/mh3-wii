@@ -460,6 +460,12 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 // Application geometry: role r reads texcoord[coordinates[r]].
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
                           const std::array<uint8_t, 3>& textureUnits) noexcept;
+// Compact effect quads (AuroraNativeQuadVertex, 4 per quad, at most
+// MaxNativeQuads): a static index pattern; the program's Quad block, in the
+// palette's place, holds the draw's matrices and which coordinate each role
+// reads. On the Vita `vertices` must be GPU-mapped memory, read in place.
+inline constexpr uint32_t MaxNativeQuads = 16384;
+void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept;
 
 // Render thread only: blit `source` into the window with the letterboxed
 // viewport and swap. Rows are stored top-down, so the blit flips.

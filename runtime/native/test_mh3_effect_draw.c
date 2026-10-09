@@ -196,6 +196,22 @@ static void geometry(void) {
     near(vertices[2].texcoord[2][2], 81);
     near(vertices[0].normal[0], 1);
 
+    /* The compact format: the corners as given, coordinates 0 and 1 as above. */
+    AuroraNativeQuadVertex quads[4];
+    assert(!mh3_effect_quad_vertices(&q, uv, &in, quads));
+    in.unused_coordinates = 0xfc;
+    mh3_effect_material_vertices(&draw, &q, uv, &in, vertices);
+    assert(mh3_effect_quad_vertices(&q, uv, &in, quads));
+
+    for (unsigned i = 0; i < 4; i++)
+        for (unsigned k = 0; k < 3; k++) {
+            near(quads[i].position[k], q.position[i][k]);
+            near(quads[i].texcoord[0][k], vertices[i].texcoord[0][k]);
+            near(quads[i].texcoord[1][k], vertices[i].texcoord[1][k]);
+        }
+
+    in.unused_coordinates = 0;
+
     for (unsigned i = 0; i < 4; i++)
         vertices[i] = vertices[0];
 

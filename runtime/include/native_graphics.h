@@ -92,6 +92,9 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // Render thread: draws recorded geometry with the restored Render state.
 void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 
+// Render thread: compact effect quads of one record (frame packet Kind::Quads).
+void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]);
+
 // Render thread: direct compact resident mesh boundary. The caller supplies
 // the Render owner's material; immutable vertex/index payloads remain in their
 // admitted GPU allocation.

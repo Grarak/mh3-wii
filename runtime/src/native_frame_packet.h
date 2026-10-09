@@ -20,6 +20,14 @@ bool AllocateNativeGeometry(uint32_t vertices, uint32_t indices, AuroraNativeGeo
 bool AllocateNativeMaterialGeometry(uint32_t vertices, uint32_t indices, AuroraNativeMaterialGeometry& out);
 void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 
+// Compact effect quads: `count` quads (4 vertices each) in the packet's quad
+// arena, which the GPU reads in place; null when not recording, on the web
+// build or when the arena is full (the caller takes material geometry).
+// Recorded with the draw's normal and colour (mh3_effect_material_vertices'
+// per-draw part).
+AuroraNativeQuadVertex* AllocateNativeQuads(uint32_t count);
+void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]);
+
 // UI geometry with the recorded viewport, scissor, raster and texture unit 0:
 // textured draws sampled RGBA * vertex RGBA, otherwise vertex RGBA.
 void SubmitNativeGeometry(const AuroraNativeGeometry& geometry, bool textured);
@@ -146,7 +154,7 @@ void TakeNativePacingWait(uint64_t& ns, uint32_t& waits);
 
 // Game thread: material geometry submissions and those joined to the draw
 // before them (same state, adjacent in draw order) since the last call.
-void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged);
+void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32_t unmerged[6]);
 
 // Game thread, once per statistics interval: names the render thread's stage,
 // packet and record when it made no progress since the last two calls.

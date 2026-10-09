@@ -551,6 +551,37 @@ void mh3_effect_material_vertices(const mh3_draw_state *d, const mh3_effect_quad
     }
 }
 
+int mh3_effect_quad_vertices(const mh3_effect_quad *q, const float uv[4][2], const mh3_effect_vertex_inputs *in, AuroraNativeQuadVertex out[4]) {
+    if ((uint8_t)~in->unused_coordinates & 0xfc)
+        return 0;
+
+    for (uint32_t i = 0; i < 4; i++) {
+        AuroraNativeQuadVertex *v = out + i;
+        memcpy(v->position, q->position[i], 12);
+
+        for (uint32_t slot = 0; slot < 2; slot++) {
+            if (in->unused_coordinates & (1u << slot)) {
+                memset(v->texcoord[slot], 0, sizeof(v->texcoord[slot]));
+                continue;
+            }
+
+            const float *m = in->texture_matrix[slot];
+            float source[3] = {uv[i][0], uv[i][1], 0};
+
+            if (in->position_source[slot])
+                memcpy(source, q->position[i], 12);
+
+            for (uint32_t r = 0; r < 3; r++)
+                v->texcoord[slot][r] = ((m[4 * r] * source[0] + m[4 * r + 1] * source[1]) + m[4 * r + 2] * source[2]) + m[4 * r + 3];
+
+            if (!in->position_source[slot])
+                v->texcoord[slot][2] = 1;
+        }
+    }
+
+    return 1;
+}
+
 void mh3_effect_expand_point(const mh3_draw_state *d, float width, AuroraNativeMaterialVertex v[4]) {
     float vw = d->viewport[2], vh = d->viewport[3];
 

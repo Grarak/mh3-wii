@@ -59,13 +59,25 @@ namespace {
 // Per-frame geometry high water is about 200 KiB of vertices (Alatreon quest).
 constexpr size_t VertexArenaBytes = 2u << 20, IndexArenaBytes = 512u << 10;
 
-enum class Kind : uint8_t { Model, MaterialGeometry, Geometry, DepthClear, Capture, Glare, Clone };
+// A packet's compact quads: 3640 quads, 512 KiB.
+constexpr uint32_t QuadArenaVertices = 4 * 3640;
+
+enum class Kind : uint8_t { Model, MaterialGeometry, Geometry, DepthClear, Capture, Glare, Clone, Quads };
 using StateIndices = std::array<uint32_t, NATIVE_STATE_COMPONENTS>;
 struct Record {
     Kind kind;
     bool textured;
     uint32_t payload;
     StateIndices state;
+};
+
+// Compact effect quads (RecordNativeQuads): the vertices in the packet's quad
+// arena, which the GPU reads in place, and the draw's normal and colour.
+struct Quads {
+    AuroraNativeQuadVertex* vertices;
+    uint32_t count;
+    float normal[3];
+    uint8_t color[4];
 };
 
 struct Feedback {
@@ -107,6 +119,14 @@ struct Packet {
     std::unique_ptr<uint8_t[]> vertices{new uint8_t[VertexArenaBytes]}, indices{new uint8_t[IndexArenaBytes]};
     size_t vertexCursor = 0, indexCursor = 0;
 
+    // GPU-readable, mapped at the first use (aurora_map_native_quad_memory):
+    // the render thread draws the quads from here, without a copy, so the
+    // slot is recorded again only once the GPU finished it (gpuDone).
+    std::vector<Quads> quads;
+    AuroraNativeQuadVertex* quadArena = nullptr;
+    uint32_t quadCursor = 0;
+    aurora::gl::GpuFence gpuDone{};
+
     // The records of the game-side tail (BeginNativeFramePacketTail), moved
     // to the end at publication; tailBegin SIZE_MAX when none.
     size_t tailBegin = SIZE_MAX, tailEnd = 0;
@@ -123,6 +143,8 @@ struct Packet {
         records.clear();
         materialGeometry.clear();
         geometry.clear();
+        quads.clear();
+        quadCursor = 0;
         feedbackCount = 0;
         draws.Reset();
         materials.Reset();
@@ -365,7 +387,13 @@ bool SlotFree(uint64_t next) {
         return true;
 
     const uint64_t previous = next - kNativeFramePacketSlots;
-    return completed.load(std::memory_order_acquire) >= previous || taken.load(std::memory_order_acquire) > previous;
+
+    if (!(completed.load(std::memory_order_acquire) >= previous || taken.load(std::memory_order_acquire) > previous))
+        return false;
+
+    // Its quads were drawn in place: the GPU must be done with them too (set
+    // by the render thread before it advanced `completed`).
+    return aurora::gl::gpu_fence_done(packets[next % kNativeFramePacketSlots].gpuDone);
 }
 
 #ifdef MH3_DEVELOPMENT
@@ -374,6 +402,12 @@ uint32_t snapshotCounts[3][NATIVE_STATE_COMPONENTS];
 
 // Material geometry submissions, and those appended to the previous draw.
 uint32_t geometrySubmitted, geometryMerged;
+
+// Why a submission started a draw of its own: the record before it was not
+// material geometry, its draw/material/lighting/textures/colours snapshot
+// differed (one count per differing component), or its geometry did not
+// follow on in the arenas.
+uint32_t geometryUnmerged[7];
 #endif
 // Current (optional): whether the live state is a snapshot's, without
 // copying it. A changed component whose state is one of the last few stored
@@ -870,6 +904,12 @@ void Draw(const Packet& p) {
 #endif
             break;
         }
+        case Kind::Quads: {
+            MH3_RENDER_PART(MaterialGeometry);
+            const auto& quads = p.quads[record.payload];
+            DrawNativeQuads(quads.vertices, quads.count, quads.normal, quads.color);
+            break;
+        }
         case Kind::Geometry: {
             MH3_RENDER_PART(Geometry);
 #ifdef __vita__
@@ -1033,6 +1073,10 @@ void RenderPackets() {
         }
 #endif
         Execute(p);
+
+        // Its quads were drawn from the packet's arena (SlotFree).
+        if (!p.quads.empty())
+            packets[p.sequence % kNativeFramePacketSlots].gpuDone = aurora::gl::submitted_gpu_fence();
 #ifdef MH3_MEMCPY_CENSUS
         if (++censusPackets % 300 == 0)
             ReportMemcpyCensus();
@@ -1194,6 +1238,70 @@ bool AllocateNativeMaterialGeometry(uint32_t vertices, uint32_t indices, AuroraN
     return Allocate(vertices, indices, out);
 }
 
+AuroraNativeQuadVertex* AllocateNativeQuads(uint32_t count) {
+#ifdef __EMSCRIPTEN__
+    (void)count;
+    return nullptr;
+#else
+    if (!NativeFramePacketRecording() || !count)
+        return nullptr;
+
+    auto& p = *recording;
+
+    if (!p.quadArena) {
+        p.quadArena = static_cast<AuroraNativeQuadVertex*>(aurora_map_native_quad_memory(QuadArenaVertices * sizeof(AuroraNativeQuadVertex)));
+
+        if (!p.quadArena)
+            return nullptr;
+    }
+
+    // Full: the caller takes the full material geometry.
+    if (p.quadCursor + 4 * count > QuadArenaVertices)
+        return nullptr;
+
+    auto* out = p.quadArena + p.quadCursor;
+    p.quadCursor += 4 * count;
+    return out;
+#endif
+}
+
+void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
+    RequireRecorder();
+
+    if (!NativeFramePacketRecording())
+        return;
+
+    auto& p = *recording;
+    const StateIndices state = CaptureState(false);
+#ifdef MH3_DEVELOPMENT
+    ++geometrySubmitted;
+#endif
+    // Batching as for material geometry; the normal and colour come from the
+    // same draw and material state, and the quads follow on in the arena.
+    if (!p.records.empty()) {
+        const auto& last = p.records.back();
+
+        if (last.kind == Kind::Quads && last.state[NATIVE_STATE_DRAW] == state[NATIVE_STATE_DRAW] && last.state[NATIVE_STATE_MATERIAL] == state[NATIVE_STATE_MATERIAL] &&
+            last.state[NATIVE_STATE_LIGHTING] == state[NATIVE_STATE_LIGHTING] && last.state[NATIVE_STATE_TEXTURES] == state[NATIVE_STATE_TEXTURES] &&
+            last.state[NATIVE_STATE_COLORS] == state[NATIVE_STATE_COLORS]) {
+            auto& previous = p.quads[last.payload];
+
+            if (previous.vertices + 4 * previous.count == vertices && previous.count + count <= aurora::gl::MaxNativeQuads &&
+                !std::memcmp(previous.normal, normal, sizeof previous.normal) && !std::memcmp(previous.color, color, sizeof previous.color)) {
+                previous.count += count;
+#ifdef MH3_DEVELOPMENT
+                ++geometryMerged;
+#endif
+                return;
+            }
+        }
+    }
+
+    Quads quads{vertices, count, {normal[0], normal[1], normal[2]}, {color[0], color[1], color[2], color[3]}};
+    p.quads.push_back(quads);
+    p.records.push_back({Kind::Quads, false, uint32_t(p.quads.size() - 1), state});
+}
+
 void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     RequireRecorder();
 
@@ -1212,7 +1320,17 @@ void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     // is submission order, so blending and depth results are unchanged.
     if (!p.records.empty()) {
         const auto& last = p.records.back();
+#ifdef MH3_DEVELOPMENT
+        if (last.kind != Kind::MaterialGeometry)
+            ++geometryUnmerged[0];
+        else {
+            const unsigned components[5] = {NATIVE_STATE_DRAW, NATIVE_STATE_MATERIAL, NATIVE_STATE_LIGHTING, NATIVE_STATE_TEXTURES, NATIVE_STATE_COLORS};
 
+            for (unsigned i = 0; i < 5; ++i)
+                if (last.state[components[i]] != state[components[i]])
+                    ++geometryUnmerged[1 + i];
+        }
+#endif
         if (last.kind == Kind::MaterialGeometry && last.state[NATIVE_STATE_DRAW] == state[NATIVE_STATE_DRAW] && last.state[NATIVE_STATE_MATERIAL] == state[NATIVE_STATE_MATERIAL] &&
             last.state[NATIVE_STATE_LIGHTING] == state[NATIVE_STATE_LIGHTING] && last.state[NATIVE_STATE_TEXTURES] == state[NATIVE_STATE_TEXTURES] &&
             last.state[NATIVE_STATE_COLORS] == state[NATIVE_STATE_COLORS] &&
@@ -1507,10 +1625,12 @@ void TakeNativePacingWait(uint64_t& ns, uint32_t& waits) {
     pacingWaits = 0;
 }
 
-void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged) {
+void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32_t unmerged[6]) {
     submitted = geometrySubmitted;
     merged = geometryMerged;
+    std::memcpy(unmerged, geometryUnmerged, 6 * sizeof(uint32_t));
     geometrySubmitted = geometryMerged = 0;
+    std::memset(geometryUnmerged, 0, sizeof geometryUnmerged);
 }
 #endif
 // The game thread limiter: the game thread records packet s only after the

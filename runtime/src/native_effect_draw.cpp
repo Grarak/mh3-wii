@@ -344,11 +344,6 @@ void ParticleState(CpuContext *cpu, uint32_t strategy, uint32_t particle, uint32
 }
 
 void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2] = nullptr, uint32_t size_code = 0, bool point = false, bool strip = false) {
-    AuroraNativeMaterialGeometry geometry{};
-
-    if (!AllocateNativeMaterialGeometry(4, 6, geometry))
-        return;
-
     const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
     const auto &material = GetNativeMaterialState();
     mh3_effect_vertex_inputs &input = effect.vertex;
@@ -375,7 +370,28 @@ void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2]
     for (uint32_t c = 0; c < 2; c++)
         std::memcpy(input.color[c], material.channel[c].material_color, 4);
 
-    mh3_effect_material_vertices(&GetNativeDrawState(), &q, coordinates ? coordinates : textured ? defaults : zero, &input, geometry.vertices);
+    const float(*uv)[2] = coordinates ? coordinates : textured ? defaults : zero;
+
+    // A plain quad reading coordinates 0 and 1 only: its corners and
+    // coordinates (80 bytes of 576), drawn in place by the GPU with the draw's
+    // matrices, normal and colour as uniforms.
+    if (!size_code && !strip && !(uint8_t(~input.unused_coordinates) & 0xfc)) {
+        if (!NativeGraphicsFrameShouldRender())
+            return;
+
+        if (AuroraNativeQuadVertex *vertices = AllocateNativeQuads(1)) {
+            mh3_effect_quad_vertices(&q, uv, &input, vertices);
+            RecordNativeQuads(vertices, 1, input.normal, input.color[0]);
+            return;
+        }
+    }
+
+    AuroraNativeMaterialGeometry geometry{};
+
+    if (!AllocateNativeMaterialGeometry(4, 6, geometry))
+        return;
+
+    mh3_effect_material_vertices(&GetNativeDrawState(), &q, uv, &input, geometry.vertices);
 
     if (size_code) {
         if (point)

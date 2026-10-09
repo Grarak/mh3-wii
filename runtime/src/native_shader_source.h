@@ -6,12 +6,15 @@
 
 // Each enum's count follows it; NativeShaderVertexKeys() and
 // NativeShaderFragmentKeys() iterate these ranges (docs/vita-shader-bank.md).
+// Geometry: pre-transformed vertices. Quad: compact effect quads (object
+// corners and two coordinates; the draw's matrices in the Quad block).
 enum class NativeShaderVertex : uint8_t {
     Mesh,
-    Geometry
+    Geometry,
+    Quad
 };
 
-inline constexpr unsigned NativeShaderVertexCount = 2;
+inline constexpr unsigned NativeShaderVertexCount = 3;
 enum class NativeShaderModel : uint8_t {
     Basic,
     Modulate

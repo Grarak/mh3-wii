@@ -1727,6 +1727,44 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
   });
 }
 
+void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept {
+  if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
+    return;
+
+  guarded([&] {
+    if (!blocks.draw || !blocks.scene || !blocks.paletteBytes)
+      AURORA_THROW(std::runtime_error("Shaded quads have no uniform blocks"));
+
+    auto& r = renderer();
+
+    // Every quad is (0 1 2) (0 2 3): one pattern in GPU memory, made once.
+    static uint16_t* indices = [&] {
+      auto* pattern = static_cast<uint16_t*>(r.device.arena().allocate(size_t(MaxNativeQuads) * 6 * sizeof(uint16_t)));
+
+      if (!pattern)
+        AURORA_THROW(std::runtime_error("No GPU memory for the quad index pattern"));
+
+      for (uint32_t q = 0; q < MaxNativeQuads; ++q) {
+        const uint16_t base = uint16_t(q * 4);
+        const uint16_t one[6] = {base, uint16_t(base + 1), uint16_t(base + 2), base, uint16_t(base + 2), uint16_t(base + 3)};
+        std::memcpy(pattern + size_t(q) * 6, one, sizeof one);
+      }
+
+      return pattern;
+    }();
+
+    constexpr uint16_t stride = sizeof(AuroraNativeQuadVertex);
+    const VertexInput inputs[]{{"a_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, position), stride, 0},
+                               {"a_uv0", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, texcoord), stride, 0},
+                               {"a_uv1", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, texcoord) + 12, stride, 0}};
+    auto& native = r.programs.at(program);
+    r.prepare_shaded(native, r.shaded_program(native, inputs), blocks, textureUnits);
+    check(sceGxmSetVertexStream(r.device.context(), 0, vertices), "bind shaded quad attributes");
+    check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, quads * 6), "draw shaded quads");
+    r.capture_draw("shaded-quads", program, quads * 4, quads * 6, 1, nullptr, 0, native.preservesTargetAlphaOne);
+  });
+}
+
 UniformBlock create_uniform_block(const void* bytes, uint32_t size) noexcept {
   return guarded([&] { return renderer().create_uniform_block(bytes, size); });
 }
@@ -1793,6 +1831,7 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
       r.presentProgram.set_vertex_uniform("region", region, 4);
       r.presentProgram.set_vertex_uniform("depth", &depth, 1);
       r.texture(source->gl()).note_gpu_use();
+
       // A copy at the source's own size samples texel centres, where linear
       // filtering is the texel itself: point sampling reads one texel, not
       // four (the pass is texture-bound).

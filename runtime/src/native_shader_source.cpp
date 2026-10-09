@@ -382,6 +382,43 @@ void main() {
 }
 )GLSL";
 
+// Compact effect quads (AuroraNativeQuadVertex): mh3_effect_material_vertices'
+// arithmetic per vertex. The Quad block takes the palette's place: the draw's
+// position matrix and projection, the normal and colour every quad of the draw
+// shares, and per role the coordinate it reads (0, 1, or 2: none, zero); w is
+// 1 for a reversed depth range.
+constexpr const char* GlslQuadVertex = R"GLSL(
+layout(std140) uniform Palette {
+    mat3x4 position;
+    mat4 proj;
+    vec4 normal;
+    vec4 color0;
+    ivec4 mode;
+} quad;
+layout(location=0) in vec3 a_position;
+layout(location=1) in vec3 a_uv0;
+layout(location=2) in vec3 a_uv1;
+out vec4 v_color0;
+out vec2 v_uv0;
+out vec2 v_uv1;
+out vec2 v_uv2;
+out vec4 v_fog;
+vec2 affine(vec3 uv) { return uv.z != 0.0 ? uv.xy / uv.z : uv.xy; }
+vec2 coordinate(int source) { return source == 0 ? affine(a_uv0) : source == 1 ? affine(a_uv1) : vec2(0.0); }
+void main() {
+    vec3 view = vec4(a_position, 1.0) * quad.position;
+    vec4 clip = vec4(view, 1.0) * quad.proj;
+    float depth = quad.mode.w != 0 ? -clip.z : clip.z + clip.w;
+    vec4 p = vec4(clip.xy, 2.0 * depth - clip.w, clip.w);
+    v_color0 = light_channel(view, quad.normal.xyz, quad.color0);
+    v_fog = fog_blend(vec4(p.xy, 0.5 * (p.z + p.w), p.w), v_color0);
+    v_uv0 = coordinate(quad.mode.x);
+    v_uv1 = coordinate(quad.mode.y);
+    v_uv2 = coordinate(quad.mode.z);
+    gl_Position = vec4(p.x, -p.y, p.z, p.w);
+}
+)GLSL";
+
 // Pre-transformed application geometry (UI, effects, fades, feedback). The
 // producer already generated each coordinate; roles bind them to a_uv0..2.
 constexpr const char* GlslGeometryVertex = R"GLSL(
@@ -893,6 +930,35 @@ void main(float4 a_position, float3 a_view_position, float3 a_normal, float4 a_c
 }
 )CG";
 
+// The Quad vertex program in Cg (GlslQuadVertex). The block's selects are on
+// uniforms, so the program stays in parallel mode.
+constexpr const char* CgQuadVertex = R"CG(
+struct Quad {
+    float4x3 position;
+    float4x4 proj;
+    float4 normal;
+    float4 color0;
+    int4 mode;
+};
+uniform Quad quad : BUFFER[2];
+float2 affine(float3 uv) { return uv.z != 0.0f ? uv.xy / uv.z : uv.xy; }
+float2 coordinate(int source, float3 uv0, float3 uv1) { return source == 0 ? affine(uv0) : source == 1 ? affine(uv1) : float2(0.0f, 0.0f); }
+void main(float3 a_position, float3 a_uv0, float3 a_uv1,
+          float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
+          float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
+    float3 view = mul(float4(a_position, 1.0f), quad.position);
+    float4 clip = mul(float4(view, 1.0f), quad.proj);
+    float depth = quad.mode.w != 0 ? -clip.z : clip.z + clip.w;
+    float4 p = float4(clip.x, clip.y, 2.0f * depth - clip.w, clip.w);
+    v_color0 = light_channel(view, quad.normal.xyz, quad.color0);
+    v_fog = fog_blend(float4(p.xy, 0.5f * (p.z + p.w), p.w), v_color0);
+    v_uv0 = coordinate(quad.mode.x, a_uv0, a_uv1);
+    v_uv1 = coordinate(quad.mode.y, a_uv0, a_uv1);
+    v_uv2 = coordinate(quad.mode.z, a_uv0, a_uv1);
+    v_position = p;
+}
+)CG";
+
 // Texture reads take the interpolated coordinate directly; LOD bias is in the
 // texture control words, so no read depends on fragment arithmetic. Colours
 // are computed in half precision (real), which halves the primary attributes
@@ -1122,8 +1188,8 @@ std::string FragmentDefines(const NativeShaderFragmentKey& key) {
 
 std::string GlslVertex(const NativeShaderVertexKey& key) {
     const bool mesh = key.vertex == NativeShaderVertex::Mesh;
-    return std::string(GlslPrelude) + VertexDefines(key) + (mesh ? TexgenOutputs(key, false) : "") + GlslScene + GlslDraw + (mesh ? GlslAnimated : "") + GlslVertexCommon +
-           (mesh ? GlslMeshVertex : GlslGeometryVertex);
+    const char* main = mesh ? GlslMeshVertex : key.vertex == NativeShaderVertex::Quad ? GlslQuadVertex : GlslGeometryVertex;
+    return std::string(GlslPrelude) + VertexDefines(key) + (mesh ? TexgenOutputs(key, false) : "") + GlslScene + GlslDraw + (mesh ? GlslAnimated : "") + GlslVertexCommon + main;
 }
 
 std::string GlslFragmentSource(const NativeShaderFragmentKey& key) {
@@ -1246,7 +1312,8 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
 
 std::string NativeShaderCgVertex(const NativeShaderVertexKey& key) {
     const bool mesh = key.vertex == NativeShaderVertex::Mesh;
-    return std::string(CgScene) + VertexDefines(key) + (mesh ? TexgenOutputs(key, true) : "") + CgDraw + (mesh ? CgAnimated : "") + CgVertexCommon + (mesh ? CgMeshVertex : CgGeometryVertex);
+    const char* main = mesh ? CgMeshVertex : key.vertex == NativeShaderVertex::Quad ? CgQuadVertex : CgGeometryVertex;
+    return std::string(CgScene) + VertexDefines(key) + (mesh ? TexgenOutputs(key, true) : "") + CgDraw + (mesh ? CgAnimated : "") + CgVertexCommon + main;
 }
 
 std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key) {
@@ -1284,7 +1351,7 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
         light += std::to_string(key.lights);
 
     if (key.vertex != NativeShaderVertex::Mesh)
-        return "geometry" + light + (key.material_gpu ? "_gpu" : "");
+        return (key.vertex == NativeShaderVertex::Quad ? "quad" : "geometry") + light + (key.material_gpu ? "_gpu" : "");
 
     std::string name = "mesh" + light + "_";
 

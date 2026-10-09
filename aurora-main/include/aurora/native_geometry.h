@@ -28,6 +28,14 @@ typedef struct AuroraNativeMaterialVertex {
   uint8_t color[2][4];
 } AuroraNativeMaterialVertex;
 
+/* A compact effect quad vertex: what of AuroraNativeMaterialVertex differs
+ * between the quads of one draw, the object-space corner and texture
+ * coordinates 0 and 1. The draw's matrices, normal and colour are uniforms
+ * (aurora::gl::draw_shaded_quads), the indices a static quad pattern. */
+typedef struct AuroraNativeQuadVertex {
+  float position[3], texcoord[2][3];
+} AuroraNativeQuadVertex;
+
 typedef struct AuroraNativeMaterialGeometry {
   AuroraNativeMaterialVertex* vertices;
   uint16_t* indices;
@@ -56,6 +64,11 @@ AuroraNativeDrawStats aurora_native_draw_stats(void);
 // Fill before submitting and do not retain a writable view after frame end.
 int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indices, AuroraNativeGeometry* out);
 int aurora_allocate_native_material_geometry(uint32_t vertices, uint32_t indices, AuroraNativeMaterialGeometry* out);
+
+/* Memory the GPU reads in place, mapped once and kept (the Vita: uncached
+ * main memory mapped for GXM; elsewhere heap): a frame packet's compact
+ * quads. Null when it cannot be mapped. */
+void* aurora_map_native_quad_memory(uint32_t bytes);
 int aurora_allocate_native_uniforms(uint32_t bytes, AuroraNativeUniforms* out);
 void aurora_submit_native_material_geometry(const AuroraNativeMaterialGeometry* geometry, uint32_t program, const AuroraNativeUniforms* uniforms);
 

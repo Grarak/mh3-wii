@@ -90,6 +90,10 @@ typedef struct mh3_effect_vertex_inputs {
 } mh3_effect_vertex_inputs;
 
 void mh3_effect_material_vertices(const mh3_draw_state *draw, const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, AuroraNativeMaterialVertex out[4]);
+/* mh3_effect_material_vertices for the compact quad format: the corners as
+ * given and texture coordinates 0 and 1 by the same arithmetic. 0 when the
+ * inputs read another coordinate (the caller takes the full vertices). */
+int mh3_effect_quad_vertices(const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, AuroraNativeQuadVertex out[4]);
 void mh3_effect_expand_point(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_expand_line(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_quad_indices(uint16_t base, uint16_t out[6]);
