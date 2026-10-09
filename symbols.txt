@@ -318,3 +318,7 @@
 805556ec func_805556EC
 805561f0 func_805561F0
 8056a380 func_8056A380
+
+# Ambient creatures (0x803BBDA4 steps them): hover and circle in states 12/16
+# (ambient_hover.cpp).
+803bb570 AmbientHover

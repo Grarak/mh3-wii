@@ -8,7 +8,17 @@
 // Rate sites load such an amount kept in memory: it becomes k * s.
 {0x800E1F08u, TickSite::PerStep},           // MHchar channel blend (800E1EB4): cross-fade -= rate per step
 {0x800FF9D8u, TickSite::Countup},           // effect spawner (800FF938): per-slot steps since the last spawn (+0xE8)
+{0x801298C8u, TickSite::Countup, 26999},    // enemy: steps (s16 +0x452), capped at 27000
+{0x80129A3Cu, TickSite::Countdown},         // enemy (80129A3C): countdowns (s16 +0x200, +0x202), clamped at 0
+{0x80129A5Cu, TickSite::Countdown},
+{0x801307C4u, TickSite::Countup, 32766},    // enemy: steps (s16 +0x440), capped at 0x7FFF
+{0x80138D14u, TickSite::Countdown},         // enemy (80138BC4): countdown (s16 +0x764)
+{0x80138D40u, TickSite::Countdown},
+{0x801556C8u, TickSite::Countup},           // enemy (801556C8): cycle steps (u16 +0x33C), wraps at 50
+{0x801557A8u, TickSite::Countdown},         // enemy action (8015574C): countdown (+0x20), ends the action below 0
+{0x801AC6D8u, TickSite::Countdown},         // enemy action (801AC674): countdown (+0x20), ends the action at 0
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
+{0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
 {0x8020A84Cu, TickSite::Countup},           // village player action step counter (PLW+0x28)
 {0x8020A858u, TickSite::Countup, 149},      // village player idle steps (PLW+0x36), capped at 150
 {0x8020B114u, TickSite::CountdownPastZero}, // village player action countdown (PLW+0x28), fires at <= 0
@@ -93,22 +103,30 @@
 {0x802B65DCu, TickSite::EaseDivisor},
 {0x802B65FCu, TickSite::Countdown},         // field camera: ease timer (+0xA8)
 {0x802B6610u, TickSite::EaseDivisor},
+{0x802BACE8u, TickSite::Countdown},         // camera shake (802BAC0C): steps left (s16 +0x44)
 {0x802BCDC8u, TickSite::CountdownPastZero}, // camera script wait (op 0x25): frames left, done below 0
 {0x802BD878u, TickSite::Countdown},         // camera path hold (802BD78C): steps before playing
 {0x802BD8B0u, TickSite::Countup},           // camera path frame (802BD78C)
 {0x802E4C90u, TickSite::Countup},           // 802E4C88: steps in the area (806C04E8)
 {0x802E4CA4u, TickSite::Countup},           // 802E4C88: steps (806C02D8)
 {0x802E4CB0u, TickSite::Countup},           // 802E4C88: steps (806C046C)
+{0x802E4D60u, TickSite::Countup},           // area ambience (802E4CC0): cycle steps (u8 +0xC), 40..190
+{0x802E4DB4u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xD)
+{0x802E4E24u, TickSite::Countup},           // area ambience: cycle steps (u8 +0xE), 30..50
 {0x802EF2ACu, TickSite::Countdown},         // player-side timer (802EF294): +0x5C, set from seconds * fps by 802EF3A4
 {0x8031F728u, TickSite::Advance, 512},      // marker effect (8031F574): bob phase (u16), +512 per step
 {0x8031F734u, TickSite::Advance, 255},      // marker effect: spin angle (+0x28), +255 per step
 {0x803327A4u, TickSite::CountdownPastZero}, // actor action countdown (+0x28), fires at <= 0
 {0x80334330u, TickSite::CountdownPastZero},
+{0x80340924u, TickSite::Countdown},         // fish (803408B4): turn steps left (+0xC)
+{0x80340A00u, TickSite::PerStep},           // fish: swim speed (+0x20) moved per step
+{0x80340B00u, TickSite::PerStep},           // fish: swim speed change per step
 {0x80344EBCu, TickSite::Countup, 32766},    // 80344EBC: object ages (+0x34, +0x1C, +0x1E), capped at 0x7FFF
 {0x80344ED0u, TickSite::Countup, 32766},
 {0x80344EE4u, TickSite::Countup, 32766},
 {0x8034E5ECu, TickSite::Countup},           // actor action step counter (+0x28)
 {0x8034EC68u, TickSite::Countup},
+{0x8035B21Cu, TickSite::Countdown},         // 8035AF48: countdown (+8), blinks below 30
 {0x80383AB0u, TickSite::Countdown},         // 0x806C4898 countdown (80383A50), set from seconds * fps by 80383C0C / 80384388
 {0x80398008u, TickSite::Countup},           // quest result screen (803975D0): +0x2FF4 step counter
 {0x80398080u, TickSite::Countdown},         // quest result screen: +0x2FF4 countdown, set from seconds * fps by 803973A8
@@ -124,6 +142,9 @@
 {0x803B7DCCu, TickSite::Countup},           // quest (803B7D4C): +0x65D4 steps, against seconds * fps
 {0x803B8734u, TickSite::Countup},           // quest (803B8718): +0x10 steps, counted while below seconds * fps
 {0x803B8780u, TickSite::Countup},           // (803B8718): +0x14
+{0x803BBA14u, TickSite::Countdown},         // quest object (803BB984): countdown (s16 +0xE), clamped at 0
+{0x803BBF60u, TickSite::Countdown},         // quest object (803BBDA4): countdown (s16 +0xE), clamped at 0
+{0x803BC010u, TickSite::CountdownPastZero}, // quest object: countdown (+0x10), fires below 0
 {0x803C37D4u, TickSite::Advance, 255},      // online marker effect (803C3574): spin angle (+0x28)
 {0x803C37E0u, TickSite::Advance, 512},      // online marker effect: bob phase (u16)
 {0x803C3A28u, TickSite::Advance, 255},
