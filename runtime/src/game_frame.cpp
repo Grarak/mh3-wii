@@ -483,7 +483,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
             // thread, the game thread waiting.
             DrawJob job{render};
             DrawThread::Thread().Submit(*ctx, RunDrawJob, &job);
-            DrawThread::Thread().Wait();
+            DrawThread::Thread().Wait(true);
         } else {
             DrawSection(ctx, render);
         }

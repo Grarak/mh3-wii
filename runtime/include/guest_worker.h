@@ -55,9 +55,11 @@ class GuestThread {
     // have been waited for.
     void Submit(const CpuContext& seed, Job job, void* data);
 
-    // Waits (spinning) until the submitted job has finished; returns at once
-    // when none is pending.
-    void Wait();
+    // Waits until the submitted job has finished; returns at once when none
+    // is pending. It spins, unless `park`: then it blocks after a short spin,
+    // leaving its core to a thread that shares it (on the Vita a spinning
+    // thread keeps a core from other threads of its priority).
+    void Wait(bool park = false);
 
     // True from Submit until the job finishes.
     bool Pending() const;
@@ -148,6 +150,11 @@ void NoteShared(const char* what);
 namespace DrawThread {
 // Guest stack bytes for the draw, reserved below the worker's at boot.
 inline constexpr uint32_t kGuestStackBytes = 64 * 1024;
+
+// While the game thread waits for the draw (stage 1 of
+// docs/pipelined-draw.md) the draw thread runs on the game thread's core 2,
+// and the guest worker keeps core 3 for the effect calculation the draw waits
+// for.
 
 // The draw thread.
 GuestThread& Thread();
