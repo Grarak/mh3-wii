@@ -135,7 +135,6 @@ enum : uint32_t {
     kLanceChargeRate = 0x8079D874, // f32 1.2
     kRightStickDirs = 0x8065B7D0 + 0xEC, // Psw channel 0
     kVillagePlayer = 0x901B1F80, // the village's PLW
-    kVillageSpeed = 0x901B2F14,  // f32
     kClassicDirs = 0x8065B7D0 + 0xDE,
 };
 
@@ -843,15 +842,26 @@ void StepPlayer() {
     if (On(Id::CursedWeapons) && Memory::Read8(plw + kDrawn) == 1 && StepCounter::Every(32))
         Memory::Write32(plw + kHealth - 2, Memory::Read32(plw + kHealth - 2) - 1);
 
-    // Seth's village codes: with Z held (here ZL), a float of the village's
-    // move work (0x901B2F14, the village heap as the US disc has it) huge or
-    // nearly 0. Only while the local player is the village's.
-    if (plw == kVillagePlayer && HeldAll(kZL)) {
-        if (On(Id::VillageSpeedHack))
-            Memory::Write32(kVillageSpeed, 0x60000000);
+    // Seth's village codes: with Z held (here ZL), the village hunter's
+    // speed huge or nearly 0. The codes wrote their words to 0x901B2F14, a
+    // place in the US village's heap; the EU heap has an effect's task there.
+    // Here the same words go to the village hunter's motion speed, which the
+    // game makes the motion's rate (times 2) each frame: the hunter then
+    // jumps ahead to the nearest wall, or stands still. The game sets the
+    // speed again only when the action changes, and a motion that barely
+    // moves never ends its action: with ZL let go, the speed goes back to 1.
+    if (plw == kVillagePlayer) {
+        const uint32_t speed = Memory::Read32(plw + kMotionSpeed);
 
-        if (On(Id::VillageSnailSpeed))
-            Memory::Write32(kVillageSpeed, 0x00070000);
+        if (HeldAll(kZL)) {
+            if (On(Id::VillageSpeedHack))
+                Memory::Write32(plw + kMotionSpeed, 0x60000000);
+
+            if (On(Id::VillageSnailSpeed))
+                Memory::Write32(plw + kMotionSpeed, 0x00070000);
+        } else if (speed == 0x60000000 || speed == 0x00070000) {
+            WriteF32(plw + kMotionSpeed, 1.0f);
+        }
     }
 }
 
