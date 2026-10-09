@@ -1,5 +1,5 @@
 // Monster waits and repeats counted per call, RMHP08. C reconstructions
-// (decompiled with Ghidra) of nineteen enemy actions that keep a count at +0x20
+// (decompiled with Ghidra) of twenty-one enemy actions that keep a count at +0x20
 // by one a call, which the enemy update calls once per step:
 //
 //   waits (a countdown that ends the action or a state; a gameplay change at
@@ -13,6 +13,8 @@
 //     0x801482AC  kind 1 (Rathian)   a wait (0.0, 0.4), 150 ticks
 //     0x80159054  kind 3 (Qurupeco)  a move, at least 10 or 20 ticks
 //     0x8015898C  kind 3 (Qurupeco)  a backward hop, 22 or 30 ticks
+//     0x801BD724  kind 6 (Diablos)   under the sand: 45 or 80 ticks, a burst every 32
+//     0x801BD89C  kind 6 (Diablos)   a move under the sand, at least 20 ticks
 //     0x801B795C, 0x801B867C  hops (the dispatcher 0x801B94B4, after kind
 //                 34 Kelbi's code): a 10-tick hold on landing
 //     0x8034FA1C  em024 (Alatreon)   a flight, 300 ticks (an effect at 20 left)
@@ -461,6 +463,91 @@ void Em003BackstepPort(CpuContext* ctx) {
             else
                 game.Call<0x80128110>({work});
         }
+
+        break;
+    }
+}
+
+// kind 6 0x801BD724 (r4: 1 the long one): Diablos waiting under the sand,
+// motion 1 looped: every 32 ticks a mark (0x80136BB4 -1, 5), a sand burst
+// at joint 3 (effect 0x53, 0x54 while +0x228 & 6) and its sound in the
+// hunter's area; after 45 (80) ticks 0x80128158. The original counts both in
+// calls.
+void Em006BuriedPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x08];
+    const bool longer = uint8_t(frame.Arg(4)) == 1;
+    game.Call<0x80043F0C>({at});
+    game.Call<0x80131E64>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        game.Call<Em::SetUp>({work, 4});
+        game.Call<SetMotionLoop>({work, 1, 0, 0});
+        game.Call<0x80130390>({work}); // f1 passes on
+        game.Call<0x80130450>({work});
+        em.Count(0);
+        break;
+    case 1:
+        if (em.CountEvery(32)) {
+            game.Call<Mark>({work, uint32_t(-1), 5});
+            game.Call<JointPosition>({work, 3, at});
+            const bool other = (Memory::Read16(work + 0x228) & 6) != 0;
+            Memory::WriteFloat32(at + 4, 5.0f + Memory::ReadFloat32(work + (other ? 0x210 : 0x20C)));
+            game.Call<JointEffect>({work, 3, other ? 0x54u : 0x53u, 0}, {1.0});
+
+            if ((game.Call<0x802AFCE8>() & 0xFF) == Memory::Read8(work + 0x1E1)) // get_now_areano
+                game.Call<0x800D9F0C>({Memory::Read32(work + 0xB14), 0x27, 2, at});
+        }
+
+        em.CountTicks();
+
+        if (em.Count() >= (longer ? 0x50 : 0x2D))
+            game.Call<0x80128158>({work});
+
+        break;
+    }
+}
+
+// kind 6 0x801BD89C: Diablos moving under the sand, motion 8 at 1.5 times
+// its speed toward a point 1000 away (0x80134068, 0x80134178 at 0x40), its
+// digging sound each step in the hunter's area; it ends (0x80128158) once
+// there and at least 20 ticks in (the original's 20 calls).
+void Em006BurrowPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const Em::Enemy em{game, frame.Arg(3)};
+    const uint32_t work = em.work, at = frame[0x08];
+    game.Call<0x80043F0C>({at});
+    game.Call<0x80131E64>({work});
+
+    switch (em.State()) {
+    case 0:
+        em.State(1);
+        Memory::Write8(work + 6, 0);
+        game.Call<Em::SetUp>({work, 4});
+        em.SetMotion(8, 0, 0);
+        game.Call<SetMotionSpeed>({work}, {1.5});
+        game.Call<RoarVoice>({work, 0, 0x21, 2});
+        game.Call<TurnSetUp>({work, 0}, {1000.0});
+        game.Call<0x80130390>({work}); // f1 passes on
+        game.Call<0x80130450>({work});
+        em.Count(0x14);
+        break;
+    case 1:
+        if ((game.Call<0x802AFCE8>() & 0xFF) == Memory::Read8(work + 0x1E1)) { // get_now_areano
+            game.Call<JointPosition>({work, 3, at});
+            game.Call<0x800DE360>({Memory::Read32(work + 0xB14), at, 8, Memory::Read16(work + 0x1A)}); // shell_se_req
+        }
+
+        if (Memory::Read8(work + 6) == 0 && game.Call<TurnStep>({work, 0, 0x40}) == 1)
+            Memory::Write8(work + 6, 1);
+
+        if (CountDown(em) && Memory::Read8(work + 6) == 1)
+            game.Call<0x80128158>({work});
 
         break;
     }
@@ -1308,6 +1395,18 @@ extern "C" void MH3_Em034HopBack(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em034HopBack", func_801B867C, Em034HopBackPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801B867C, MH3_Em034HopBack, "Em034HopBack");
+
+extern "C" void func_801BD724(CpuContext* ctx);
+extern "C" void MH3_Em006Buried(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em006Buried", func_801BD724, Em006BuriedPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801BD724, MH3_Em006Buried, "Em006Buried");
+
+extern "C" void func_801BD89C(CpuContext* ctx);
+extern "C" void MH3_Em006Burrow(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em006Burrow", func_801BD89C, Em006BurrowPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x801BD89C, MH3_Em006Burrow, "Em006Burrow");
 
 extern "C" void func_801D91B4(CpuContext* ctx);
 extern "C" void MH3_Em007Charge(CpuContext* ctx) {

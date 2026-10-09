@@ -1006,6 +1006,9 @@
 8015898c Em003Backstep
 801b795c Em034Hop
 801b867c Em034HopBack
+801bd724 Em006Buried
+801bd89c Em006Burrow
+801bf9fc Em006Actions
 8015ac34 Em003Actions
 8014de50 Em001Dive
 8014cf5c Em001FlyCharge
