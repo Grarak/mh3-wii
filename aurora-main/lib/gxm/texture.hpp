@@ -11,7 +11,7 @@ class TextureStorage;
 // bounded mapped spill arenas; GXM consumes those allocations directly too.
 class TexturePool {
 public:
-  explicit TexturePool(Device& device, size_t mainBudget = 32u << 20, size_t phycontBudget = 24u << 20);
+  explicit TexturePool(Device& device, size_t mainBudget = 0, size_t phycontBudget = 0);
   ~TexturePool();
   void touch(TextureStorage& texture);
   size_t main_used() const noexcept;

@@ -55,7 +55,10 @@ uint64_t calc_texture_size(gl::Format format, u32 width, u32 height, u32 mips) n
   const auto bytesPerPixel = gl::format_info(format).bytesPerPixel;
   uint64_t total = 0;
   for (uint32_t mip = 0; mip < mips; ++mip) {
-    total += static_cast<uint64_t>(std::max(width >> mip, 1u)) * std::max(height >> mip, 1u) * bytesPerPixel;
+    if (format == gl::Format::BC1 || format == gl::Format::BC3)
+      total += uint64_t(std::max((width >> mip) / 4, 1u)) * std::max((height >> mip) / 4, 1u) *
+               (format == gl::Format::BC1 ? 8 : 16);
+    else total += static_cast<uint64_t>(std::max(width >> mip, 1u)) * std::max(height >> mip, 1u) * bytesPerPixel;
   }
   return total;
 }

@@ -107,9 +107,16 @@ Device::Device(bool vsync) : m_vsync(vsync) {
     SceKernelFreeMemorySizeInfo available{};
     available.size = sizeof(available);
     check(sceKernelGetFreeMemorySize(&available), "query memory partitions");
-    if (available.size_cdram <= 8u << 20) throw std::runtime_error("Insufficient CDRAM for Aurora");
-    const unsigned budget = std::min(112u << 20, unsigned(available.size_cdram) - (8u << 20)) & ~0x3ffffu;
+    // Three direct draw slots: 24.75 MiB after CDRAM block rounding, plus
+    // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
+    // committing the texture/display arena, and leave 8 MiB for the driver.
+    constexpr unsigned producerReserve = 26u << 20;
+    constexpr unsigned driverReserve = 8u << 20;
+    if (available.size_cdram <= producerReserve + driverReserve)
+      throw std::runtime_error("Insufficient CDRAM for Aurora and three producer slots");
+    const unsigned budget = (unsigned(available.size_cdram) - producerReserve - driverReserve) & ~0x3ffffu;
     m_arena = std::make_unique<CdramArena>(budget);
+    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation 26 MiB\n", budget / 1048576.0);
     for (unsigned i = 0; i < 3; ++i) {
       m_displayData[i] = m_arena->allocate(Stride * Height * 4);
       if (!m_displayData[i]) throw std::bad_alloc();

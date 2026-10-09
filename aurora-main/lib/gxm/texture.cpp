@@ -2,6 +2,7 @@
 #include <psp2/kernel/sysmem.h>
 #include <algorithm>
 #include <bit>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -27,6 +28,8 @@ NativeFormat native_format(gl::Format format) {
   case gl::Format::R16I:
   case gl::Format::R32F: return {4, SCE_GXM_TEXTURE_FORMAT_F32_R, SCE_GXM_COLOR_FORMAT_F32_R};
   case gl::Format::Depth32F: return {4, SCE_GXM_TEXTURE_FORMAT_F32M_R, SCE_GXM_COLOR_FORMAT_F32_R};
+  case gl::Format::BC1: return {0, SCE_GXM_TEXTURE_FORMAT_UBC1_ABGR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
+  case gl::Format::BC3: return {0, SCE_GXM_TEXTURE_FORMAT_UBC3_ABGR, SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR};
   case gl::Format::R32UI: throw std::runtime_error("Native raw word buffers must use mapped BUFFER bindings");
   }
   throw std::runtime_error("Unknown native texture format");
@@ -89,7 +92,18 @@ void TexturePool::allocate(TextureStorage& texture) {
   }
   texture.m_arena = &cdram;
   if (!texture.m_data) texture.m_data = allocate_spill(texture.m_bytes, texture.m_arena);
-  if (!texture.m_data) throw std::runtime_error("Native texture residency exhausted CDRAM and bounded spill arenas");
+  if (!texture.m_data) {
+    std::fprintf(stderr, "Aurora GXM CDRAM exhausted: request %u bytes, arena %u/%u bytes, %u textures\n",
+        unsigned(texture.m_bytes), unsigned(cdram.used()), unsigned(cdram.capacity()), unsigned(m_lru.size()));
+    std::vector<TextureStorage*> largest(m_lru.begin(), m_lru.end());
+    std::sort(largest.begin(), largest.end(), [](auto* a, auto* b) { return a->size() > b->size(); });
+    for (size_t i = 0; i < std::min(largest.size(), size_t(12)); ++i) {
+      const auto& entry = *largest[i];
+      std::fprintf(stderr, "Aurora GXM resident: %ux%u mips %u format %u, %u bytes, pinned %u\n",
+          entry.width, entry.height, entry.mips, unsigned(entry.format), unsigned(entry.size()), entry.m_pinned);
+    }
+    throw std::runtime_error("Native texture residency exhausted CDRAM and bounded spill arenas");
+  }
   m_lru.push_back(&texture);
   texture.m_lru = std::prev(m_lru.end());
   texture.m_linked = true;
@@ -112,8 +126,17 @@ TextureStorage::TextureStorage(TexturePool& pool, uint32_t width_, uint32_t heig
       (format == gl::Format::Depth32F && mips != 1))
     throw std::runtime_error("Invalid native texture dimensions or mip count");
   m_pixelBytes = native_format(format).bytes;
+  const bool compressed = format == gl::Format::BC1 || format == gl::Format::BC3;
+  if (compressed && (!std::has_single_bit(width) || !std::has_single_bit(height)))
+    throw std::runtime_error("Native block-compressed assets require power-of-two dimensions");
   for (uint32_t mip = 0; mip < mips; ++mip) {
     const uint32_t w = std::max(width >> mip, 1u), h = std::max(height >> mip, 1u);
+    if (compressed) {
+      const uint32_t blocks = std::max(w / 4, 1u) * std::max(h / 4, 1u);
+      m_levels.push_back({m_bytes, w, h, 0});
+      m_bytes += size_t(blocks) * (format == gl::Format::BC1 ? 8 : 16);
+      continue;
+    }
     // Depth exports use a tile-aligned stride even with LINEAR storage.
     const uint32_t pitch = align(w, format == gl::Format::Depth32F ? 32 : 8) * m_pixelBytes;
     m_levels.push_back({m_bytes, w, h, pitch});
@@ -143,7 +166,9 @@ bool TextureStorage::in_cdram() const noexcept { return m_arena == &m_pool.m_dev
 uint32_t TextureStorage::row_bytes(uint32_t mip) const { return m_levels.at(mip).pitch; }
 void TextureStorage::refresh_views() {
   const auto native = native_format(format);
-  if (format == gl::Format::Depth32F) {
+  if (format == gl::Format::BC1 || format == gl::Format::BC3) {
+    check(sceGxmTextureInitSwizzled(&m_sampled, m_data, native.sampled, width, height, mips), "initialize native compressed asset");
+  } else if (format == gl::Format::Depth32F) {
     check(sceGxmTextureInitLinearStrided(&m_sampled, m_data, native.sampled, width, height, m_levels[0].pitch), "initialize sampled depth view");
     check(sceGxmDepthStencilSurfaceInit(&m_depth, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32M,
         SCE_GXM_DEPTH_STENCIL_SURFACE_LINEAR, m_levels[0].pitch / 4, m_data, nullptr), "initialize native depth surface");
@@ -158,7 +183,8 @@ void TextureStorage::refresh_views() {
   }
 }
 const SceGxmColorSurface* TextureStorage::color_surface() const {
-  if (format == gl::Format::Depth32F) throw std::runtime_error("Depth texture used as color target");
+  if (format == gl::Format::Depth32F || format == gl::Format::BC1 || format == gl::Format::BC3)
+    throw std::runtime_error("Sample-only texture used as color target");
   return &m_color;
 }
 const SceGxmDepthStencilSurface* TextureStorage::depth_surface() const {
@@ -172,6 +198,8 @@ SceGxmOutputRegisterFormat TextureStorage::output_format() const noexcept {
 void TextureStorage::upload(uint32_t mip, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                             const void* source, uint32_t sourcePitch) {
   if (!w || !h) return;
+  if (format == gl::Format::BC1 || format == gl::Format::BC3)
+    throw std::runtime_error("Compressed assets require native packed uploads");
   const auto& level = m_levels.at(mip);
   const uint32_t sourcePixelBytes = format == gl::Format::R16I ? 2 : m_pixelBytes;
   if (!source || uint64_t(x) + w > level.width || uint64_t(y) + h > level.height ||

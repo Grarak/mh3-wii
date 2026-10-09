@@ -1,6 +1,7 @@
 #include "../gl/gl.hpp"
 #include "../gfx/port_capture.hpp"
 #include "alpha_compare.hpp"
+#include "native_assets.hpp"
 #include "device.hpp"
 #include "draw_memory.hpp"
 #include "raster.hpp"
@@ -10,6 +11,7 @@
 #include <xxhash.h>
 #include <psp2/kernel/processmgr.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -266,6 +268,7 @@ public:
   }
   Device device;
   TexturePool pool;
+  NativeAssets assets;
   DrawMemory draws;
   PixelClip clip;
   PatchedProgram clearProgram, presentProgram;
@@ -289,6 +292,9 @@ struct RenderThread {
   bool stopping = false, ready = false, success = false;
 };
 RenderThread* g_thread = nullptr;
+// Published once after opening the pack. Only immutable metadata is read by
+// the GX producer; file reads and texture allocation remain on the render thread.
+std::atomic<const NativeAssets*> g_nativeAssets{nullptr};
 Caps g_caps;
 Renderer& renderer() {
   if (!g_thread || !on_render_thread() || !g_thread->renderer)
@@ -322,13 +328,15 @@ void run(RenderThread* rt, bool vsync) {
     for (auto& task : batch) guarded([&] { std::move(task)(); });
     batch.clear();
   }
+  g_nativeAssets.store(nullptr, std::memory_order_release);
   rt->renderer.reset(); // Every GXM destruction belongs to core 1 too.
 }
-constexpr std::array<FormatInfo, 7> FormatInfos{{
+constexpr std::array<FormatInfo, 9> FormatInfos{{
     {0, 0, 0, 4, false, false, true}, {0, 0, 0, 1, false, false, true},
     {0, 0, 0, 2, false, false, true}, {0, 0, 0, 2, true, false, false},
     {0, 0, 0, 4, false, false, false}, {0, 0, 0, 4, true, false, false},
     {0, 0, 0, 4, false, true, false},
+    {0, 0, 0, 0, false, false, true}, {0, 0, 0, 0, false, false, true},
 }};
 }
 bool initialize(SDL_Window* window, bool vsync) noexcept {
@@ -394,8 +402,9 @@ void call(Task task) noexcept {
 }
 void finish() noexcept { call([] { renderer().device.finish(); }); }
 const FormatInfo& format_info(Format format) noexcept { return FormatInfos[size_t(format)]; }
-Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view)
+Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format format_, std::string_view label)
     noexcept : width(width_), height(height_), mips(mips_), format(format_), m_name(new Name) {
+  gfx::port_capture::texture(this, true, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel, label);
   auto create = [name = m_name, width_, height_, mips_, format_] {
     auto& r = renderer();
     auto storage = std::make_unique<TextureStorage>(r.pool, width_, height_, mips_, format_);
@@ -407,14 +416,39 @@ Texture::Texture(uint32_t width_, uint32_t height_, uint32_t mips_, Format forma
   else post(std::move(create));
 }
 Texture::~Texture() {
+  gfx::port_capture::texture(this, false, width, height, mips, uint32_t(format), format_info(format).bytesPerPixel);
   if (!initialized()) { delete m_name; return; }
   post([name = m_name] { renderer().forget_texture(name->value); delete name; });
 }
 TexturePtr create_texture(uint32_t width, uint32_t height, uint32_t mips, Format format, std::string_view label) noexcept {
   return std::make_shared<Texture>(std::max(width, 1u), std::max(height, 1u), std::max(mips, 1u), format, label);
 }
+void open_native_texture_pack(const char* path) noexcept {
+  call([path = std::string(path)] {
+    auto& assets = renderer().assets;
+    assets.open(path.c_str());
+    g_nativeAssets.store(&assets, std::memory_order_release);
+  });
+}
+NativeTextureInfo native_texture_info(uint32_t asset) noexcept {
+  return guarded([&] {
+    const auto* assets = g_nativeAssets.load(std::memory_order_acquire);
+    if (!assets) throw std::runtime_error("Native texture pack is not open");
+    return assets->info(asset);
+  });
+}
+TexturePtr native_texture_asset(uint32_t asset) noexcept {
+  const auto info = native_texture_info(asset);
+  auto texture = create_texture(info.width, info.height, info.mips, info.format, "Offline native texture");
+  post([texture, asset] {
+    auto& r = renderer();
+    r.assets.load(asset, r.texture(texture->gl()));
+  });
+  return texture;
+}
 void upload_texture(const Texture& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                     const void* data, uint32_t bytesPerRow) noexcept {
+  gfx::port_capture::upload(&texture, mip, uint64_t(bytesPerRow) * height);
   guarded([&] { renderer().texture(texture.gl()).upload(mip, x, y, width, height, data, bytesPerRow); });
 }
 void write_texture(const TexturePtr& texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width,

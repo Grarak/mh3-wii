@@ -9,6 +9,10 @@
 #include <bit>
 #include <cstring>
 #include <unordered_map>
+#include "aurora-main/include/aurora/native_assets.h"
+#ifdef __vita__
+#include "memory.h"
+#endif
 #ifdef MH3_HAS_AURORA
 #include <xxhash.h>
 #endif
@@ -226,13 +230,28 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     const uint32_t guest = bp[bank + 20 + index] << 5;
     const auto view = resolver(guest);
     if (view.size < needed) throw std::runtime_error("Guest GX texture exceeds its RAM region");
+    uint32_t nativeAsset = 0;
+#ifdef __vita__
+    // Loaded BRRES headers retain their reserved native ID across relocation.
+    // Static payloads are read from the offline pack, independent of Wii RAM
+    // addresses and their reuse. No content hash or write protection is needed.
+    if (guest >= 64 && Memory::Contains(guest - 64, 64)) {
+        const uint32_t header = guest - 64;
+        const uint32_t tag = Memory::Read32(header + 60);
+        if ((tag & 0xf0000000u) == AURORA_NATIVE_TEXTURE_TAG &&
+            Memory::Read32(header) == 0x54455830 && Memory::Read32(header + 16) == 64 &&
+            Memory::Read16(header + 28) == width && Memory::Read16(header + 30) == height &&
+            Memory::Read32(header + 32) == format) nativeAsset = tag & 0x0fffffffu;
+    }
+#endif
+    nativeTexture[slot] = nativeAsset != 0;
     std::array<uint8_t, 37> out{};
     out[0] = 0x50; out[2] = 0x30; out[3] = slot;
     for (unsigned i = 0; i < 8; ++i) out[4 + i] = uint64_t(view.address) >> (56 - 8 * i);
     auto put = [&](unsigned offset, uint32_t value) {
         for (unsigned i = 0; i < 4; ++i) out[offset + i] = value >> (24 - 8 * i);
     };
-    put(12, width); put(16, height); put(20, format);
+    put(12, width); put(16, height); put(20, format | (nativeAsset ? AURORA_NATIVE_TEXTURE_FORMAT_BIT : 0));
     // Each texture unit gets its own host TLUT slot. Guest TMEM offsets and
     // formats are resolved immediately before the draw that uses the palette.
     if (format >= 8 && format <= 10) put(24, slot);
@@ -243,7 +262,7 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
     EfbCopyTrace::BeginHostRead(view.address, needed);
 #endif
-    put(29, guest); put(33, CachedTextureVersion(view.address, needed));
+    put(29, guest); put(33, nativeAsset ? nativeAsset : CachedTextureVersion(view.address, needed));
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
     EfbCopyTrace::EndHostRead();
 #endif
@@ -296,7 +315,7 @@ void GuestGxStream::BindDrawPalettes(const Sink& sink, const ArrayResolver& reso
     if (indirect > 4) throw std::runtime_error("Invalid GX indirect stage count");
     for (unsigned stage = 0; stage < indirect; ++stage) used |= 1u << ((bp[0x27] >> (stage * 6)) & 7);
     for (unsigned slot = 0; slot < 8; ++slot) {
-        if (!(used & (1u << slot)) || !textureBound[slot]) continue;
+        if (!(used & (1u << slot)) || !textureBound[slot] || nativeTexture[slot]) continue;
         const unsigned bank = slot < 4 ? 0x80 : 0xA0, index = slot & 3;
         const unsigned format = (bp[bank + 8 + index] >> 20) & 15;
         if (format < 8 || format > 10) continue;
@@ -435,6 +454,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 child.displayListAddress = address;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
                 child.textureBound = textureBound; child.textureDirty = textureDirty;
+                child.nativeTexture = nativeTexture;
                 child.boundArrays = boundArrays;
                 child.palettes = palettes; child.paletteBindings = paletteBindings;
                 child.displayListDepth = displayListDepth + 1;
@@ -442,6 +462,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 if (child.PendingBytes()) throw std::runtime_error("GX display list ends in a partial command");
                 bp = child.bp; cp = child.cp; bpMask = child.bpMask;
                 textureBound = child.textureBound; textureDirty = child.textureDirty;
+                nativeTexture = child.nativeTexture;
                 boundArrays = child.boundArrays;
                 palettes = child.palettes; paletteBindings = child.paletteBindings;
             }

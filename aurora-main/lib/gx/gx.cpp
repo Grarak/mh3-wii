@@ -1,4 +1,5 @@
 #include "gx.hpp"
+#include <aurora/native_assets.h>
 
 #include "pipeline.hpp"
 #include "texture_bind_group_cache_key.hpp"
@@ -218,6 +219,12 @@ struct TlutObjectCache {
 absl::flat_hash_map<u32, CachedTextureEntry> s_textureObjectCaches;
 absl::flat_hash_map<u32, TlutObjectCache> s_tlutObjectCaches;
 absl::flat_hash_map<StaticTextureKey, StaticTextureSourceEntry> s_staticTextureSourceCache;
+#ifdef AURORA_GXM
+struct NativeAssetEntry { gfx::TextureHandle handle; u32 frame, bytes; };
+absl::flat_hash_map<u32, NativeAssetEntry> s_nativeAssetTextures;
+size_t s_nativeAssetBytes = 0;
+constexpr size_t kNativeAssetCacheBudget = 28u << 20;
+#endif
 absl::flat_hash_map<StaticPaletteTextureKey, StaticPaletteTextureSourceEntry> s_staticPaletteTextureSourceCache;
 absl::flat_hash_map<u32, StaticTextureKey> s_texObjSourceKeys;
 absl::flat_hash_map<u32, StaticPaletteTextureKey> s_texObjPaletteSourceKeys;
@@ -540,6 +547,42 @@ gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
 
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   ZoneScoped;
+#ifdef AURORA_GXM
+  if (obj.format() & AURORA_NATIVE_TEXTURE_FORMAT_BIT) {
+    const u32 id = obj.texDataVersion;
+    if (auto it = s_nativeAssetTextures.find(id); it != s_nativeAssetTextures.end()) {
+      it->second.frame = gfx::current_frame();
+      return it->second.handle;
+    }
+    const auto info = gl::native_texture_info(id);
+    const u32 bytes = (info.bytes + 63u) & ~63u;
+    // Retain cold textures until the cache needs room. Only cache-owned
+    // handles can be retired: frame N-1 and cached draw bindings keep their
+    // own references. Live frames may temporarily exceed this soft budget;
+    // the CDRAM arena still imposes the hard physical limit.
+    while (s_nativeAssetBytes + bytes > kNativeAssetCacheBudget || s_nativeAssetTextures.size() >= 256) {
+      auto oldest = s_nativeAssetTextures.end();
+      const u32 frame = gfx::current_frame();
+      for (auto it = s_nativeAssetTextures.begin(); it != s_nativeAssetTextures.end(); ++it) {
+        if (it->second.handle.use_count() != 1) continue;
+        if (oldest == s_nativeAssetTextures.end() || frame - it->second.frame > frame - oldest->second.frame)
+          oldest = it;
+      }
+      if (oldest == s_nativeAssetTextures.end()) break;
+      s_nativeAssetBytes -= oldest->second.bytes;
+      s_nativeAssetTextures.erase(oldest);
+    }
+    CHECK(info.width == obj.width() && info.height == obj.height(), "Native asset dimensions disagree with GX binding");
+    const u32 original = obj.format() & 15;
+    auto handle = std::make_shared<gfx::TextureRef>(gl::native_texture_asset(id),
+        gfx::Extent{info.width, info.height, 1}, info.format, info.mips,
+        is_palette_format(original) ? GX_TF_RGBA8_PC : original);
+    handle->hasArbitraryMips = info.arbitraryMips;
+    s_nativeAssetTextures.emplace(id, NativeAssetEntry{handle, gfx::current_frame(), bytes});
+    s_nativeAssetBytes += bytes;
+    return handle;
+  }
+#endif
   const bool canCacheUpload = !obj.no_cache() && can_cache_static_texture_upload(obj);
 
   if (canCacheUpload && obj.texObjId != 0) {
@@ -1203,7 +1246,7 @@ void mark_copy_texture_sampled(const void* copyDest, GXState::CopyTextureRef& co
 
 bool copy_ref_matches_texobj(const GXState::CopyTextureRef& copyRef, const GXTexObj_& obj) noexcept {
   return copyRef && copyRef.width == obj.width() && copyRef.height == obj.height() &&
-         copy_texture_format_compatible(copyRef.format, obj.format());
+         copy_texture_format_compatible(copyRef.format, obj.format() & ~AURORA_NATIVE_TEXTURE_FORMAT_BIT);
 }
 
 void notify_copy_texture_created() noexcept {
@@ -1216,7 +1259,7 @@ GXState::CopyTextureRef* find_cached_copy_texture(const void* copyDest, const GX
       .dest = copyDest,
       .width = obj.width(),
       .height = obj.height(),
-      .format = static_cast<GXTexFmt>(obj.format()),
+      .format = static_cast<GXTexFmt>(obj.format() & ~AURORA_NATIVE_TEXTURE_FORMAT_BIT),
   };
   auto cached = g_gxState.copyTextureCache.find(key);
   if (cached == g_gxState.copyTextureCache.end() || !cached->second) {
@@ -1263,7 +1306,12 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     if (sameResolvedTexture && s_lastNoCopyResolveRevision[i] == s_copyTextureStateRevision) {
       continue;
     }
+    // Native assets already have a stable ID and their own residency cache.
+    // The legacy identity memo owns strong references with no idle expiry;
+    // putting native assets there prevents the residency cache from evicting
+    // otherwise unused textures. Keep only the per-slot memo and draw owners.
     const bool canUseStaticSourceKey =
+        !(obj.format() & AURORA_NATIVE_TEXTURE_FORMAT_BIT) &&
         !is_palette_format(obj.format()) && canCacheUpload && !obj.no_cache() &&
         obj.data != nullptr;
     const StaticTextureKey staticSourceKey =
@@ -1834,6 +1882,10 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
 void initialize() noexcept {}
 
 void shutdown() noexcept {
+#ifdef AURORA_GXM
+  s_nativeAssetTextures.clear();
+  s_nativeAssetBytes = 0;
+#endif
   for (auto& item : g_gxState.textures) {
     item.ref.reset();
   }

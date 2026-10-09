@@ -15,11 +15,12 @@ size_t aligned(size_t bytes, size_t alignment) {
 }
 
 MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(kind) {
-  m_size = aligned(bytes, kind == Kind::Cdram ? 0x40000 : kind == Kind::Phycont ? 0x100000 : 0x1000);
+  m_size = aligned(bytes, kind == Kind::Phycont ? 0x100000 : 0x40000);
   if (m_size == 0) throw std::bad_alloc();
-  auto type = kind == Kind::Cdram ? SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW
-            : kind == Kind::Phycont ? SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW
-                                   : SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE;
+  // All producer buffers, command rings and patched USSE programs live in
+  // CDRAM. CPU-only metadata and archival asset bytes use ordinary RAM.
+  auto type = kind == Kind::Phycont ? SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_NC_RW
+                                   : SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW;
   m_block = sceKernelAllocMemBlock(name, type, m_size, nullptr);
   if (m_block < 0) {
     char message[180];
@@ -43,6 +44,8 @@ MappedMemory::MappedMemory(size_t bytes, Kind kind, const char* name) : m_kind(k
     m_data = nullptr;
     throw std::runtime_error("Cannot map Vita GPU memory");
   }
+  std::fprintf(stderr, "Aurora GXM allocation: %s, %.2f MiB %s at %08x\n", name, m_size / 1048576.0,
+               kind == Kind::Phycont ? "phycont" : "CDRAM", unsigned(reinterpret_cast<uintptr_t>(m_data)));
 }
 MappedMemory::~MappedMemory() { release(); }
 MappedMemory::MappedMemory(MappedMemory&& other) noexcept { *this = std::move(other); }

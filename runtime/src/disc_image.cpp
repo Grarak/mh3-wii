@@ -162,13 +162,46 @@ DiscImage::DiscImage(const std::filesystem::path& root) {
         verify(0, boot);
         verify(uint64_t(Word(boot, 0x424)) * 4, fst);
     } else if (packed) throw std::runtime_error("Packed disc requires partition.bin");
+#ifdef __vita__
+    const auto mapPath = root / "native-texture-map.bin";
+    if (Exists(mapPath)) {
+        if (!Exists(root / "native-textures.bin")) throw std::runtime_error("Native texture map requires its payload pack");
+        const auto map = Load(mapPath);
+        const auto little32 = [&](size_t at) {
+            return uint32_t(map[at]) | uint32_t(map[at + 1]) << 8 | uint32_t(map[at + 2]) << 16 | uint32_t(map[at + 3]) << 24;
+        };
+        if (map.size() < 12 || little32(0) != 0x4d54334d || little32(4) != 1 ||
+            little32(8) > 32768 || map.size() != 12 + size_t(little32(8)) * 12)
+            throw std::runtime_error("Invalid native texture map");
+        uint64_t previousEnd = 0;
+        for (size_t at = 12; at < map.size(); at += 12) {
+            const uint64_t offset = uint64_t(little32(at)) | uint64_t(little32(at + 4)) << 32;
+            if (offset < previousEnd || offset > UINT64_MAX - 4 ||
+                (partitionSize && offset + 4 > partitionSize) || (map[at + 8] & 0xf0) != 0xa0)
+                throw std::runtime_error("Invalid native texture tag offset");
+            nativeTexturePatches.push_back({offset, {map[at + 8], map[at + 9], map[at + 10], map[at + 11]}});
+            previousEnd = offset + 4;
+        }
+    }
+#endif
+}
+void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const {
+    const uint64_t end = offset + data.size();
+    auto it = std::lower_bound(nativeTexturePatches.begin(), nativeTexturePatches.end(), offset,
+        [](const NativeTexturePatch& patch, uint64_t start) { return patch.offset + 4 <= start; });
+    for (; it != nativeTexturePatches.end() && it->offset < end; ++it)
+        for (unsigned byte = 0; byte < 4; ++byte)
+            if (it->offset + byte >= offset && it->offset + byte < end)
+                data[it->offset + byte - offset] = it->bytes[byte];
 }
 std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
     if (length > 64 * 1024 * 1024 || offset > std::numeric_limits<uint64_t>::max() - length)
         throw std::runtime_error("Disc read exceeds supported request size");
     std::vector<uint8_t> result(length);
+    const uint64_t initialOffset = offset;
     if (packed) {
         partition->Read(offset, result.data(), length);
+        ApplyNativeTexturePatches(initialOffset, result);
         return result;
     }
     size_t done = 0;
@@ -191,6 +224,7 @@ std::vector<uint8_t> DiscImage::Read(uint64_t offset, uint32_t length) const {
         DiscFile(it->path).Read(offset - it->offset, result.data() + done, count);
         offset += count; done += count;
     }
+    ApplyNativeTexturePatches(initialOffset, result);
     return result;
 }
 std::vector<uint8_t> DiscImage::ReadFile(const std::string& name) const {

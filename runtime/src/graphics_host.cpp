@@ -277,6 +277,11 @@ void InitializeGraphics(int argc, char** argv) {
     const auto info = aurora_initialize(argc, argv, &config);
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
         throw std::runtime_error(info.initializationError ? info.initializationError : "Aurora initialization failed");
+#ifdef __vita__
+    const char* discRoot = std::getenv("MH3_DISC_DIR");
+    const auto nativePack = std::filesystem::path(discRoot ? discRoot : "ux0:/data/mh3-wii") / "native-textures.bin";
+    if (std::filesystem::exists(nativePack)) aurora::gl::open_native_texture_pack(nativePack.string().c_str());
+#endif
     initialized = true;
 #ifdef MH3_DEVELOPMENT
     // MH3_RENDER_SCALE=n: render the EFB at n times the native resolution,

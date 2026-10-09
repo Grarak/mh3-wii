@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -22,6 +23,9 @@ private:
     std::unique_ptr<DiscFile> partition;
     uint64_t partitionSize = 0;
     bool packed = false;
+    struct NativeTexturePatch { uint64_t offset; std::array<uint8_t, 4> bytes; };
+    std::vector<NativeTexturePatch> nativeTexturePatches;
+    void ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const;
     void Add(uint64_t offset, const std::filesystem::path& path, uint64_t expected, bool verify = true);
 };
 
