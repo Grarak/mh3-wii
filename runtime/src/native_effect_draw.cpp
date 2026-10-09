@@ -4,6 +4,7 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "../native/mh3_effect_draw.h"
+#include "../native/mh3_particle_draw_state.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -312,29 +313,41 @@ REGISTER_NATIVE_FUNCTION_AS(0x800C4594,MH3_EffectStrategySetup,"EffectSmoothStri
 REGISTER_NATIVE_FUNCTION_AS(0x800B768C,MH3_EffectCullPadding,"EffectStripeCullPadding");
 REGISTER_NATIVE_FUNCTION_AS(0x800C3D5C,MH3_EffectCullPadding,"EffectSmoothStripeCullPadding");
 namespace {
-struct DirectionalContext {BillboardContext base;uint32_t context,direction_fn,rotation_matrix,size_matrix,movement_out,direction_out;mh3_effect_directional_inputs inputs;float pivot[2];};
-void DirectionalQuad(void *opaque,uint32_t id,const mh3_effect_particle *p,float width,float height){
-    auto &d=*static_cast<DirectionalContext*>(opaque);auto &c=d.base;GuestCall game{c.cpu};float stretch=1;
-    if(FlatRead8(c.resource+0xb0)){game.Call<0x800A7F64>({id,d.movement_out});float movement[3];ReadVector(d.movement_out,movement,3);float magnitude=std::sqrt(movement[0]*movement[0]+movement[1]*movement[1]+movement[2]*movement[2]);stretch=1+float(float(FlatReadFloat32(0x8079863c)*magnitude)/height);}
-    game.Call<0x800BCEFC>({d.rotation_matrix,id,FlatRead8(c.resource+0xaf)});game.Call<0x800BCD78>({d.size_matrix,FlatRead8(c.resource+0xb1),d.rotation_matrix},{d.pivot[0],d.pivot[1],width,height,stretch});ReadVector(d.size_matrix,d.inputs.size_matrix,12);
-    game(d.direction_fn,{d.direction_out,d.context,id});ReadVector(d.direction_out,d.inputs.direction,3);ReadVector(id+0xcc,d.inputs.history,3);std::memcpy(d.inputs.position,p->position,12);float history[3],matrix[12];mh3_effect_directional_matrix(&d.inputs,history,matrix);WriteVector(id+0xcc,history,3);
-    uint32_t planes=1u+(FlatRead8(c.resource+0xad)==1);
-    for(uint32_t plane=0;plane<planes;plane++){
-        mh3_effect_quad q;
-        if(d.inputs.screen_facing){float center[3],a[3],b[3];for(uint32_t r=0;r<3;r++){center[r]=matrix[4*r+3];a[r]=matrix[4*r+plane]+matrix[4*r+plane+1];b[r]=matrix[4*r+plane]-matrix[4*r+plane+1];}mh3_effect_quad_axes(center,a,b,&q);}
-        else{mh3_effect_quad canonical;for(uint32_t v=0;v<4;v++)ReadVector(0x8056ff30+0x30*plane+12*v,canonical.position[v],3);mh3_effect_quad_transform(matrix,&canonical,&q);}
-        Emit(q,effect.resource.texture_count!=0);
+struct DirectionalContext {BillboardContext base;uint32_t context,direction_fn,rotation_out,sincos_out,movement_out,direction_out;mh3_particle_directional_scene scene;};
+mh3_particle_directional_record CaptureDirectionalParticle(DirectionalContext &d,uint32_t id,const mh3_effect_particle &p,float width,float height) {
+    auto &c=d.base;GuestCall game{c.cpu};mh3_particle_directional_record record{};
+    std::memcpy(record.position,p.position,sizeof(record.position));record.width=width;record.height=height;
+    for(auto &sc:record.sincos)sc[1]=1;
+    if(d.scene.stretch){game.Call<0x800A7F64>({id,d.movement_out});ReadVector(d.movement_out,record.movement,3);}
+    game.Call<0x800B5518>({id,d.rotation_out});float angles[3];ReadVector(d.rotation_out,angles,3);
+    for(uint32_t axis=0;axis<3;axis++)if((d.scene.rotation_kind>2||d.scene.rotation_kind==axis)&&angles[axis]!=0) {
+        game.Call<0x8009C7C4>({d.sincos_out,d.sincos_out+4},{-double(angles[axis])});ReadVector(d.sincos_out,record.sincos[axis],2);
     }
+    game(d.direction_fn,{d.direction_out,d.context,id});ReadVector(d.direction_out,record.direction,3);
+    return record;
+}
+void DirectionalQuad(void *opaque,uint32_t id,const mh3_effect_particle *p,float width,float height){
+    auto &d=*static_cast<DirectionalContext*>(opaque);
+    const mh3_particle_directional_record record=CaptureDirectionalParticle(d,id,*p,width,height);
+    float history[3];ReadVector(id+0xcc,history,3);mh3_particle_directional_output output;
+    Require(mh3_particle_directional_draw(&d.scene,&record,history,&output),"Invalid directional particle capture");
+    /* Current single-thread ABI publication preserves stripe readers. A future
+     * render owner keeps this history in its private slot and reconciles only
+     * proven CPU readers through an explicit lifetime/revision protocol. */
+    WriteVector(id+0xcc,output.history,3);
+    for(uint32_t plane=0;plane<output.plane_count;plane++)Emit(output.quads[plane],effect.resource.texture_count!=0);
 }
 void DirectionalStrategy(CpuContext *cpu,bool screen){
-    GuestFrame frame(cpu,0x240);DirectionalContext d{{cpu,frame.Arg(3),frame.Arg(4),frame.Arg(5),0,0,0,0,0},frame[0x70],0,frame[0x140],frame[0x180],frame[0x1c0],frame[0x1d0],{}, {}};auto &c=d.base;c.resource=FlatRead32(c.manager+0x24)+0x9c;GuestCall game{cpu};
+    GuestFrame frame(cpu,0x240);DirectionalContext d{{cpu,frame.Arg(3),frame.Arg(4),frame.Arg(5),0,0,0,0,0},frame[0x70],0,frame[0x140],frame[0x180],frame[0x1c0],frame[0x1d0],{}};auto &c=d.base;c.resource=FlatRead32(c.manager+0x24)+0x9c;GuestCall game{cpu};
     TextureMaps(c.strategy,c.resource);Material(c.strategy,c.resource,c.info);Channels(c.strategy,c.resource,c.info);game.Call<0x800B7E14>({c.info,frame[0x10]});game.Call<0x800C8F74>({d.context,frame[0x10],c.manager});
-    float view[12],local[12];ReadVector(frame[0x10],view,12);ReadVector(d.context+0x38,local,12);for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)d.inputs.view_local[4*r+col]=view[4*r]*local[col]+view[4*r+1]*local[4+col]+view[4*r+2]*local[8+col]+(col==3?view[4*r+3]:0);d.inputs.screen_facing=screen;
+    float view[12],local[12];ReadVector(frame[0x10],view,12);ReadVector(d.context+0x38,local,12);for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)d.scene.view_local[4*r+col]=view[4*r]*local[col]+view[4*r+1]*local[4+col]+view[4*r+2]*local[8+col]+(col==3?view[4*r+3]:0);d.scene.screen_facing=screen;
     float initial[3];
-    if(screen){ReadVector(0x806970ac,initial,3);ReadVector(0x80697088,d.inputs.fallback,3);float identity[12];ReadVector(0x806970b8,identity,12);SetNativePositionMatrix(identity);}
-    else{SetNativePositionMatrix(d.inputs.view_local);float inverse[12],global[12],basis[12];ReadVector(d.context+0x68,inverse,12);if(FlatRead8(c.resource+0xae)==7)std::memcpy(basis,inverse,48);else{ReadVector(d.context+8,global,12);for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)basis[4*r+col]=inverse[4*r]*global[col]+inverse[4*r+1]*global[4+col]+inverse[4*r+2]*global[8+col]+(col==3?inverse[4*r+3]:0);}for(uint32_t r=0;r<3;r++){initial[r]=basis[4*r+1];d.inputs.fallback[r]=basis[4*r+2];}float n=std::sqrt(d.inputs.fallback[0]*d.inputs.fallback[0]+d.inputs.fallback[1]*d.inputs.fallback[1]+d.inputs.fallback[2]*d.inputs.fallback[2]);if(n!=0)for(float &v:d.inputs.fallback)v/=n;}
+    if(screen){ReadVector(0x806970ac,initial,3);ReadVector(0x80697088,d.scene.fallback,3);float identity[12];ReadVector(0x806970b8,identity,12);SetNativePositionMatrix(identity);}
+    else{SetNativePositionMatrix(d.scene.view_local);float inverse[12],global[12],basis[12];ReadVector(d.context+0x68,inverse,12);if(FlatRead8(c.resource+0xae)==7)std::memcpy(basis,inverse,48);else{ReadVector(d.context+8,global,12);for(uint32_t r=0;r<3;r++)for(uint32_t col=0;col<4;col++)basis[4*r+col]=inverse[4*r]*global[col]+inverse[4*r+1]*global[4+col]+inverse[4*r+2]*global[8+col]+(col==3?inverse[4*r+3]:0);}for(uint32_t r=0;r<3;r++){initial[r]=basis[4*r+1];d.scene.fallback[r]=basis[4*r+2];}float n=std::sqrt(d.scene.fallback[0]*d.scene.fallback[0]+d.scene.fallback[1]*d.scene.fallback[1]+d.scene.fallback[2]*d.scene.fallback[2]);if(n!=0)for(float &v:d.scene.fallback)v/=n;}
     for(uint32_t p=game.Call<0x800B5BA4>({c.manager});p&&FlatReadFloat32(p+0xcc)>1;p=game.Call<0x800B5B98>({c.manager,p}))WriteVector(p+0xcc,initial,3);
-    d.direction_fn=game.Virtual<0x18>(c.strategy,{c.manager});uint32_t order=FlatRead16(c.resource)&0x800;c.first_fn=game.Virtual<0x10>(c.strategy,{order});c.next_fn=game.Virtual<0x14>(c.strategy,{order});d.pivot[0]=float(int8_t(FlatRead8(c.resource+0xa9)))/100;d.pivot[1]=float(int8_t(FlatRead8(c.resource+0xaa)))/100;
+    d.direction_fn=game.Virtual<0x18>(c.strategy,{c.manager});uint32_t order=FlatRead16(c.resource)&0x800;c.first_fn=game.Virtual<0x10>(c.strategy,{order});c.next_fn=game.Virtual<0x14>(c.strategy,{order});d.scene.pivot[0]=float(int8_t(FlatRead8(c.resource+0xa9)))/100;d.scene.pivot[1]=float(int8_t(FlatRead8(c.resource+0xaa)))/100;
+    d.scene.rotation_kind=FlatRead8(c.resource+0xaf);d.scene.size_kind=FlatRead8(c.resource+0xb1);d.scene.stretch=FlatRead8(c.resource+0xb0)!=0;d.scene.movement_scale=FlatReadFloat32(0x8079863c);d.scene.plane_count=uint8_t(1u+(FlatRead8(c.resource+0xad)==1));
+    if(!screen)for(uint32_t plane=0;plane<d.scene.plane_count;plane++)for(uint32_t vertex=0;vertex<4;vertex++)ReadVector(0x8056ff30+0x30*plane+12*vertex,d.scene.canonical[plane].position[vertex],3);
     mh3_effect_billboard_source source{&d,First,Next,ReadParticle,Prepare,nullptr,nullptr};mh3_effect_draw_particles(FlatReadFloat32(0x80798638),&source,DirectionalQuad);
 }
 }

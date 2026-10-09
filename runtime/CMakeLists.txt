@@ -136,7 +136,7 @@ target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/
   src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
   src/native_ui.cpp native/mh3_ui.c
   src/native_system_ui.cpp native/mh3_system_ui.c
-  src/native_effect_draw.cpp native/mh3_effect_draw.c
+  src/native_effect_draw.cpp native/mh3_effect_draw.c native/mh3_particle_draw_state.c
   src/native_scene_feedback.cpp native/mh3_scene_feedback.c
   native/mh3_demo_menu.c
   src/native_scene_queue.cpp native/mh3_scene_queue.c
