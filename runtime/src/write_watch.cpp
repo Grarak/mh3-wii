@@ -50,7 +50,7 @@ std::string Describe(const void* pc) {
 
 void Report() {
     std::vector<std::pair<Key, Writes>> sorted(writes.begin(), writes.end());
-    std::fprintf(stderr, "MH3 write watch: %zu writers of [%08x, +%x)\n", sorted.size(), g_writeWatchStart,
+    std::fprintf(stderr, "MH3 write watch: %llu writers of [%08x, +%x)\n", static_cast<unsigned long long>(sorted.size()), g_writeWatchStart,
                  g_writeWatchLength);
     for (const auto& [key, w] : sorted) {
         const auto& [caller, lr, offset] = key;
@@ -83,7 +83,7 @@ struct Arm {
             words.assign(g_writeWatchLength / 32 + 1, 0);
             for (uint32_t a : listed) words[(a - *low) >> 5] |= uint8_t(1u << (((a - *low) >> 2) & 7));
             g_writeWatchWords = words.data();
-            std::fprintf(stderr, "MH3 write watch: armed %zu words in [%08x, +%x)\n", listed.size(), g_writeWatchStart,
+            std::fprintf(stderr, "MH3 write watch: armed %llu words in [%08x, +%x)\n", static_cast<unsigned long long>(listed.size()), g_writeWatchStart,
                          g_writeWatchLength);
             return;
         }

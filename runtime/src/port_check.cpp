@@ -138,8 +138,9 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
         size_t bytes = 0;
         for (size_t i = 0; i < expectedGx.size() && i < actualGx.size(); ++i) bytes += expectedGx[i] != actualGx[i];
         char line[256];
-        int n = std::snprintf(line, sizeof line, "  GX FIFO: %zu bytes original, %zu port, %zu differ from byte %zu:",
-                              expectedGx.size(), actualGx.size(), bytes, at);
+        int n = std::snprintf(line, sizeof line, "  GX FIFO: %llu bytes original, %llu port, %llu differ from byte %llu:",
+                              static_cast<unsigned long long>(expectedGx.size()), static_cast<unsigned long long>(actualGx.size()),
+                              static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(at));
         for (size_t i = at & ~size_t(3); i < (at & ~size_t(3)) + 8 && n < 200; ++i)
             n += std::snprintf(line + n, sizeof line - n, " %02x/%02x", i < expectedGx.size() ? expectedGx[i] : 0,
                                i < actualGx.size() ? actualGx[i] : 0);
@@ -165,8 +166,8 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     if (differences || !lines.empty()) {
         const std::string key = name + std::string(":") + lines.substr(0, lines.find('\n'));
         if (reported.insert(key).second)
-            std::printf("MH3 port check: %s differs from the original (check %u, %zu words):\n%s", name, checks,
-                        differences, lines.c_str());
+            std::printf("MH3 port check: %s differs from the original (check %u, %llu words):\n%s", name, checks,
+                        static_cast<unsigned long long>(differences), lines.c_str());
     } else if ((checks & (checks - 1)) == 0) {
         std::printf("MH3 port check: %s matches the original (%u checks)\n", name, checks);
     }

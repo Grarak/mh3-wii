@@ -96,8 +96,8 @@ thread_local TraceScope* activeTrace = nullptr;
 mh3_res_status Predict(void* opaque, const mh3_model_draw_item* item) {
     auto& trace = *static_cast<TraceScope*>(opaque);
     trace.expected.push_back(*item);
-    std::fprintf(Config().file, "decision\t%u\t%llu\t%zu\t%u\t%u\t%u\t%u\t%08x\t%08x\t%08x\t%x\t%s\t%s\t%s\n",
-        trace.frame, static_cast<unsigned long long>(trace.call), trace.expected.size() - 1,
+    std::fprintf(Config().file, "decision\t%u\t%llu\t%llu\t%u\t%u\t%u\t%u\t%08x\t%08x\t%08x\t%x\t%s\t%s\t%s\n",
+        trace.frame, static_cast<unsigned long long>(trace.call), static_cast<unsigned long long>(trace.expected.size() - 1),
         item->draw.material_id, item->draw.shape_id, item->draw.node_id, item->draw.priority,
         Address(trace.view, item->material.offset), Address(trace.view, item->shape.offset),
         Address(trace.view, item->node.offset), item->dispatch_flags,
@@ -199,9 +199,9 @@ extern "C" void MH3_ModelDraw(CpuContext* cpu) {
     if (config.file && frame >= config.first && frame <= config.last) {
         TraceScope trace{activeTrace, View(cpu), {}, frame, 0, 0, ++config.calls};
         const uint32_t options = cpu->gpr[6];
-        std::fprintf(config.file, "model\t%u\t%llu\t%08x\t%08x\t%08x\t%x\t%zu\t%s\t%s\n", frame,
+        std::fprintf(config.file, "model\t%u\t%llu\t%08x\t%08x\t%08x\t%x\t%llu\t%s\t%s\n", frame,
             static_cast<unsigned long long>(trace.call), trace.view.resource,
-            Address(trace.view, trace.view.bytecode), trace.view.replacement, options, trace.view.visibility.size,
+            Address(trace.view, trace.view.bytecode), trace.view.replacement, options, static_cast<unsigned long long>(trace.view.visibility.size),
             ModelName(trace.view), BytecodeName(trace.view));
         mh3_model_draw_stats stats;
         const auto status = mh3_model_draw_walk(&trace.view.model, trace.view.bytecode,
@@ -211,9 +211,9 @@ extern "C" void MH3_ModelDraw(CpuContext* cpu) {
         try { RunDraw(cpu); } catch (...) { activeTrace = trace.previous; throw; }
         activeTrace = trace.previous;
         if (trace.actual != trace.expected.size()) ++trace.mismatches;
-        std::fprintf(config.file, "summary\t%u\t%llu\t%u\t%u\t%u\t%u\t%zu\t%u\t%u\n", frame,
+        std::fprintf(config.file, "summary\t%u\t%llu\t%u\t%u\t%u\t%u\t%llu\t%u\t%u\n", frame,
             static_cast<unsigned long long>(trace.call), stats.records, stats.hidden_nodes,
-            stats.hidden_shapes, stats.repeated_materials, trace.expected.size(), trace.actual, trace.mismatches);
+            stats.hidden_shapes, stats.repeated_materials, static_cast<unsigned long long>(trace.expected.size()), trace.actual, trace.mismatches);
         std::fflush(config.file);
         return;
     }

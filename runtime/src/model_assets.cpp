@@ -44,6 +44,14 @@ struct Manager {
 };
 std::unique_ptr<Manager> manager;
 uint64_t generation = 0;
+void Trace(const char* stage, uint32_t index) {
+#ifdef MH3_DEVELOPMENT
+    if (std::getenv("MH3_NATIVE_ASSET_TRACE"))
+        std::fprintf(stderr, "MH3 native asset trace: pack %u %s\n", index, stage);
+#else
+    (void)stage; (void)index;
+#endif
+}
 uint32_t Word(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
@@ -226,6 +234,7 @@ std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, 
     return next;
 }
 void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
+    Trace("insert metadata owner", index);
     const auto [entry, inserted] = m.loaded.emplace(index, std::move(next));
     if (!inserted) throw std::runtime_error("Native model source pack already admitted");
     auto& asset = *entry->second;
@@ -239,14 +248,17 @@ void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerG
             RegisterNativeModelGPU(asset.pack, name.c_str(), asset.handle(), asset.generation);
             asset.gpuRegistered = true;
         }
+        Trace("register source catalog", index);
         RegisterNativeModelPack(&asset.pack, &asset.catalog, asset.handle(), asset.generation);
+        Trace("source catalog registered", index);
         asset.catalogRegistered = true;
     } catch (...) { Retire(asset); m.handles.erase(asset.handle()); m.loaded.erase(entry); throw; }
     asset.lastUse = ++m.clock;
     m.stats.metadata_bytes += asset.metadata.size(); m.stats.identity_bytes += asset.identity.size();
     ++m.stats.admitted_packs; ++m.stats.admissions;
-    std::fprintf(stderr, "MH3 native model assets: %u models, %u meshes, %zu metadata + %zu identity bytes, %u GPU bytes (%s)\n",
-        asset.catalog.model_count, asset.pack.counts[MH3_PACK_MESHES], asset.metadata.size(), asset.identity.size(),
+    std::fprintf(stderr, "MH3 native model assets: %u models, %u meshes, %llu metadata + %llu identity bytes, %u GPU bytes (%s)\n",
+        asset.catalog.model_count, asset.pack.counts[MH3_PACK_MESHES],
+        static_cast<unsigned long long>(asset.metadata.size()), static_cast<unsigned long long>(asset.identity.size()),
         asset.pack.gpu_bytes, eagerGPU ? "resident" : "CPU metadata admitted");
 }
 }
@@ -261,8 +273,8 @@ void LoadNativeModelAssets(const char* discRoot) {
     auto next = std::make_unique<Manager>();
     if (!overridePack && (overrideIndex || std::filesystem::exists(indexPath))) {
         OpenIndex(*next, indexPath);
-        std::fprintf(stderr, "MH3 native model index: %u packs, %u partition extents, %zu CPU bytes; demand admission enabled\n",
-            next->packCount, next->sourceCount, next->index.size());
+        std::fprintf(stderr, "MH3 native model index: %u packs, %u partition extents, %llu CPU bytes; demand admission enabled\n",
+            next->packCount, next->sourceCount, static_cast<unsigned long long>(next->index.size()));
     } else {
         const auto path = overridePack ? std::filesystem::path(overridePack) : root / "models.bin";
         if (!overridePack && !std::filesystem::exists(path)) return;

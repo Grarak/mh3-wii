@@ -113,7 +113,7 @@ void Report() {
     for (const auto& [region, functions] : byRegion) {
         uint64_t reads = 0, writes = 0;
         for (const auto& [name, f] : functions) reads += f.total.reads, writes += f.total.writes;
-        std::fprintf(out, "\n## %s: %zu functions, %llu reads, %llu writes\n", region.c_str(), functions.size(),
+        std::fprintf(out, "\n## %s: %llu functions, %llu reads, %llu writes\n", region.c_str(), static_cast<unsigned long long>(functions.size()),
                      static_cast<unsigned long long>(reads), static_cast<unsigned long long>(writes));
         std::vector<std::pair<uint64_t, const std::string*>> order;
         for (const auto& [name, f] : functions) order.push_back({f.total.reads + f.total.writes, &name});
@@ -124,7 +124,7 @@ void Report() {
                          static_cast<unsigned long long>(f.total.writes));
             for (int n : {1, 2, 4, 8})
                 if (f.total.sizes & (1u << n)) std::fprintf(out, " %d", n);
-            std::fprintf(out, "  %zu addresses:", f.addresses.size());
+            std::fprintf(out, "  %llu addresses:", static_cast<unsigned long long>(f.addresses.size()));
             size_t shown = 0;
             for (const auto& [address, c] : f.addresses) {
                 if (++shown > 12) { std::fprintf(out, " ..."); break; }

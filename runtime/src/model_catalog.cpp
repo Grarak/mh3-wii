@@ -13,6 +13,8 @@
 #include <map>
 #include <sstream>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 constexpr size_t capacity=8192;
@@ -207,6 +209,15 @@ void RecordNativeTypedMaterialCopy(uint32_t destination,uint32_t source,uint32_t
 }
 void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* catalog,
                              uintptr_t handle,uint64_t generation) {
+    const auto trace=[](const char* stage,uint32_t index) {
+#ifdef MH3_DEVELOPMENT
+        if(std::getenv("MH3_NATIVE_ASSET_TRACE"))
+            std::fprintf(stderr,"MH3 native catalog trace: %s %u\n",stage,index);
+#else
+        (void)stage;(void)index;
+#endif
+    };
+    trace("validate",0);
     if(!handle || !generation || mh3_model_catalog_validate_pack(catalog,pack)!=MH3_PACK_OK)
         throw std::runtime_error("Invalid external native model pack registration");
     for(const auto& p:packs) {
@@ -219,6 +230,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
         }
     }
     Pack admitted{pack,catalog,handle,generation,{},{},{},{},{},{}};
+    trace("prepare meshes",pack->counts[MH3_PACK_MESHES]);
     admitted.meshes.resize(pack->counts[MH3_PACK_MESHES]);
     admitted.palette_batches.resize(admitted.meshes.size());
     for(uint32_t i=0;i<catalog->model_count;i++) {
@@ -243,6 +255,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
         }
     }
     admitted.materials.resize(pack->counts[MH3_PACK_MATERIALS]);
+    trace("prepare materials",pack->counts[MH3_PACK_MATERIALS]);
     admitted.material_catalog_indices.resize(admitted.materials.size(),UINT32_MAX);
     admitted.material_blocks.resize(admitted.materials.size());
     for(uint32_t i=0;i<catalog->material_count;i++) {
@@ -254,6 +267,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
         }
     }
     for(uint32_t i=0;i<admitted.materials.size();i++) {
+        trace("material",i);
         if(mh3_model_material_prepare(pack,i,&admitted.materials[i])!=MH3_PACK_OK)
             throw std::runtime_error("Native model requires complete supported typed material payload");
         const auto& material=admitted.materials[i];
@@ -286,6 +300,7 @@ void RegisterNativeModelPack(const mh3_mesh_pack* pack,const mh3_model_catalog* 
         }
     }
     packs.push_back(std::move(admitted));resources.clear();blocks.clear();
+    trace("publish",0);
 }
 void UnregisterNativeModelPack(uintptr_t handle) {
     for(auto it=packs.begin();it!=packs.end();++it) if(it->handle==handle) {

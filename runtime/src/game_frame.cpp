@@ -140,7 +140,7 @@ template <typename RunTasks> void ProbeStepDependence(uint32_t step, RunTasks ru
         ++changed;
     }
     std::fclose(out);
-    std::printf("MH3 step probe: step %u, %zu words changed -> %s\n", step, changed, name.c_str());
+    std::printf("MH3 step probe: step %u, %llu words changed -> %s\n", step, static_cast<unsigned long long>(changed), name.c_str());
     std::fflush(stdout);
 }
 #endif

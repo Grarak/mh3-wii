@@ -318,8 +318,8 @@ private:
             // Truncating a command list drops whole commands
             if (!m_loggedCmdListTruncated.exchange(true, std::memory_order_relaxed)) {
                 RT_LOGF(RT_TAG_AUDIO,
-                             "command list of %u words exceeds the %zu-word buffer; truncating\n",
-                             sizeWords, m_cmdList.size());
+                             "command list of %u words exceeds the %llu-word buffer; truncating\n",
+                             sizeWords, static_cast<unsigned long long>(m_cmdList.size()));
                 std::fflush(stderr);
             }
             sizeWords = static_cast<uint32_t>(m_cmdList.size());

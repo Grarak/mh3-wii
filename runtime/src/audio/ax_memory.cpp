@@ -37,8 +37,8 @@ void ReportMixAddressOutOfRange(uint32_t addr, size_t bytes) {
         return;
     }
     RT_LOGF(RT_TAG_AUDIO,
-                 "worker skipped a guest access outside MEM1/MEM2 at 0x%08X (%zu bytes)\n",
-                 addr, bytes);
+                 "worker skipped a guest access outside MEM1/MEM2 at 0x%08X (%llu bytes)\n",
+                 addr, static_cast<unsigned long long>(bytes));
     std::fflush(stderr);
 }
 
