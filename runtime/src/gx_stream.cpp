@@ -1,4 +1,7 @@
 #include "gx_stream.h"
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+#include "efb_copy_trace.h"
+#endif
 #include <stdexcept>
 #include <array>
 #include <string>
@@ -142,7 +145,13 @@ std::array<uint8_t, 37> GuestGxStream::TexturePacket(unsigned slot, const ArrayR
     // for every BP write defeats that cache; hash the actual guest bytes so a
     // rewrite at the same address still invalidates the decoded texture.
     out[28] = mips;
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+    EfbCopyTrace::BeginHostRead(view.address, needed);
+#endif
     put(29, guest); put(33, TextureContentsVersion(reinterpret_cast<const void*>(view.address), needed));
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+    EfbCopyTrace::EndHostRead();
+#endif
     return out;
 }
 
@@ -358,7 +367,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                     if (uint64_t(rowBytes) * ((height + tileHeight - 1) / tileHeight) > view.size)
                         throw std::runtime_error("GX texture copy exceeds guest RAM");
                     sink(std::span<const uint8_t>(p, length));
-                    textureCopy({view.address, bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
+                    textureCopy({view.address, bp[0x4B] << 5,
+                                 rowBytes * ((height + tileHeight - 1) / tileHeight), bp[0x49] & 1023, (bp[0x49] >> 10) & 1023,
                                  sourceWidth, sourceHeight, width, height, format, halfScale, (trigger & 0x800) != 0});
                     offset += length;
                     continue;

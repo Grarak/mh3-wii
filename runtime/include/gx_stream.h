@@ -18,6 +18,7 @@ public:
     using CopySink = std::function<void(const DisplayCopy&)>;
     struct TextureCopy {
         uintptr_t destination;
+        uint32_t guestDestination, bytes;
         uint32_t x, y, sourceWidth, sourceHeight, width, height, format;
         bool halfScale, clear;
     };

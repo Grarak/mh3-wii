@@ -24,6 +24,9 @@
 #include "gx/gx.hpp"
 #include <fstream>
 #endif
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+#include "efb_copy_trace.h"
+#endif
 namespace aurora::gfx { uint32_t current_frame() noexcept; void preserve_next_efb_frame(); void split_staging_batch(); }
 
 namespace aurora::gx::fifo {
@@ -187,6 +190,9 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         GXSetDispCopyDst(copy.width, copy.height);
         GXCopyDisp(reinterpret_cast<void*>(copy.destination), copy.clear ? GX_TRUE : GX_FALSE);
         ++guestCopies;
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+        EfbCopyTrace::EndFrame();
+#endif
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
         UpdateGxDiagnosticMode();
 #endif
@@ -196,11 +202,17 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
         GXSetTexCopySrc(copy.x, copy.y, copy.sourceWidth, copy.sourceHeight);
         GXSetTexCopyDst(copy.width, copy.height, static_cast<GXTexFmt>(copy.format), copy.halfScale ? GX_TRUE : GX_FALSE);
         auto* destination = reinterpret_cast<void*>(copy.destination);
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+        EfbCopyTrace::BeforeCopy(copy.destination, copy.bytes);
+#endif
         GXCopyTex(destination, copy.clear ? GX_TRUE : GX_FALSE);
         // Eager readback keeps all translated RAM reads coherent, including
         // inlined accesses. A later demand-paged bridge may defer this wait.
         if (!aurora_flush_efb_copy_to_ram(destination))
             throw std::runtime_error("GX texture-copy readback failed");
+#ifdef MH3_ENABLE_EFB_COPY_TRACE
+        EfbCopyTrace::AfterCopy(copy.destination, copy.guestDestination, copy.bytes, copy.width, copy.height, copy.format);
+#endif
         ++guestTextureCopies;
         guestTextureCopyNs += std::chrono::duration_cast<std::chrono::nanoseconds>(FrameProfile::Clock::now() - started).count();
     });
