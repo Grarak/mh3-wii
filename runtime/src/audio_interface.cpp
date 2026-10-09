@@ -106,6 +106,10 @@ void ResetAudioInterface() {
     state.Reset(Now());
 }
 
+uint32_t AudioInterfaceDmaRate() {
+    return state.DmaRate();
+}
+
 bool ReadAudioRegister32(uint32_t address, uint32_t& value) {
     uint32_t offset;
 

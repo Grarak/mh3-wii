@@ -1,6 +1,7 @@
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "audio_dma.h"
+#include "audio_interface.h"
 #include "audio_dma_statistics.h"
 #include "scope_exit.h"
 #include <algorithm>
@@ -32,7 +33,7 @@ NativeAudioDmaStatistics statistics;
 Clock::time_point previousEnabledService;
 bool previousEnabledServiceValid = false;
 uint32_t Rate() {
-    return (Memory::ReadHardware32(0xCD006C00) & 0x40) ? 32000 : 48000;
+    return AudioInterfaceDmaRate();
 }
 } // namespace
 
