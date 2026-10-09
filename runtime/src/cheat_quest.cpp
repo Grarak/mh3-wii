@@ -158,7 +158,7 @@ extern "C" void func_803B0228(CpuContext* ctx);
 
 extern "C" void MH3_CheatQuestStep(CpuContext* ctx) {
     const uint32_t quest = Quest();
-    const bool fail = On(Id::Autofail) || (On(Id::AutofailAtWill) && Activated(Id::AutofailAtWill));
+    const bool fail = On(Id::Autofail) && Activated(Id::Autofail);
 
     if (fail && quest != 0)
         Memory::Write32(quest + kReward, 0);
@@ -177,7 +177,7 @@ extern "C" void func_803AA0C4(CpuContext* ctx);
 extern "C" void MH3_CheatObjectiveDone(CpuContext* ctx) {
     const uint32_t quest = ctx->gpr[3];
     const int32_t objective = int32_t(ctx->gpr[4]);
-    const bool clear = On(Id::Autoclear) || (On(Id::AutoclearAtWill) && Activated(Id::AutoclearAtWill));
+    const bool clear = On(Id::Autoclear) && Activated(Id::Autoclear);
 
     if (clear && objective != 4) {
         const uint32_t flags = Memory::Read32(quest + kObjectives + objective * 0x60);

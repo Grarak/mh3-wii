@@ -270,14 +270,17 @@ ordinary `0x300c4/0x300c5` quest modes and preserves the base map's day/night
 selection. No new game code or guessed spawn tables are generated.
 
 Cheats lists the codes of the RMHE08 (US) Gecko code lists, ported to this
-EU disc, in groups by the lists' author tags: Basic (`No damage` and
-`No action stamina drain`), Stuff, Seth@WiiPlaza, Bully@Wiiplaza, Skiller,
-Argon and Doudley. The Cheats page shows how many codes of each group are on;
+EU disc, in groups by the lists' author tags: Basic (`No damage`,
+`No action stamina drain` and `All items in the item box`, the launcher's
+own), Stuff (43), Seth@WiiPlaza (10), Bully@Wiiplaza (30), Skiller (80),
+Argon (6) and Doudley (88), 257 codes and the three Basic entries. The
+Cheats page shows how many codes of each group are on;
 a group's page lists its codes with On/Off and, where a code has a value,
 the value in brackets. X toggles the selected code and Left/Right changes its
 value: an option (an item, a multiplier, a range), the buttons of a code
-that left them to the user (L+R or SELECT with a d-pad direction), or for
-the two name codes the name, typed on the system keyboard. The main menu's
+that left them to the user (L+R or SELECT with a d-pad direction, or
+`Always` where the code also runs without them), or for the name code the
+name, typed on the system keyboard. The main menu's
 detail line names the active codes. Toggles apply to the current launch, in
 development and release builds. `MH3 --cheat <name>[=<value>]` (repeatable,
 with any other option) turns one on from the command line: letters and
@@ -296,6 +299,72 @@ codes that only work online (cities, lobby, chat, friends, servers, quest
 board) and Bully's button activator template are not in the table. The
 user's untracked `cheats.txt` and `cheats/` are only read while porting;
 the build does not use them.
+
+`All items in the item box` fills the box once a launch, when a character
+first loads (PlLoadUserData, 0x80049FE0). The box is the save data's
+(u16 item, s16 count) slots from +0x180, 100 a page (ItemBoxSlots,
+0x8004AED4). BoxPages (0x8004AE6C) gives 4 pages, 6 once the Organizer
+Guide (item 0x244) was obtained and 2 more with the Pack Rat Guide (0x245):
+the obtained bits at the save data's +0x4AD8 (ItemObtained 0x8004D38C,
+ItemObtainedSet 0x8004D318), which adding an item to the pouch or the box
+sets. The cheat sets both bits, as getting the two guides does, so the box
+has its largest 8 pages (800 slots, up to the talismans at +0xE00); it
+empties them and stores every item through the game's ItemBoxAdd
+(0x8004BF08: at most 99 a slot, the item marked obtained), the count
+chosen (99, 10 or 1) each. The item table (GetItemData 0x8029F740,
+ItemName 0x8029F68C) has items 1 to 0x2EA; ItemNotStorable (0x8004B098)
+refuses 223 No Item, 438 BBQ with Mask and 439 No Mask, and 30 entries
+named `ERR<n>` are placeholders, which leaves 713 items in slots 0 to 712.
+
+The lists' authors copied each other's codes, so 31 of the 288 ported codes
+did the same for the player as another code (the same patched instruction,
+the same memory write, or the same visible effect). Each such set is one
+entry, with the implementation that hooks the game's own check, offers a
+value or works without a precondition; a code that always runs and its
+copy switched or held by buttons became one entry whose buttons have an
+`Always` choice (the default):
+
+| Entry (group) | Merged into it |
+| --- | --- |
+| No damage (Basic) | Invincible players (Doudley) |
+| Infinite health (Skiller, was Inf HP) | Infinite health (online code) (Seth) |
+| Health never changes (Seth, was Toggle infinite health) | Infinite health (Bully; it also lowered the maximum to the health) |
+| Sharpness stays full (Skiller, was Weapon always sharp) | Weapons always sharp (Bully) |
+| Set unlimited traps (Bully) | Set unlimited traps (Argon) |
+| Set unlimited barrel bombs (Bully) | Set unlimited barrel bombs (Argon) |
+| Show all monsters on the map (Stuff) | Show all monsters on the map (Doudley) |
+| Action repeater (Bully; a `START` choice) | Action repeater (Doudley) |
+| Enable armor pigment for all armor (Stuff) | Enable armour pigment for all armors (Doudley) |
+| Equip blade/gunner armor (Stuff) | Enable both armor type for all armors (Doudley) |
+| Never stunned (Skiller, was Never stund) | Never stun (Skiller) |
+| No knockback (Stuff) | Unknockable players (Doudley) |
+| No reload (Skiller) | Infinite ammo (Bully) |
+| Gain/use items/ammo get 10 (Skiller) | Gain/use items/ammo get 10 (buttons on/off) (Skiller) |
+| Infinite time arena and quests (Argon) | Inf time arena/quests (Skiller) |
+| 1 hit kills (Skiller) | (Alt) 1 hit kills (buttons on/off), (Alt) 1 hit kills enemys, Enable 1 hit kills (enemy) (Skiller) |
+| Enemy has 1 HP (Skiller) | Enable 1 HP (enemy capture/cutting parts mode), Normal enemy HP (the buttons switch both off) (Skiller) |
+| Unlimited hot drink, Unlimited cold drink (Argon) | Hot drink lasts forever, Cold drink lasts forever (Bully) |
+| Autofail, Autoclear (main and subs) (Stuff) | Autofail at will, Autoclear at will (Stuff) |
+| Rapidfire all ammo (Doudley) | Rapidfire all ammo (hold shoot button while firing) (Doudley) |
+| Range for all bowgun barrels (Doudley) | Range 3.00 for all bowgun barrels (Doudley) |
+| Infinite money (Skiller, was Max/inf money) | Gain/use money > max money (Skiller), Infinite funds (Bully) |
+| Infinite stamina (Skiller, was Inf stamina) | Infinite stamina (Bully) |
+| Switch axe power gauge always full (Doudley) | Thunder weapons always charged (Bully; it filled the same gauge) |
+| Character name change (Bully, was Profile name modifier) | Name change (Skiller) |
+
+Look-alikes that differ stay apart: No damage (no damage taken), Infinite
+health (refilled each step), Health never changes (no damage and no
+healing) and Alternate infinite health (a hit that would empty the health
+still does); Seth's Weapons always sharp (best version) (keeps the sharp
+levels set when the weapon is drawn, the sharpness still wears) and Weapons
+ultra sharp; Inf ammo (the pouch) and No reload (the loaded rounds); the two
+freeze codes (Freeze/unfreeze monsters stops their step, switched; Freeze
+monsters slows their next motion while held); the speed codes (other
+values, buttons or places); Infinite ressources and Max res on converting
+(when shown and on a change); Item pouch items x10 and Gain/use items get
+10 (when listed and on a change); All boxes have 8 pages (the menus) and
+Item/equip boxes have 8 pages (the box's slots); Infinite items and
+Infinite bombs in pouch; Increase oxygen bar and Inf air.
 
 ## Build and verification
 
@@ -419,7 +488,7 @@ directory gives the missing-disc message. `MH3_USER_DIR` holds the saves and
   imgui's `stb_truetype`, at the same 18-pixel em as the PVF font;
 - messages draw as a panel over the page and close with Cross, Circle or
   Start (after 2.5 s while an input script runs);
-- the keyboard (quest names, the two name cheats) is the Vita's: on the host
+- the keyboard (quest names, the name cheat) is the Vita's: on the host
   the name keeps its value;
 - no kubridge check.
 

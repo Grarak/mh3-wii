@@ -38,14 +38,12 @@ enum : uint32_t {
     kPosition = 0x3C,      // f32 x, y, z
     kHeld = 0xC0,          // u16 buttons
     kAmmoLoaded = 0x269,   // u8
-    kAmmoClip = 0x26A,     // u8
     kAmmoPouch = 0x270,    // s16
     kTrapsSet = 0x30C,     // u8
     kBarrelsSet = 0x30E,   // u8
     kCharge = 0x310,       // s16 (charge time), +0x312 more of it
     kRunSpeed = 0x354,     // f32: the action's motion speed
     kGauge36C = 0x36C,     // s16, 0 to 100
-    kStamina = 0x378,      // s16, maximum at +2
     kSpiritGauge = 0x384,  // s16, 0 to 100
     kAttack = 0x3B8,       // u16, at most 700
     kAttackRate = 0x3BC,   // f32
@@ -194,10 +192,11 @@ extern "C" void MH3_CheatFarcaster(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x8027851C, MH3_CheatFarcaster, "CheatFarcaster");
 
 // 0x8027804C (plw): 1 while no trap of the hunter's is set. Set unlimited
-// traps (US 0x80277FE8, EU 0x8027804C: the count's load made li r3,0) says 1.
+// traps (Bully's, US 0x80277FE8, EU 0x8027804C: the count's load made li
+// r3,0; Argon's, the same cheat, cleared the count +0x30C each frame) says 1.
 extern "C" void MH3_TrapsFree(CpuContext* ctx) {
     const uint32_t set = Memory::Read8(ctx->gpr[3] + kTrapsSet);
-    ctx->gpr[3] = On(Id::BullyUnlimitedTraps) ? 1 : (set - 1) >> 31;
+    ctx->gpr[3] = On(Id::UnlimitedTraps) ? 1 : (set - 1) >> 31;
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x8027804C, MH3_TrapsFree, "TrapsFree");
@@ -244,19 +243,20 @@ extern "C" void MH3_CheatShockTrap(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x802784B4, MH3_CheatShockTrap, "CheatShockTrap");
 
 // 0x80277FB8 (plw): 1 when a large barrel bomb can be set: fewer than two set,
-// not in the camp's area. Set unlimited barrel bombs (US 0x80277F68, EU
-// 0x80277FCC: the count's load made li r0,0) leaves out the count, LBB at
-// camp (0x80277FA4/0x80278008) the camp.
+// not in the camp's area. Set unlimited barrel bombs (Bully's, US 0x80277F68,
+// EU 0x80277FCC: the count's load made li r0,0; Argon's, the same cheat,
+// cleared the count +0x30E each frame) leaves out the count, LBB at camp
+// (0x80277FA4/0x80278008) the camp.
 extern "C" void func_80277FB8(CpuContext* ctx);
 
 extern "C" void MH3_CheatBarrelBomb(CpuContext* ctx) {
-    if (!On(Id::BullyUnlimitedBarrelBombs) && !On(Id::BarrelBombAtCamp)) {
+    if (!On(Id::UnlimitedBarrelBombs) && !On(Id::BarrelBombAtCamp)) {
         func_80277FB8(ctx);
         return;
     }
 
     const uint32_t plw = ctx->gpr[3];
-    const uint32_t set = On(Id::BullyUnlimitedBarrelBombs) ? 0 : Memory::Read8(plw + kBarrelsSet);
+    const uint32_t set = On(Id::UnlimitedBarrelBombs) ? 0 : Memory::Read8(plw + kBarrelsSet);
     uint32_t result = 1;
 
     if (set >= 2) {
@@ -362,10 +362,11 @@ REGISTER_NATIVE_FUNCTION_AS(0x80316534, MH3_CheatStatusShown, "CheatStatusShown"
 
 // 0x802653D8 (plw): a hit's conditions (stun, poison, and so on); 1 when the
 // hit leaves the hunter without a reaction. Never stunned (US 0x802654E8, EU
-// 0x8026554C: the stun gauge's load dropped) keeps the stun gauge; No
-// knockback (US 0x80265FA0, EU 0x80266004: in the hit's function, 0x8026585C,
-// the reaction always skipped) and Unknockable players (the same while the
-// first hunter's work is in use) make it 1 for that caller.
+// 0x8026554C: the stun gauge's load dropped; Skiller's Never stun, the same
+// cheat, cleared the gauge each frame) keeps the stun gauge; No knockback (US
+// 0x80265FA0, EU 0x80266004: in the hit's function, 0x8026585C, the reaction
+// always skipped; Doudley's Unknockable players did the same while the first
+// hunter's work is in use) makes it 1 for that caller.
 extern "C" void func_802653D8(CpuContext* ctx);
 
 extern "C" void MH3_CheatHitConditions(CpuContext* ctx) {
@@ -378,10 +379,7 @@ extern "C" void MH3_CheatHitConditions(CpuContext* ctx) {
     if (On(Id::NeverStunned) && Read16s(plw + kStun) > stun)
         Memory::Write16(plw + kStun, uint16_t(stun));
 
-    const uint32_t first = Hunter(0);
-    const bool unknockable = On(Id::UnknockablePlayers) && first != 0 && Memory::Read16(first) != 0;
-
-    if (from == 0x80265F70 && (On(Id::NoKnockback) || unknockable))
+    if (from == 0x80265F70 && On(Id::NoKnockback))
         ctx->gpr[3] = 1;
 }
 
@@ -515,13 +513,14 @@ extern "C" void MH3_CheatSpiritGauge(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x8027C918, MH3_CheatSpiritGauge, "CheatSpiritGauge");
 
-// PlAreaConditionTick (0x8027D608, plw, s16 change): the gauge at +0x36C (0
-// to 100). Thunder weapons always charged (US 0x8027D634, EU 0x8027D698: the
-// sum made 100) fills it; Enhanced focus grows it five times as fast.
+// PlAreaConditionTick (0x8027D608, plw, s16 change): the switch axe's phial
+// gauge at +0x36C (0 to 100). Enhanced focus grows it five times as fast.
+// (Bully's Thunder weapons always charged made the sum 100, US 0x8027D634:
+// Switch axe power gauge always full, cheat_data.cpp, holds it there.)
 extern "C" void func_8027D608(CpuContext* ctx);
 
 extern "C" void MH3_CheatGauge36C(CpuContext* ctx) {
-    if (!On(Id::ThunderAlwaysCharged) && !Focus()) {
+    if (!Focus()) {
         func_8027D608(ctx);
         return;
     }
@@ -537,7 +536,7 @@ extern "C" void MH3_CheatGauge36C(CpuContext* ctx) {
             amount *= factor;
     }
 
-    const int16_t gauge = On(Id::ThunderAlwaysCharged) ? 100 : int16_t(Read16s(plw + kGauge36C) + Fctiwz(amount));
+    const int16_t gauge = int16_t(Read16s(plw + kGauge36C) + Fctiwz(amount));
     Memory::Write16(plw + kGauge36C, uint16_t(std::clamp<int16_t>(gauge, 0, 100)));
 }
 
@@ -650,43 +649,15 @@ extern "C" void MH3_CheatHammerChargeTime(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80284454, MH3_CheatHammerChargeTime, "CheatHammerChargeTime");
 
-// PlSetConditionState (0x802768CC, plw, s16 change): stamina += change,
-// within 0 and the maximum. Infinite stamina (Bully, US 0x802768AC and
-// 0x802768B0, EU 0x80276910 and 0x80276914) sets stamina and maximum to 605.
-extern "C" void func_802768CC(CpuContext* ctx);
-
-extern "C" void MH3_CheatStaminaChange(CpuContext* ctx) {
-    if (!On(Id::BullyInfiniteStamina)) {
-        func_802768CC(ctx);
-        return;
-    }
-
-    const uint32_t plw = ctx->gpr[3];
-    const int16_t change = int16_t(ctx->gpr[4]);
-    bool changes = false;
-
-    {
-        GuestFrame frame(ctx, 0x10);
-        GuestCall game{ctx};
-        changes = game.Call<PlMasterCk>({plw}) != 0 && (change >= 0 || game.Call<0x80276880>({plw}) != 1);
-    }
-
-    if (changes) {
-        Memory::Write16(plw + kStamina + 2, 605);
-        Memory::Write16(plw + kStamina, 605);
-    }
-}
-
-REGISTER_NATIVE_FUNCTION_AS(0x802768CC, MH3_CheatStaminaChange, "CheatStaminaChange");
-
 // 0x802786D8 (plw, s16 change, u8): sharpness += change (halved or doubled by
 // skills when it goes down), within 0 and the maximum, then the level and its
-// messages. Weapons always sharp (Bully, US 0x80278754, EU 0x802787B8; and
-// Skiller's, C2 at 0x80278758/0x802787BC) set it to the maximum.
+// messages. Sharpness stays full (Skiller's Weapon always sharp, C2 at US
+// 0x80278758, EU 0x802787BC; Bully's copy of it at 0x80278754/0x802787B8)
+// sets it to the maximum.
 extern "C" void func_802786D8(CpuContext* ctx);
 
 extern "C" void MH3_CheatSharpness(CpuContext* ctx) {
-    if (On(Id::BullyWeaponsSharp) || On(Id::SkillerWeaponSharp)) {
+    if (On(Id::WeaponsSharp)) {
         const uint32_t plw = ctx->gpr[3];
         const int32_t to = Read16s(plw + kSharpness + 2) - Read16s(plw + kSharpness);
         ctx->gpr[4] = uint32_t(int32_t(int16_t(to)));
@@ -709,10 +680,10 @@ bool g_rapidCount = false;
 
 // 0x80287A30 (plw, ...): the bowgun's shot. A shot takes one round of the
 // loaded ones (and one of the pouch, 0x80272E94) unless +6 is set; +5 0 starts
-// it. Infinite ammo (Bully, US 0x80287DA0, EU 0x80287E04) reloads the clip
-// (+0x26A) instead, No reload (Skiller, the same instruction) takes none;
-// Rapidfire all ammo (US 0x80287A60, EU 0x80287AC4: 6 for 0 in +6 and +7),
-// always or while A (0x20) is held, takes none either.
+// it. No reload (Skiller, US 0x80287DA0, EU 0x80287E04; Bully's Infinite ammo
+// made the same instruction reload the clip, +0x26A) takes none; Rapidfire
+// all ammo (US 0x80287A60, EU 0x80287AC4: 6 for 0 in +6 and +7), always or
+// while A (0x20) is held, takes none either.
 extern "C" void func_80287A30(CpuContext* ctx);
 
 extern "C" void MH3_CheatBowgunShot(CpuContext* ctx) {
@@ -721,7 +692,8 @@ extern "C" void MH3_CheatBowgunShot(CpuContext* ctx) {
     const uint8_t loaded = Memory::Read8(plw + kAmmoLoaded);
     const uint32_t first = Hunter(0), second = Hunter(1);
     const bool holding = (first != 0 && Memory::Read16(first + kHeld) == 0x20) || (second != 0 && Memory::Read16(second + kHeld) == 0x20);
-    const bool rapid = (On(Id::RapidFire) && first != 0 && Memory::Read16(first) == 0x0101) || (On(Id::RapidFireHold) && holding);
+    const bool always = Value(Id::RapidFire) == 0;
+    const bool rapid = On(Id::RapidFire) && (always ? first != 0 && Memory::Read16(first) == 0x0101 : holding);
 
     // The start stores the code's 6 in +7 where the original stores its 0:
     // without a kind (r7) or without the ammo's data (0x80279478). The same
@@ -746,9 +718,7 @@ extern "C" void MH3_CheatBowgunShot(CpuContext* ctx) {
 
     const bool shot = loaded != 0 && Memory::Read8(plw + kAmmoLoaded) == loaded - 1 && Read16s(plw + kAmmoPouch) != 0;
 
-    if (shot && On(Id::BullyInfiniteAmmo))
-        Memory::Write8(plw + kAmmoLoaded, Memory::Read8(plw + kAmmoClip));
-    else if (shot && On(Id::NoReload))
+    if (shot && On(Id::NoReload))
         Memory::Write8(plw + kAmmoLoaded, loaded);
 }
 

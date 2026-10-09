@@ -5,12 +5,11 @@
 // Player work (PLW): +0x0A u8 action group (8: down), +0x370 s16 health,
 // +0x372 s16 maximum health, +0x376 s16 recoverable ("red") health.
 //
-// The optional --no-damage cheat drops the negative amounts. The Gecko codes
-// patched here (cheats.h), by the instruction they replaced:
-//   - Invincible players: the event scene's test for damage, always taken;
-//   - Infinite health (Bully's): the add stores the health as the maximum
-//     instead, so the health stays and the maximum drops to it;
-//   - Toggle infinite health (Seth's): the add, switched by its buttons;
+// The optional --no-damage cheat drops the negative amounts (Doudley's
+// Invincible players took the event scene's test for damage, the same). The
+// Gecko codes patched here (cheats.h), by the instruction they replaced:
+//   - Health never changes (Seth's Toggle infinite health, switched by its
+//     buttons, and Bully's Infinite health, always): the add;
 //   - Alternate infinite health (Seth's): the health's store, so only the
 //     clamps below write (empty at 0 or less, full at the maximum);
 //   - Daredevil mode: the branch over the clamp at 0, so any change empties
@@ -62,9 +61,7 @@ static void PlAddHealthPort(CpuContext* ctx) {
         if (!game.Call<Pl_master_ck>({player}))
             return;
 
-        const bool invincible = Cheats::On(Cheats::Id::InvinciblePlayers) || game.Call<PlInEventDemo>({0}) == 1;
-
-        if (invincible && amount < 0)
+        if (game.Call<PlInEventDemo>({0}) == 1 && amount < 0)
             return;
     }
 
@@ -79,12 +76,8 @@ static void PlAddHealthPort(CpuContext* ctx) {
     const int16_t current = Read16s(player + kHealth);
     int16_t health = int16_t(current + amount);
 
-    if (Cheats::On(Id::BullyInfiniteHealth)) {
-        Memory::Write16(player + kMaxHealth, uint16_t(current));
+    if (Cheats::Toggled(Id::HealthNeverChanges))
         health = current;
-    } else if (Cheats::Toggled(Id::ToggleInfiniteHealth)) {
-        health = current;
-    }
 
     if (!Cheats::On(Id::AltInfiniteHealth))
         Memory::Write16(player + kHealth, uint16_t(health));
