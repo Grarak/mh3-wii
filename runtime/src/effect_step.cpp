@@ -65,6 +65,9 @@ extern "C" void MH3_AnimCurveExecuteF32(CpuContext*);
 extern "C" void MH3_AnimCurveExecuteRotate(CpuContext*);
 
 #include "frame_split.h" // MH3_SPLIT_SCOPE is empty in release builds
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 
 namespace {
 
@@ -280,6 +283,15 @@ Step step;
 // a call need not erase its entries; cleared when it grows.
 AddressMap<uint32_t> betweenTicks;
 uint32_t betweenCall = 0;
+#ifdef MH3_DEVELOPMENT
+
+// MH3_TRACE=particles counts, reported with each traced tick: emitter
+// emissions run and gated off, child curves run and gated off, and child
+// emissions queued. Effects belong to one thread at a time.
+struct TraceCounts {
+    uint32_t emissions = 0, emissionsGated = 0, childCurves = 0, childCurvesGated = 0, queued = 0;
+} traceCounts;
+#endif
 
 // Runs the particle's curve tracks at `tick`, as ParticleManager::Calc does
 // (without the child and texture tracks, the events, and the emitter-age ones).
@@ -775,6 +787,12 @@ void RunDeferred(CpuContext* cpu, void*) {
 } // namespace
 
 namespace EffectStep {
+#ifdef MH3_DEVELOPMENT
+void NoteQueuedChildren(uint32_t count) {
+    traceCounts.queued += count;
+}
+#endif
+
 void SetOverlap(bool enabled) {
     overlap = enabled;
 }
@@ -907,6 +925,9 @@ extern "C" void MH3_EmitterCalcEmitter(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x800A8AC0, MH3_EmitterCalcEmitter, "EmitterCalcEmitter");
 
 static void EmitterCalcEmissionPort(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    ++(step.particlesOnly ? traceCounts.emissionsGated : traceCounts.emissions);
+#endif
     if (!step.particlesOnly)
         func_800A8E5C(ctx);
 }
@@ -917,7 +938,66 @@ extern "C" void MH3_EmitterCalcEmission(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A8E5C, MH3_EmitterCalcEmission, "EmitterCalcEmission");
 
+#ifdef MH3_DEVELOPMENT
+namespace {
+// MH3_TRACE=particles: on the first pass of every third tick of game time,
+// one line per particle manager with live particles: its emitter resource,
+// the count, mean age and life (ticks) and summed alpha of the first colour.
+// A manager prints once per tick, so fixed and variable steps line up by tick.
+void TraceParticles(uint32_t manager) {
+    static const bool enabled = TraceOptions().Has("particles");
+
+    if (!enabled)
+        return;
+
+    static uint64_t tick = UINT64_MAX;
+    static AddressMap<uint64_t> printed;
+    const uint64_t now = uint64_t(std::floor(GameStep::Elapsed() + 1e-9));
+
+    if (now % 3 != 0)
+        return;
+
+    if (now != tick) {
+        tick = now;
+        printed.Clear();
+        const TraceCounts& c = traceCounts;
+        std::fprintf(stderr, "MH3 particles: tick %llu since the last trace: emissions %u (gated %u) child curves %u (gated %u) queued children %u\n",
+                     static_cast<unsigned long long>(now), c.emissions, c.emissionsGated, c.childCurves, c.childCurvesGated, c.queued);
+        traceCounts = {};
+    }
+
+    uint64_t& seen = printed[manager];
+
+    if (seen)
+        return;
+
+    seen = 1;
+    const List list{manager + kManagerParticles};
+    uint32_t count = 0;
+    double age = 0, life = 0, alpha = 0;
+
+    for (uint32_t p = list.First(); p; p = list.Next(p)) {
+        if (MemoryInline::FlatRead32(p + kLifeStatus) != kLifeActive)
+            continue;
+
+        const Particle* e = step.particles.Find(p);
+        ++count;
+        age += e && e->seed == MemoryInline::FlatRead16(p + kParticleSeed) ? e->age : MemoryInline::FlatRead16(p + kParticleTick);
+        life += MemoryInline::FlatRead16(p + kParticleLife);
+        alpha += MemoryInline::FlatRead8(p + kParticleCurves + 3) / 255.0;
+    }
+
+    if (count)
+        std::fprintf(stderr, "MH3 particles: tick %llu manager %08x resource %08x count %u age %.2f life %.2f alpha %.2f\n", static_cast<unsigned long long>(now), manager,
+                     MemoryInline::FlatRead32(manager + kManagerResource), count, age / count, life / count, alpha);
+}
+} // namespace
+#endif
+
 static void ParticleManagerCalcPort(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    TraceParticles(ctx->gpr[3]);
+#endif
     // Whole ticks with every particle on a whole tick (the stock 1/30 s step)
     // are the original.
     if (step.particleStep == 1.0 && step.particles.Empty()) {
@@ -1047,7 +1127,11 @@ static void AnimCurveExecuteChildPort(CpuContext* ctx) {
     const Particle* entry = step.particles.Find(ctx->gpr[4]);
     const uint32_t* stamp = betweenTicks.Find(ctx->gpr[4]);
 
-    if (!(entry && entry->between == betweenCall) && !(stamp && *stamp == betweenCall))
+    const bool gated = (entry && entry->between == betweenCall) || (stamp && *stamp == betweenCall);
+#ifdef MH3_DEVELOPMENT
+    ++(gated ? traceCounts.childCurvesGated : traceCounts.childCurves);
+#endif
+    if (!gated)
         func_800A1D0C(ctx);
 }
 

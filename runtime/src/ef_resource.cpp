@@ -36,6 +36,7 @@
 // EfResourceLists checks the list changes against their originals.
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "guest_flat_memory.h"
 #include "memory.h"
@@ -45,11 +46,15 @@
 
 #include <aurora/fast_map.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 
 extern "C" void func_800B2918(CpuContext* ctx);
 extern "C" void func_800B2E5C(CpuContext* ctx);
@@ -448,7 +453,36 @@ extern "C" void MH3_EfFindTextureInProject(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x800B3440, MH3_EfFindTextureInProject, "EfFindTextureInProject");
 
 extern "C" void MH3_EfFindEmitter(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    const uint32_t name = ctx->gpr[4], sp = ctx->gpr[1];
+#endif
     ctx->gpr[3] = FindEmitterChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=particles: every emitter looked up by name (each effect the
+    // game creates), its data (the particle managers' resource) and the
+    // return addresses of the five frames above, from the stack's back chain.
+    static const bool trace = TraceOptions().Has("particles");
+
+    if (trace) {
+        char text[48] = {};
+
+        for (uint32_t i = 0; i + 1 < sizeof text && Memory::Read8(name + i); ++i)
+            text[i] = char(Memory::Read8(name + i));
+
+        uint32_t callers[5] = {}, frame = Memory::Read32(sp);
+
+        for (uint32_t& lr : callers) {
+            if (!frame)
+                break;
+
+            lr = Memory::Read32(frame + 4);
+            frame = Memory::Read32(frame);
+        }
+
+        std::fprintf(stderr, "MH3 effect emitter: tick %.0f name %s data %08x callers %08x %08x %08x %08x %08x\n", std::floor(GameStep::Elapsed() + 1e-9), text, ctx->gpr[3], callers[0],
+                     callers[1], callers[2], callers[3], callers[4]);
+    }
+#endif
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800B3A78, MH3_EfFindEmitter, "EfFindEmitter");
 

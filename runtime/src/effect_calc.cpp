@@ -24,6 +24,7 @@
 //   Particle: 0x0C life status, 0xD8 evaluation state, 0xE2 pending children.
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -221,6 +222,9 @@ void EffectCalcNative(CpuContext* cpu) {
             if (FlatRead32(queue) == 0)
                 break;
 
+#ifdef MH3_DEVELOPMENT
+            EffectStep::NoteQueuedChildren(FlatRead32(queue));
+#endif
             GuestCall{cpu}.Call<0x800A377C>({queue}); // the queued child emissions
         }
 

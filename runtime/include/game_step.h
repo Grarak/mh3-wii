@@ -70,4 +70,8 @@ void Join(CpuContext* cpu);
 // them in the next step's Defer; the draw thread's Join only waits for the
 // calculation and puts the effect view, and its Launch does nothing.
 void SetOverlap(bool enabled);
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=particles: child emissions an Effect::Calc found queued.
+void NoteQueuedChildren(uint32_t count);
+#endif
 } // namespace EffectStep
