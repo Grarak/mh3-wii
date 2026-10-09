@@ -428,7 +428,7 @@ double Checked(const char* name, void (*original)(CpuContext*), void (*port)(Cpu
         p->fpr[1].d = Evaluate<track>(p->gpr[1], p->gpr[2], p->gpr[3], p->fpr[1].d);                                                                                                                   \
     }                                                                                                                                                                                                  \
     static double name##Checked(uint32_t r1, uint32_t r2, uint32_t r3, double f1) {                                                                                                                    \
-        static const bool check = PortCheck::Enabled(#name);                                                                                                                                           \
+        const bool check = PortCheck::Enabled(#name);                                                                                                                                                  \
         return Checked<track>(#name, func_##address, name##Port, check, r1, r2, r3, f1);                                                                                                               \
     }
 
@@ -691,14 +691,16 @@ void GetAnmResultPort(CpuContext* ctx) {
 } // namespace
 
 // The port, or with MH3_PORT_CHECK=AnmChrGetAnmResult the port checked against
-// the original (whose key evaluation is the key ports above too).
+// the original (whose key evaluation is the key ports above too). Registered
+// kNativeKeepsNonvolatile (no dispatch guard around it): it names no r14-r31 or
+// f14-f31, and the baked formats' guest calls go through GuestCall's dispatch.
 extern "C" void func_8008D660(CpuContext* ctx);
 extern "C" void MH3_AnmChrGetAnmResult(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     MH3FrameSplitCall(1);
 #endif
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnmChrGetAnmResult");
+    const bool check = PortCheck::Enabled("AnmChrGetAnmResult");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "AnmChrGetAnmResult", func_8008D660, GetAnmResultPort);
         return;
@@ -706,4 +708,4 @@ extern "C" void MH3_AnmChrGetAnmResult(CpuContext* ctx) {
 #endif
     GetAnmResult(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x8008D660, MH3_AnmChrGetAnmResult, "AnmChrGetAnmResult");
+REGISTER_NATIVE_FUNCTION_AS(0x8008D660, MH3_AnmChrGetAnmResult, "AnmChrGetAnmResult", kNativeKeepsNonvolatile);

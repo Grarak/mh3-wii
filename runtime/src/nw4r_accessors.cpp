@@ -128,7 +128,7 @@ uint32_t G3dNative::ResDicAtOffset14(uint32_t mdl, uint32_t index) {
 // A port returning r3 from r3 (and r4), checked with RunPure.
 #ifdef MH3_DEVELOPMENT
 #define MH3_PURE_CHECK(Name, Addr)                                                                                                                                                                     \
-    static const bool check = PortCheck::Enabled(#Name);                                                                                                                                               \
+    const bool check = PortCheck::Enabled(#Name);                                                                                                                                                      \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         CpuContext* c = TryGetCpuContext();                                                                                                                                                            \
         c->gpr[1] = r1;                                                                                                                                                                                \
@@ -208,7 +208,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80097F7C, MH3_ResDicAtOffset14, "ResDicAtOffset14"
 // it came.
 #ifdef MH3_DEVELOPMENT
 #define MH3_OUTPUT_CHECK(Name, Addr, Out, Bytes)                                                                                                                                                       \
-    static const bool check = PortCheck::Enabled(#Name);                                                                                                                                               \
+    const bool check = PortCheck::Enabled(#Name);                                                                                                                                                      \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         CpuContext* c = TryGetCpuContext();                                                                                                                                                            \
         c->gpr[1] = r1;                                                                                                                                                                                \

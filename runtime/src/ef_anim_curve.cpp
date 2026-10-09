@@ -223,7 +223,7 @@ static void SearchPort(CpuContext* p) {
 
 static void SearchChecked(uint32_t r1, const Args& a) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveKeySearch");
+    const bool check = PortCheck::Enabled("AnimCurveKeySearch");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -258,7 +258,7 @@ static void BlendU8Port(CpuContext* p) {
 }
 static uint32_t BlendU8Checked(uint32_t r1, uint32_t r2, uint32_t r3, uint32_t r4, uint32_t r5, uint32_t r6) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveBlendU8");
+    const bool check = PortCheck::Enabled("AnimCurveBlendU8");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -762,7 +762,7 @@ static void TickToFramePort(CpuContext* p) {
 }
 static void TickToFrameChecked(uint32_t r1, uint32_t r2, uint32_t life, uint32_t header, uint32_t tick, uint32_t outTick, uint32_t outFrame, uint32_t outLoop) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveTickToFrame");
+    const bool check = PortCheck::Enabled("AnimCurveTickToFrame");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -802,7 +802,7 @@ static void FrameIndexPort(CpuContext* p) {
 }
 static void FrameIndexChecked(uint32_t r1, uint32_t header, uint32_t tick, uint32_t out, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveFrameIndex");
+    const bool check = PortCheck::Enabled("AnimCurveFrameIndex");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -836,7 +836,7 @@ static void ResolveTablesPort(CpuContext* p) {
 }
 static void ResolveTablesChecked(uint32_t r1, uint32_t track, uint32_t header, uint32_t keys, uint32_t random, uint32_t pool, uint32_t names) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveTables");
+    const bool check = PortCheck::Enabled("AnimCurveTables");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -876,7 +876,7 @@ static void AdjustLoopsPort(CpuContext* p) {
 }
 static void AdjustLoopsChecked(uint32_t r1, uint32_t header, uint32_t keys, uint32_t index, uint32_t low, uint32_t high) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveKeyLoops");
+    const bool check = PortCheck::Enabled("AnimCurveKeyLoops");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -907,7 +907,7 @@ static void BakedU8Port(CpuContext* p) {
 }
 static void BakedU8Checked(uint32_t r1, uint32_t track, uint32_t target, uint32_t tick, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveExecuteBakedU8");
+    const bool check = PortCheck::Enabled("AnimCurveExecuteBakedU8");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -933,7 +933,7 @@ static void ExecuteU8Port(CpuContext* p) {
 }
 static void ExecuteU8Checked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick, uint32_t seed, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveExecuteU8");
+    const bool check = PortCheck::Enabled("AnimCurveExecuteU8");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -961,7 +961,7 @@ static void BlendF32Port(CpuContext* p) {
 }
 static double BlendF32Checked(uint32_t r1, uint32_t r2, uint32_t mode, double t, double a, double b) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveBlendF32");
+    const bool check = PortCheck::Enabled("AnimCurveBlendF32");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -988,7 +988,7 @@ static void BakedF32Port(CpuContext* p) {
 }
 static void BakedF32Checked(uint32_t r1, uint32_t track, uint32_t target, uint32_t tick, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveExecuteBakedF32");
+    const bool check = PortCheck::Enabled("AnimCurveExecuteBakedF32");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -1014,7 +1014,7 @@ static void ExecuteF32Port(CpuContext* p) {
 }
 static void ExecuteF32Checked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick, uint32_t seed, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveExecuteF32");
+    const bool check = PortCheck::Enabled("AnimCurveExecuteF32");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -1042,7 +1042,7 @@ static void ExecuteRotatePort(CpuContext* p) {
 }
 static void ExecuteRotateChecked(uint32_t r1, uint32_t r2, uint32_t track, uint32_t target, uint32_t tick, uint32_t seed, uint32_t life) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnimCurveExecuteRotate");
+    const bool check = PortCheck::Enabled("AnimCurveExecuteRotate");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;

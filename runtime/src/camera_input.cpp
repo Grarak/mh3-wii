@@ -267,6 +267,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x802B6D30, MH3_CameraPitchInput, "CameraPitchInput"
 
 extern "C" void func_802BDC90(CpuContext* ctx);
 extern "C" void MH3_CameraAngleEase(CpuContext* ctx) {
-    PortCheck::RunPure(ctx, "CameraAngleEase", PortCheck::Returns::Gpr3, func_802BDC90, CameraAngleEasePort);
+    if (PortCheck::Enabled("CameraAngleEase")) [[unlikely]]
+        PortCheck::RunPure(ctx, "CameraAngleEase", PortCheck::Returns::Gpr3, func_802BDC90, CameraAngleEasePort);
+    else
+        CameraAngleEasePort(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x802BDC90, MH3_CameraAngleEase, "CameraAngleEase");

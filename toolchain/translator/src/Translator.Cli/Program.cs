@@ -232,11 +232,47 @@ int RunCheckBaseModAwareness(string[] argsTail)
 // directly. A precise native's contract names every register it touches and
 // its callers sync exactly those, so the generic dispatch (registry lookup,
 // the r14-r31 save/restore guard, the thread's context check) is not needed.
-// Only extern "C" CpuContext entry points with a literal
-// REGISTER_NATIVE_FUNCTION_AS registration are listed.
+// Only extern "C" CpuContext entry points (declared extern "C" or defined in an
+// extern "C" { } block) with a literal REGISTER_NATIVE_FUNCTION_AS registration
+// are listed. kKeepsNonvolatile: the contract writes none of r14-r31 and
+// f14-f31, so the runtime's indirect dispatch (bctrl, GuestCall) needs no guard
+// around the native either.
+static bool HasCLinkage(string source, string symbol)
+{
+    var escaped = System.Text.RegularExpressions.Regex.Escape(symbol);
+    if (System.Text.RegularExpressions.Regex.IsMatch(source, $@"extern\s+""C""\s+void\s+{escaped}\s*\(\s*CpuContext\s*\*"))
+        return true;
+    // A non-static definition inside an extern "C" { } block: the block's
+    // braces are still open at the definition (comments and literals skipped).
+    var definition = System.Text.RegularExpressions.Regex.Match(source, $@"(?m)^(?!\s*static\b)[^\n]*?\bvoid\s+{escaped}\s*\(\s*CpuContext\s*\*[^)]*\)\s*\{{");
+    if (!definition.Success) return false;
+    foreach (System.Text.RegularExpressions.Match block in System.Text.RegularExpressions.Regex.Matches(source, @"extern\s+""C""\s*\{"))
+    {
+        if (block.Index >= definition.Index) break;
+        var depth = 1;
+        for (var i = block.Index + block.Length; i < definition.Index && depth > 0; ++i)
+        {
+            var c = source[i];
+            if (c == '/' && i + 1 < source.Length && source[i + 1] == '/') { i = source.IndexOf('\n', i); if (i < 0) return false; }
+            else if (c == '/' && i + 1 < source.Length && source[i + 1] == '*') { i = source.IndexOf("*/", i + 2, StringComparison.Ordinal); if (i < 0) return false; ++i; }
+            else if (c == '"' || c == '\'')
+            {
+                for (++i; i < source.Length && source[i] != c; ++i)
+                    if (source[i] == '\\') ++i;
+            }
+            else if (c == '{') ++depth;
+            else if (c == '}') --depth;
+        }
+        if (depth > 0) return true;
+    }
+    return false;
+}
+
 static void WritePreciseNativeCalls(RuntimeNativeIndex index, string nativeSourceRoot, string outputDirectory)
 {
-    var precise = index.Effects.Where(static e => e.IsPrecise).Select(static e => e.Address).ToHashSet();
+    const uint nonvolatile = 0xFFFFC000u;
+    var contracts = index.Effects.Where(static e => e.IsPrecise).ToDictionary(static e => e.Address, static e => e.Contract);
+    var precise = contracts.Keys.ToHashSet();
     var byAddress = index.Registrations
         .Where(static r => !r.IsTranslatedOverride)
         .GroupBy(static r => r.Address)
@@ -252,12 +288,13 @@ static void WritePreciseNativeCalls(RuntimeNativeIndex index, string nativeSourc
         var sourcePath = Path.Combine(nativeSourceRoot, registration.SourceFile);
         if (!File.Exists(sourcePath)) continue;
         var source = File.ReadAllText(sourcePath);
-        var definition = new System.Text.RegularExpressions.Regex(
-            $@"extern\s+""C""\s+void\s+{System.Text.RegularExpressions.Regex.Escape(registration.Symbol)}\s*\(\s*CpuContext\s*\*");
-        if (!definition.IsMatch(source)) continue;
+        if (!HasCLinkage(source, registration.Symbol)) continue;
         sb.AppendLine($"extern \"C\" void {registration.Symbol}(CpuContext* ctx);");
         sb.AppendLine($"template <> struct KnownPreciseNativeCpuCall<0x{address:X8}u> {{");
         sb.AppendLine("    static constexpr bool kAvailable = true;");
+        var contract = contracts[address];
+        var keeps = ((contract.GprPossibleWriteMask | contract.FprPossibleWriteMask) & nonvolatile) == 0;
+        sb.AppendLine($"    static constexpr bool kKeepsNonvolatile = {(keeps ? "true" : "false")};");
         sb.AppendLine($"    static void Entry(CpuContext* ctx) {{ {registration.Symbol}(ctx); }}");
         sb.AppendLine("};");
         ++count;

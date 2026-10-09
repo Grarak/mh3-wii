@@ -11,14 +11,35 @@
 
 #include "abi_bridge.h"
 
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 
 namespace PortCheck {
-bool Enabled(const char* name);
+// Whether MH3_PORT_CHECK is set at all: -1 until the first test asks, then 0
+// or 1. The ports test their checks on every call, so the usual answer is
+// one relaxed byte load; a function-local static would test its guard
+// instead, which on ARM32 is a dmb barrier per call.
+inline std::atomic<int8_t> g_set{-1};
+bool SetSlow();
+inline bool Set() {
+    const int8_t set = g_set.load(std::memory_order_relaxed);
+    if (set >= 0) [[likely]]
+        return set != 0;
+    return SetSlow();
+}
+bool EnabledSlow(const char* name);
+// Whether MH3_PORT_CHECK names the port (or `all`). Cheap enough to test per
+// call, so callers need no static copy.
+inline bool Enabled(const char* name) {
+    return Set() && EnabledSlow(name);
+}
 // The `originals` option: the sound engine's entry points not named run their
 // translated originals, so a named port is reached from original callers.
-bool Originals();
+bool OriginalsSlow();
+inline bool Originals() {
+    return Set() && OriginalsSlow();
+}
 // Runs original(ctx) and port(ctx) from the same state, reports differences,
 // and leaves the port's result in place.
 void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));
@@ -55,7 +76,11 @@ void RunOutput(CpuContext* ctx, const char* name, void (*original)(CpuContext*),
 // C:0xADDR (player hook): called once as (PLW+0x3C, a zero vector, 0, PLW)
 // and kept, to start something rare whose updates the checks then see
 // (eft045_set 0x8031EBB8: ObjectListScrollUpdate).
-void Fuzz(CpuContext* ctx, char kind, uint32_t work);
+void FuzzSlow(CpuContext* ctx, char kind, uint32_t work);
+inline void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
+    if (Set()) [[unlikely]]
+        FuzzSlow(ctx, kind, work);
+}
 
 // The port, checked against the original when MH3_PORT_CHECK names it.
 inline void Call(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {

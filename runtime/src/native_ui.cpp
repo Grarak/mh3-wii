@@ -433,6 +433,9 @@ extern "C" void MH3_DrawRect2DTexture(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80053620, MH3_DrawRect2DTexture, "DrawRect2DTexture");
 
+// Registered kNativeKeepsNonvolatile (no dispatch guard around it): it names
+// no r14-r31 or f14-f31, its guest frame restores every GPR and its guest
+// calls go through GuestCall's dispatch.
 extern "C" void MH3_UIShapeSetup(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x10);
     GuestCall call{cpu};
@@ -454,7 +457,7 @@ extern "C" void MH3_UIShapeSetup(CpuContext* cpu) {
         ConfigureDirectCoordinates(0, flags & 8 ? 0 : 1, 4, flags & 8 ? 54 : 60);
     }
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800545E4, MH3_UIShapeSetup, "UIShapeSetup");
+REGISTER_NATIVE_FUNCTION_AS(0x800545E4, MH3_UIShapeSetup, "UIShapeSetup", kNativeKeepsNonvolatile);
 extern "C" void MH3_DrawShape(CpuContext* cpu) {
     const auto flags = Memory::Read32(Shape);
     if ((flags & 0x3000) != 0x3000)

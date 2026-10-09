@@ -397,91 +397,91 @@ void RotationOffsetPort(CpuContext* c) {
 
 uint32_t ListLastChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().listLast) [[unlikely]]
+    if (PortCheck::Set() && Checked().listLast) [[unlikely]]
         return Pure("ParticleListLast", func_800B5BA4, ListLastPort, manager);
 #endif
     return Last(manager);
 }
 uint32_t ListPrevChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().listPrev) [[unlikely]]
+    if (PortCheck::Set() && Checked().listPrev) [[unlikely]]
         return Pure("ParticleListPrev", func_800B5B98, ListPrevPort, manager, particle);
 #endif
     return Prev(manager, particle);
 }
 uint32_t ListLastAliveChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().listLastAlive) [[unlikely]]
+    if (PortCheck::Set() && Checked().listLastAlive) [[unlikely]]
         return Pure("ParticleListLastAlive", func_800B5AC8, ListLastAlivePort, manager);
 #endif
     return LastAlive(manager);
 }
 uint32_t ListPrevAliveChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().listPrevAlive) [[unlikely]]
+    if (PortCheck::Set() && Checked().listPrevAlive) [[unlikely]]
         return Pure("ParticleListPrevAlive", func_800B5B30, ListPrevAlivePort, manager, particle);
 #endif
     return PrevAlive(manager, particle);
 }
 uint32_t ListFirstAliveChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().listFirstAlive) [[unlikely]]
+    if (PortCheck::Set() && Checked().listFirstAlive) [[unlikely]]
         return Pure("ParticleListFirstAlive", func_800B9624, ListFirstAlivePort, manager);
 #endif
     return FirstAlive(manager);
 }
 uint32_t ListNextAliveChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().listNextAlive) [[unlikely]]
+    if (PortCheck::Set() && Checked().listNextAlive) [[unlikely]]
         return Pure("ParticleListNextAlive", func_800B8DAC, ListNextAlivePort, manager, particle);
 #endif
     return NextAlive(manager, particle);
 }
 uint32_t StrategyFirstChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().strategyFirst) [[unlikely]]
+    if (PortCheck::Set() && Checked().strategyFirst) [[unlikely]]
         return Pure("DrawStrategyFirstAlive", func_800C8AE4, ListFirstAlivePort, manager);
 #endif
     return FirstAlive(manager);
 }
 uint32_t StrategyLastChecked(uint32_t manager) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().strategyLast) [[unlikely]]
+    if (PortCheck::Set() && Checked().strategyLast) [[unlikely]]
         return Pure("DrawStrategyLastAlive", func_800C8C00, ListLastAlivePort, manager);
 #endif
     return LastAlive(manager);
 }
 uint32_t StrategyNextChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().strategyNext) [[unlikely]]
+    if (PortCheck::Set() && Checked().strategyNext) [[unlikely]]
         return Pure("DrawStrategyNextAlive", func_800C8D1C, ListNextAlivePort, manager, particle);
 #endif
     return NextAlive(manager, particle);
 }
 uint32_t StrategyPrevChecked(uint32_t manager, uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().strategyPrev) [[unlikely]]
+    if (PortCheck::Set() && Checked().strategyPrev) [[unlikely]]
         return Pure("DrawStrategyPrevAlive", func_800C8E48, ListPrevAlivePort, manager, particle);
 #endif
     return PrevAlive(manager, particle);
 }
 uint32_t ColorAlphaChecked(uint32_t particle, uint32_t layer, uint32_t index) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().colorAlpha) [[unlikely]]
+    if (PortCheck::Set() && Checked().colorAlpha) [[unlikely]]
         return Pure("ParticleColorAlpha", func_800AB284, ColorAlphaPort, particle, layer, index);
 #endif
     return ColorAlpha(particle, layer, index);
 }
 uint32_t AlphaFlickerChecked(uint32_t particle) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().alphaFlicker) [[unlikely]]
+    if (PortCheck::Set() && Checked().alphaFlicker) [[unlikely]]
         return Pure("ParticleAlphaFlicker", func_800AB460, AlphaFlickerPort, particle);
 #endif
     return AlphaFlicker(particle);
 }
 void ColorRgbChecked(uint32_t particle, uint32_t layer, uint32_t index, uint32_t out) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().colorRgb) [[unlikely]] {
+    if (PortCheck::Set() && Checked().colorRgb) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[3] = particle, c->gpr[4] = layer, c->gpr[5] = index, c->gpr[6] = out;
         PortCheck::RunOutput(c, "ParticleColorRgb", func_800AB0BC, ColorRgbPort, {{out, 3}});
@@ -495,7 +495,7 @@ void ColorRgbChecked(uint32_t particle, uint32_t layer, uint32_t index, uint32_t
 }
 void ModulateColorsChecked(uint32_t manager, uint32_t particle, uint32_t primary, uint32_t secondary) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().modulate) [[unlikely]] {
+    if (PortCheck::Set() && Checked().modulate) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[3] = manager, c->gpr[4] = particle, c->gpr[5] = primary, c->gpr[6] = secondary;
         PortCheck::RunOutput(c, "ParticleManagerModulateColor", func_800AE70C, ModulateColorsPort, {{primary, 4}, {secondary, 4}});
@@ -506,7 +506,7 @@ void ModulateColorsChecked(uint32_t manager, uint32_t particle, uint32_t primary
 }
 void RotationChecked(uint32_t particle, uint32_t out) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().rotation) [[unlikely]] {
+    if (PortCheck::Set() && Checked().rotation) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[3] = particle, c->gpr[4] = out;
         PortCheck::RunOutput(c, "ParticleRotation", func_800B5518, RotationPort, {{out, 12}});
@@ -517,7 +517,7 @@ void RotationChecked(uint32_t particle, uint32_t out) {
 }
 void RotationOffsetChecked(uint32_t manager, uint32_t particle, uint32_t out) {
 #ifdef MH3_DEVELOPMENT
-    if (Checked().rotationOffset) [[unlikely]] {
+    if (PortCheck::Set() && Checked().rotationOffset) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[3] = manager, c->gpr[4] = particle, c->gpr[5] = out;
         PortCheck::RunOutput(c, "ParticleManagerRotationOffset", func_800B56FC, RotationOffsetPort, {{out, 12}});
@@ -530,7 +530,7 @@ void RotationOffsetChecked(uint32_t manager, uint32_t particle, uint32_t out) {
 }
 } // namespace
 
-bool EffectParticle::PortChecked() {
+bool EffectParticle::PortCheckedSlow() {
 #ifdef MH3_DEVELOPMENT
     return Checked().any;
 #else

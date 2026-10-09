@@ -20,6 +20,11 @@
 // animations' GetResult (virtual +0x38), logf, expf and the SDK quaternion and
 // vector routines stay guest calls; the rest keeps the Gekko single-precision
 // arithmetic of the translated code, so the port matches it bit for bit.
+//
+// Registered kNativeKeepsNonvolatile (no dispatch guard around it): it names
+// no r14-r31 or f14-f31, its guest frame restores every GPR, the animations'
+// GetResult go through GuestCall's dispatch and the direct SDK calls are
+// guarded below.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -110,12 +115,17 @@ uint32_t BlendResult(CpuContext* ctx) {
 
     GuestFrame frame(ctx, 0x170);
     GuestCall game{ctx};
-    auto call = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints, std::initializer_list<double> floats = {}) {
+    // The SDK routines are called directly, without the dispatch's guard. Of
+    // them only C_QUATSlerp writes nonvolatile FPRs (f28-f31, in the guest
+    // code): its call passes them, and the guard keeps them, as the port is
+    // registered to.
+    auto call = [&](void (*fn)(CpuContext*), std::initializer_list<uint32_t> ints, std::initializer_list<double> floats = {}, uint32_t nonvolatileFprs = 0) {
         uint32_t r = 3, f = 1;
         for (uint32_t v : ints)
             ctx->gpr[r++] = v;
         for (double v : floats)
             ctx->fpr[f++].d = v;
+        PpcNonvolatileFprGuard guard(ctx, nonvolatileFprs);
         fn(ctx);
         return ctx->fpr[1].d;
     };
@@ -174,7 +184,7 @@ uint32_t BlendResult(CpuContext* ctx) {
             }
             weightsSoFar = Fadds(weightsSoFar, weight);
             const double t = Fmuls(weight, Reciprocal(weightsSoFar));
-            call(func_804C75C0, {blend, quat, blend}, {t});
+            call(func_804C75C0, {blend, quat, blend}, {t}, 0xF0000000u);
         } else if (!noRotation) {
             if (i == 0) {
                 for (unsigned r = 0; r < 3; ++r)
@@ -235,7 +245,7 @@ void BlendPort(CpuContext* ctx) {
 
 extern "C" void MH3_AnmChrBlendGetResult(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("AnmChrBlendGetResult");
+    const bool check = PortCheck::Enabled("AnmChrBlendGetResult");
     if (check) [[unlikely]] {
         PortCheck::Run(ctx, "AnmChrBlendGetResult", func_800606BC, BlendPort);
         return;
@@ -243,4 +253,4 @@ extern "C" void MH3_AnmChrBlendGetResult(CpuContext* ctx) {
 #endif
     BlendPort(ctx);
 }
-REGISTER_NATIVE_FUNCTION_AS(0x800606BC, MH3_AnmChrBlendGetResult, "AnmChrBlendGetResult");
+REGISTER_NATIVE_FUNCTION_AS(0x800606BC, MH3_AnmChrBlendGetResult, "AnmChrBlendGetResult", kNativeKeepsNonvolatile);

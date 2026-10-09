@@ -285,7 +285,7 @@ extern "C" void func_804C6F20(CpuContext* ctx);
 // compares the output matrices (registers from the current context).
 #ifdef MH3_DEVELOPMENT
 #define MH3_MTX_CHECK(name, original, port, out, bytes, ...)                                                                                                                                           \
-    static const bool check = PortCheck::Enabled(name);                                                                                                                                                \
+    const bool check = PortCheck::Enabled(name);                                                                                                                                                       \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         CpuContext* c = TryGetCpuContext();                                                                                                                                                            \
         __VA_ARGS__;                                                                                                                                                                                   \
@@ -349,7 +349,7 @@ static void InversePort(CpuContext* p) {
 }
 static uint32_t InverseChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("PSMTXInverse");
+    const bool check = PortCheck::Enabled("PSMTXInverse");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -510,7 +510,7 @@ static void WorldStepPort(CpuContext* p) {
 }
 static uint32_t WorldStepChecked(uint32_t r1, uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale, uint32_t flags, uint32_t node) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("WorldMtxNodeStepMayaScale");
+    const bool check = PortCheck::Enabled("WorldMtxNodeStepMayaScale");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -724,7 +724,7 @@ extern "C" void func_80501968(CpuContext* ctx);
 
 #ifdef MH3_DEVELOPMENT
 #define MH3_MTX_RESULT_CHECK(name, original, port, out, bytes)                                                                                                                                         \
-    static const bool check = PortCheck::Enabled(name);                                                                                                                                                \
+    const bool check = PortCheck::Enabled(name);                                                                                                                                                       \
     if (check) [[unlikely]] {                                                                                                                                                                          \
         PortCheck::RunOutput(ctx, name, original, port, {{out, bytes}});                                                                                                                               \
         return;                                                                                                                                                                                        \
@@ -800,7 +800,7 @@ static void InverseWrapperPort(CpuContext* p) {
 }
 static uint32_t InverseWrapperChecked(uint32_t r1, uint32_t out, uint32_t in) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("MtxInverseWrapper");
+    const bool check = PortCheck::Enabled("MtxInverseWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = in;
@@ -822,7 +822,7 @@ static void ConcatWrapperPort(CpuContext* p) {
 }
 static void ConcatWrapperChecked(uint32_t r1, uint32_t out, uint32_t a, uint32_t b) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("MtxConcatWrapper");
+    const bool check = PortCheck::Enabled("MtxConcatWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = a, c->gpr[5] = b;
@@ -844,7 +844,7 @@ static void MultVecWrapperPort(CpuContext* p) {
 }
 static void MultVecWrapperChecked(uint32_t r1, uint32_t out, uint32_t m, uint32_t v) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("MtxMultVecWrapper");
+    const bool check = PortCheck::Enabled("MtxMultVecWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = m, c->gpr[5] = v;
@@ -860,3 +860,115 @@ extern "C" void MH3_MtxMultVecWrapper(CpuContext* ctx) {
     MultVecWrapperChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80051560, MH3_MtxMultVecWrapper, "MtxMultVecWrapper");
+
+// More of the game's matrix and vector wrappers (Ghidra decompilation):
+//   0x80053340 MtxCopyWrapper(dst, src): the 12 words of a Mtx copied as
+//              integers (0x80053370, lwz/stw), returns dst
+//   0x80050538 MtxIdentityWrapper(m): PSMTXIdentity (0x804C6290, the 1 and 0
+//              at r2 - 0x828 and r2 - 0x824) after a cast that returns its
+//              argument, returns m
+//   0x80051454 VecScaleInPlace(v, f1): v = v * f1 (0x80051488, ps_muls0, the
+//              float lanes), returns v
+// Each body leaves r3 as it came in, which is what they return, and names
+// only the registers it reads, so callers call it directly, without the
+// wrappers' frames. The leaves stay translated: their translations take their
+// arguments in host registers or are inlined into their callers, and as
+// natives they measured slower on the Pi.
+extern "C" void func_80053340(CpuContext* ctx);
+extern "C" void func_80050538(CpuContext* ctx);
+extern "C" void func_80051454(CpuContext* ctx);
+namespace {
+void Identity(uint32_t m) {
+    // Big-endian pairs: {1, 0}, {0, 0}, {0, 1}, {0, 0}, {0, 0}, {1, 0}.
+    constexpr uint64_t kOneZero = 0x3F80000000000000ull, kZeroOne = 0x000000003F800000ull;
+    MemoryInline::FlatWrite64(m + 0x00, kOneZero);
+    MemoryInline::FlatWrite64(m + 0x08, 0);
+    MemoryInline::FlatWrite64(m + 0x10, kZeroOne);
+    MemoryInline::FlatWrite64(m + 0x18, 0);
+    MemoryInline::FlatWrite64(m + 0x20, 0);
+    MemoryInline::FlatWrite64(m + 0x28, kOneZero);
+}
+void ScaleInPlace(uint32_t v, float s) {
+    const float x = LoadFloat(v), y = LoadFloat(v + 4), z = LoadFloat(v + 8);
+    StoreFloat(v, x * s);
+    StoreFloat(v + 4, y * s);
+    StoreFloat(v + 8, z * s);
+}
+void CopyWrapperPort(CpuContext* p) {
+    Copy(p->gpr[4], p->gpr[3]);
+}
+void IdentityWrapperPort(CpuContext* p) {
+    Identity(p->gpr[3]);
+}
+void ScaleInPlacePort(CpuContext* p) {
+    ScaleInPlace(p->gpr[3], float(p->fpr[1].d));
+}
+void CopyWrapperChecked(uint32_t r1, uint32_t dst, uint32_t src) {
+    MH3_MTX_CHECK("MtxCopyWrapper", func_80053340, CopyWrapperPort, dst, 0x30, c->gpr[1] = r1, c->gpr[3] = dst, c->gpr[4] = src);
+    Copy(src, dst);
+}
+void IdentityWrapperChecked(uint32_t r1, uint32_t m) {
+    MH3_MTX_CHECK("MtxIdentityWrapper", func_80050538, IdentityWrapperPort, m, 0x30, c->gpr[1] = r1, c->gpr[3] = m);
+    Identity(m);
+}
+void ScaleInPlaceChecked(uint32_t r1, uint32_t v, double s) {
+    MH3_MTX_CHECK("VecScaleInPlace", func_80051454, ScaleInPlacePort, v, 12, c->gpr[1] = r1, c->gpr[3] = v, c->fpr[1].d = s);
+    ScaleInPlace(v, float(s));
+}
+} // namespace
+extern "C" void MH3_MtxCopyWrapper(CpuContext* ctx) {
+    CopyWrapperChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80053340, MH3_MtxCopyWrapper, "MtxCopyWrapper");
+extern "C" void MH3_MtxIdentityWrapper(CpuContext* ctx) {
+    IdentityWrapperChecked(ctx->gpr[1], ctx->gpr[3]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80050538, MH3_MtxIdentityWrapper, "MtxIdentityWrapper");
+extern "C" void MH3_VecScaleInPlace(CpuContext* ctx) {
+    ScaleInPlaceChecked(ctx->gpr[1], ctx->gpr[3], ctx->fpr[1].d);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80051454, MH3_VecScaleInPlace, "VecScaleInPlace");
+
+// 0x804C6D90 C_MTXLightPerspective(m, fovY, aspect, scaleS, scaleT, transS,
+// transT) (Revolution SDK, Ghidra decompilation): a projected texture's
+// matrix,
+//   cot = 1 / tan(fovY / 2, in radians)
+//   | scaleS cot / aspect  0             -transS  0 |
+//   | 0                    cot scaleT    -transT  0 |
+//   | 0                    0             -1       0 |
+// in the original's single-precision steps (fmuls, fdivs; 0.5, pi / 180, 1, 0
+// and -1 from .sdata2). tan is the host's double tan where the original calls
+// fdlibm's (0x8046856C); both are within an ulp, and the result is rounded to
+// single as the original does.
+extern "C" void func_804C6D90(CpuContext* ctx);
+namespace {
+void LightPerspective(uint32_t m, double fovY, double aspect, double scaleS, double scaleT, double transS, double transT) {
+    const double angle = PpcFmulsInline(LoadFloat(0x8079F750), PpcFmulsInline(LoadFloat(0x8079F740), fovY));
+    const float cot = LoadFloat(0x8079F738) / float(std::tan(angle));
+    const float zero = LoadFloat(0x8079F73C);
+    StoreFloat(m + 0x00, float(PpcFmulsInline(scaleS, double(float(double(cot) / aspect)))));
+    StoreFloat(m + 0x04, zero);
+    StoreFloat(m + 0x08, float(-transS));
+    StoreFloat(m + 0x0C, zero);
+    StoreFloat(m + 0x10, zero);
+    StoreFloat(m + 0x14, float(PpcFmulsInline(cot, scaleT)));
+    StoreFloat(m + 0x18, float(-transT));
+    StoreFloat(m + 0x1C, zero);
+    StoreFloat(m + 0x20, zero);
+    StoreFloat(m + 0x24, zero);
+    StoreFloat(m + 0x28, LoadFloat(0x8079F74C));
+    StoreFloat(m + 0x2C, zero);
+}
+void LightPerspectivePort(CpuContext* p) {
+    LightPerspective(p->gpr[3], p->fpr[1].d, p->fpr[2].d, p->fpr[3].d, p->fpr[4].d, p->fpr[5].d, p->fpr[6].d);
+}
+void LightPerspectiveChecked(uint32_t r1, uint32_t m, double fovY, double aspect, double scaleS, double scaleT, double transS, double transT) {
+    MH3_MTX_CHECK("C_MTXLightPerspective", func_804C6D90, LightPerspectivePort, m, 0x30, c->gpr[1] = r1, c->gpr[3] = m, c->fpr[1].d = fovY, c->fpr[2].d = aspect, c->fpr[3].d = scaleS,
+                  c->fpr[4].d = scaleT, c->fpr[5].d = transS, c->fpr[6].d = transT);
+    LightPerspective(m, fovY, aspect, scaleS, scaleT, transS, transT);
+}
+} // namespace
+extern "C" void MH3_C_MTXLightPerspective(CpuContext* ctx) {
+    LightPerspectiveChecked(ctx->gpr[1], ctx->gpr[3], ctx->fpr[1].d, ctx->fpr[2].d, ctx->fpr[3].d, ctx->fpr[4].d, ctx->fpr[5].d, ctx->fpr[6].d);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x804C6D90, MH3_C_MTXLightPerspective, "C_MTXLightPerspective");

@@ -67,7 +67,7 @@ static void ResDicAtPort(CpuContext* p) {
     p->gpr[3] = ResDicAt(p->gpr[3], p->gpr[4]);
 }
 static uint32_t ResDicAtChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
-    static const bool check = PortCheck::Enabled("ResDicLookup");
+    const bool check = PortCheck::Enabled("ResDicLookup");
     return Checked("ResDicLookup", check, func_800627B4, ResDicAtPort, r1, r3, r4, ResDicAtDirect);
 }
 extern "C" void MH3_ResDicLookup(CpuContext* ctx) {
@@ -82,7 +82,7 @@ static void RefCheckPort(CpuContext* p) {
     p->gpr[3] = ResCommonRefCheck(p->gpr[3]);
 }
 static uint32_t RefCheckChecked(uint32_t r1, uint32_t r3) {
-    static const bool check = PortCheck::Enabled("ResCommonRefCheck");
+    const bool check = PortCheck::Enabled("ResCommonRefCheck");
     return Checked("ResCommonRefCheck", check, func_800628A4, RefCheckPort, r1, r3, 0, RefCheckDirect);
 }
 extern "C" void MH3_ResCommonRefCheck(CpuContext* ctx) {

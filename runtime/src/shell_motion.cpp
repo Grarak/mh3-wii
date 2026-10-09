@@ -148,7 +148,7 @@ extern "C" void func_80073FCC(CpuContext* ctx);
 // call boundary; MH3_PORT_CHECK=VecAddInPlace checks the written vector.
 static void VecAddInPlaceChecked([[maybe_unused]] uint32_t r1, uint32_t lr, uint32_t out, uint32_t add) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("VecAddInPlace");
+    const bool check = PortCheck::Enabled("VecAddInPlace");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[1] = r1;
@@ -179,7 +179,7 @@ static void EnemyAddVelocityPort(CpuContext* ctx) {
 extern "C" void func_8013547C(CpuContext* ctx);
 extern "C" void MH3_EnemyAddVelocity(CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("EnemyAddVelocity");
+    const bool check = PortCheck::Enabled("EnemyAddVelocity");
     if (check) [[unlikely]] {
         PortCheck::RunOutput(ctx, "EnemyAddVelocity", func_8013547C, EnemyAddVelocityPort, {{ctx->gpr[3] + kEnemyPosition, 12}});
         return;
@@ -192,7 +192,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8013547C, MH3_EnemyAddVelocity, "EnemyAddVelocity"
 extern "C" void func_80050F88(CpuContext* ctx);
 static double VecMagWrapperChecked(uint32_t lr, uint32_t v) {
 #ifdef MH3_DEVELOPMENT
-    static const bool check = PortCheck::Enabled("VecMagWrapper");
+    const bool check = PortCheck::Enabled("VecMagWrapper");
     if (check) [[unlikely]] {
         CpuContext* c = TryGetCpuContext();
         c->gpr[3] = v;

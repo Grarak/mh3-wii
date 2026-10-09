@@ -2,6 +2,8 @@
 // (effect_particle.cpp). Guest addresses in, host values out; each is also
 // registered as the native port of its guest function.
 #pragma once
+#include "port_check.h"
+
 #include <cstdint>
 
 // nw4r::math SinCosRad (0x8009C7C4, msl_math.cpp) on host values.
@@ -36,5 +38,9 @@ void ModulateColors(uint32_t manager, uint32_t particle, uint8_t primary[4], uin
 void Rotation(uint32_t particle, float out[3]);
 // True when MH3_PORT_CHECK names any of these ports (development): callers
 // then reach them through their guest addresses, where they are checked.
-bool PortChecked();
+// Asked per particle, so the usual answer (MH3_PORT_CHECK not set) is inline.
+bool PortCheckedSlow();
+inline bool PortChecked() {
+    return PortCheck::Set() && PortCheckedSlow();
+}
 } // namespace EffectParticle

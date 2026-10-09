@@ -145,6 +145,48 @@ use `BytesEqual` (`runtime/include/bytes_equal.h`, NEON, equality only)
 instead of `memcmp`. The SDK's TLS lookups for its prebuilt libraries go
 through the fast paths in [vita-tls-lookup-optimization.md](vita-tls-lookup-optimization.md).
 
+### Barriers on ARM32
+
+On ARMv7 an acquire load or a sequentially consistent atomic is `ldr` plus
+`dmb ish`, and so is the guard test of every function-local `static` with a
+dynamic initializer (`static const bool check = f();`), on every pass. A
+`std::shared_ptr` copy or release is an atomic read-modify-write between two
+`dmb`s. The Pi 5's Cortex-A76 hides most of their cost, so Pi timings barely
+move when barriers go; the Vita's Cortex-A9 waits at each one for earlier
+memory accesses. Judge barrier work by counts. The per-function census of a
+build:
+
+```sh
+arm-linux-gnueabihf-objdump -d --no-show-raw-insn build/linux-arm32/MH3 \
+  | awk '/^[0-9a-f]+ </{f=$2} /\tdmb\t/{n[f]++} END{for(f in n) print n[f], f}' | sort -rn
+```
+
+Intersect it with the function list of a Vita CPU profile to find the hot
+ones. Removed on 2026-10-04 (game thread, development builds included,
+since the devkit runs those):
+
+- Port-check flags held in local statics in every checked native: now
+  `PortCheck::Enabled`, an inline relaxed byte test while `MH3_PORT_CHECK` is
+  unset. On the Pi the PortCheck functions fell from 0.27% to 0.10% of samples.
+- `IsBaseTranslatedCpuTargetActive`, tested per function of the region on
+  every state-free call: relaxed. Translated code fell from 7431 to 2988 `dmb`
+  instructions, the rest on first-call and unresolved paths.
+- `ResourceMemory()` (`model_resources.cpp`, every NW4R resource accessor):
+  a namespace-scope constant. `FindByAddressPtr` tests its memo before the
+  acquire, so `InvokeIndirectCpuSlow`'s memo hits skip the barrier (the
+  static count rises by 527: the compiler duplicates the acquire on the cold
+  first-call path of every `InvokeDirectCpu` that resolves at run time).
+
+Still on hot paths (Vita profile share of the function, `dmb`s in it):
+`SkipNativeSceneModel` (0.34%, 17: `ReadMode`'s static and the draw table's
+`shared_ptr` copy in `Lookup`), `GuestCall::Rebind` (0.21%, 1),
+`NativeRenderThreadRunning` (0.13%, 1), the cached-resolution acquire in
+the 528 `InvokeDirectCpu`s that resolve at run time (0.06% each at most)
+and, on the render side,
+`RecordNativeMaterialGeometry` and `DispatchNativeModelIndexed`. Keep flags in
+namespace-scope variables or relaxed atomics, and keep guarded statics and
+`shared_ptr` copies out of per-call paths.
+
 ## Pi and VM
 
 `scripts/pi/benchmark.py` (copied to `~/mh3` on the Pi) runs a quest with an
