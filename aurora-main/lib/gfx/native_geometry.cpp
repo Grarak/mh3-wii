@@ -4,15 +4,25 @@
 #include "common.hpp"
 #include "../gl/gl.hpp"
 #include "../internal.hpp"
+#include <algorithm>
 #include <limits>
 
 namespace {
 aurora::Module Log("aurora::native_geometry");
 uint32_t frame = UINT32_MAX;
 size_t vertexCursor = 0, indexCursor = 0, uniformCursor = 0;
+AuroraNativeDrawStats stats{};
 void reset_frame() {
   const auto current=aurora::gfx::current_frame();
   if(current!=frame) {frame=current;vertexCursor=indexCursor=uniformCursor=0;}
+}
+
+int reject_capacity() {
+  ++stats.capacity_cancellations;
+  // Close any earlier offscreen scene with its existing notification. The
+  // canceled frame has no present/slot advance; future draws stay suppressed.
+  aurora_cancel_native_frame();
+  return 0;
 }
 
 template <class Geometry>
@@ -21,7 +31,7 @@ int allocate(uint32_t vertices, uint32_t indices, Geometry* out) {
   *out = {};
   if (!aurora_native_frame_should_render() || !vertices || !indices) return 0;
   if (!aurora::gl::on_render_thread()) Log.fatal("Geometry allocated outside game thread");
-  if (vertices > 65536) return 0;
+  if (vertices > 65536) return reject_capacity();
   const auto current = aurora::gfx::current_frame();
   reset_frame();
   const auto memory = aurora::native_draw_memory();
@@ -30,15 +40,20 @@ int allocate(uint32_t vertices, uint32_t indices, Geometry* out) {
   const uint64_t indexBytes = uint64_t(indices) * sizeof(uint16_t);
   if (start > memory.vertices.size() || vertexBytes > memory.vertices.size() - start ||
       indexCursor > memory.indices.size() || indexBytes > memory.indices.size() - indexCursor)
-    return 0;
+    return reject_capacity();
   *out = {reinterpret_cast<decltype(out->vertices)>(memory.vertices.data() + start),
           reinterpret_cast<uint16_t*>(memory.indices.data() + indexCursor),
           vertices, indices, current, aurora_native_frame_slot()};
   vertexCursor = start + size_t(vertexBytes);
   indexCursor += size_t(indexBytes);
+  stats.vertex_high_water = std::max(stats.vertex_high_water, uint64_t(vertexCursor));
+  stats.index_high_water = std::max(stats.index_high_water, uint64_t(indexCursor));
   return 1;
 }
+
 }
+
+extern "C" AuroraNativeDrawStats aurora_native_draw_stats() { return stats; }
 
 extern "C" int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indices,
                                                AuroraNativeGeometry* out) {
@@ -57,9 +72,10 @@ extern "C" int aurora_allocate_native_uniforms(uint32_t bytes,AuroraNativeUnifor
   reset_frame();
   const auto memory=aurora::native_draw_memory();
   const size_t start=(uniformCursor+255)&~size_t(255);
-  if(start>memory.uniforms.size() || bytes>memory.uniforms.size()-start) return 0;
+  if(start>memory.uniforms.size() || bytes>memory.uniforms.size()-start) return reject_capacity();
   *out={memory.uniforms.data()+start,uint32_t(start),bytes,frame,aurora_native_frame_slot()};
   uniformCursor=start+bytes;
+  stats.uniform_high_water=std::max(stats.uniform_high_water,uint64_t(uniformCursor));
   return 1;
 }
 

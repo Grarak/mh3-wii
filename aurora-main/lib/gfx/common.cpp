@@ -720,24 +720,25 @@ PipelineRef pipeline_ref(const gx::PipelineConfig& config) {
 static std::unique_ptr<StagingSet> new_staging_set() {
   auto set = std::make_unique<StagingSet>();
 #ifdef AURORA_GXM
-  size_t allocation = 0;
-  const auto reserve = [&](ByteBuffer& buffer, uint64_t size) {
-    auto& memory = set->memory[allocation++];
-    memory = gxm::MappedMemory(size, gxm::MappedMemory::Kind::Draw, "Aurora direct draw slot");
-    buffer = ByteBuffer{static_cast<uint8_t*>(memory.data()), static_cast<size_t>(size)};
-  };
+  auto& memory = set->memory[0];
+  memory = gxm::MappedMemory(gxm::NativeSlotBytes, gxm::MappedMemory::Kind::Draw,
+                             "Aurora native draw slot");
+  auto* base = static_cast<uint8_t*>(memory.data());
+  set->verts = ByteBuffer{base + gxm::NativeVertexOffset, VertexBufferSize};
+  set->uniforms = ByteBuffer{base + gxm::NativeUniformOffset, UniformBufferSize};
+  set->indices = ByteBuffer{base + gxm::NativeIndexOffset, IndexBufferSize};
 #else
   const auto reserve = [](ByteBuffer& buffer, uint64_t size) {
     buffer = ByteBuffer{static_cast<size_t>(size)};
     buffer.clear();
   };
-#endif
   reserve(set->verts, VertexBufferSize + WordBufferRowBytes);
   // The trailing uniform window pads the batch; see end_batch_impl.
   reserve(set->uniforms, UniformBufferSize + gx::MaxUniformSize);
   reserve(set->indices, IndexBufferSize);
   // Word buffers upload whole rows.
   reserve(set->storage, StorageBufferSize + WordBufferRowBytes);
+#endif
   return set;
 }
 
@@ -1133,8 +1134,8 @@ NativeDrawMemory native_draw_memory(unsigned slot) {
   if (slot >= FrameSlotCount) throw std::runtime_error("Native draw slot exceeds the triple buffer");
   auto& set = g_nativeDrawSlots[slot];
   if (!set) {
-    // Reuse the three existing bounded allocations; do not reserve another
-    // 26 MiB in CDRAM. Native frames never wait on the GX staging pool.
+    // Reuse the three existing bounded allocations. Native frames never wait
+    // on the recorded GX staging pool or create additional mapped slots.
     std::lock_guard lock(g_stagingPoolMutex);
     if (g_stagingPool.empty()) throw std::runtime_error("Native and recorded draw slots cannot be mixed");
     set = std::move(g_stagingPool.back());

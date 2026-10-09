@@ -26,14 +26,13 @@ private:
   MappedMemory m_ids;
   const void* m_uniforms = nullptr;
   const void* m_indices = nullptr;
-  const void* m_vertices = nullptr;
-  const void* m_attributes = nullptr;
   size_t m_uniformBytes = 0, m_indexBytes = 0;
   SceGxmNotification m_lastUse{};
 };
 
-// Bind the producer's mapped memory directly. All four allocations stay owned
-// by its StagingSet until the last consuming scene notification completes.
+// Bind the producer's mapped memory directly. Its vertex/uniform/index spans
+// share the owning slot until its last scene notification completes. The
+// recorded-GX attribute-word span is empty for native frame slots.
 SceGxmNotification draw_memory_fence();
 bool gpu_frame_pending() noexcept;
 std::array<uint64_t, 2> finish_wait_counters() noexcept;

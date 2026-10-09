@@ -6,7 +6,8 @@
 namespace aurora {
 // Borrowed mutable data for this rendered frame only. Three bounded slots
 // retain their allocations until shutdown; frame admission protects reuse.
-// GXM maps all four spans directly in CDRAM, without uploads or payload copies.
+// GXM maps vertices, uniforms and indices directly in CDRAM without uploads
+// or payload copies. Its unused recorded-GX attribute-word span is empty.
 struct NativeDrawMemory {
   std::span<uint8_t> vertices;
   std::span<uint8_t> uniforms;

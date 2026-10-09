@@ -32,8 +32,6 @@ void DrawMemory::bind(const void* uniforms, size_t uniformBytes, const void* ind
   m_lastUse = {};
   m_uniforms = uniforms; m_uniformBytes = uniformBytes;
   m_indices = indices; m_indexBytes = indexBytes;
-  m_vertices = vertexBytes ? vertices : m_ids.data();
-  m_attributes = attributeBytes ? attributes : m_ids.data();
 }
 void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {
   if (!m_uniforms || (offset & (UniformAlignment - 1)) ||
@@ -42,11 +40,10 @@ void DrawMemory::bind_uniform_range(uint32_t offset, uint32_t bytes) {
   m_lastUse = m_device.current_fence();
   auto* context = m_device.context();
   const void* uniforms = static_cast<const char*>(m_uniforms) + offset;
-  // Match BUFFER[0..2] in the offline Cg. No CPU or GPU payload copy.
+  // Native shaders consume BUFFER[0] and direct vertex attributes. Recorded
+  // GX raw word bindings 1/2 have no native consumer. No payload copy.
   check(sceGxmSetVertexUniformBuffer(context, 0, uniforms), "bind vertex uniforms");
   check(sceGxmSetFragmentUniformBuffer(context, 0, uniforms), "bind fragment uniforms");
-  check(sceGxmSetVertexUniformBuffer(context, 1, m_vertices), "bind raw vertex words");
-  check(sceGxmSetVertexUniformBuffer(context, 2, m_attributes), "bind raw attribute words");
 }
 void DrawMemory::draw(uint32_t indexCount, uint32_t indexOffset, uint32_t instances) {
   if (!indexCount || !instances) return;

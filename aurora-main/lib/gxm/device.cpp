@@ -2,6 +2,7 @@
 #include "razor.hpp"
 #include "shaders.hpp"
 #include "runtime_shader.hpp"
+#include "native_capacity.hpp"
 #include <aurora/gpu_completion.hpp>
 #include <aurora/thread_role.hpp>
 #include <psp2/display.h>
@@ -140,19 +141,20 @@ Device::Device(bool /*vsync*/) {
     SceKernelFreeMemorySizeInfo available{};
     available.size = sizeof(available);
     check(sceKernelGetFreeMemorySize(&available), "query memory partitions");
-    // Three direct draw slots: 24.75 MiB after CDRAM block rounding, plus
+    // Three native draw slots: 10.5 MiB with unchanged live capacities, plus
     // numeric-ID, clip and utility buffers (0.75 MiB). Reserve these before
     // committing the texture/display arena. Compact models own separately
     // allocated CDRAM blocks, capped at 32 MiB including notified retirement.
     // Keep that capacity available and leave 8 MiB for the driver.
-    constexpr unsigned producerReserve = 26u << 20;
+    constexpr unsigned producerReserve = NativeProducerReserve;
     constexpr unsigned modelReserve = 32u << 20;
     constexpr unsigned driverReserve = 8u << 20;
     if (available.size_cdram <= producerReserve + modelReserve + driverReserve)
       throw std::runtime_error("Insufficient CDRAM for Aurora, producer slots and resident models");
     const unsigned budget = (unsigned(available.size_cdram) - producerReserve - modelReserve - driverReserve) & ~0x3ffffu;
     m_arena = std::make_unique<CdramArena>(budget);
-    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation 26 MiB, model reservation 32 MiB\n", budget / 1048576.0);
+    std::fprintf(stderr, "Aurora GXM: CDRAM texture/display arena %.2f MiB, producer reservation %.2f MiB, model reservation 32 MiB\n",
+        budget / 1048576.0, producerReserve / 1048576.0);
     for (unsigned i = 0; i < aurora::GpuFrameRing::BufferCount; ++i) {
       m_displayData[i] = m_arena->allocate(Stride * Height * 4);
       if (!m_displayData[i]) throw std::bad_alloc();

@@ -38,8 +38,18 @@ typedef struct AuroraNativeUniforms {
   uint32_t offset, size, frame, slot;
 } AuroraNativeUniforms;
 
+// Cumulative successful cursor peaks, including vertex/uniform alignment.
+// Query on the graphics owner. Capacity rejection cancels the presentation;
+// it never wraps a cursor or reopens drawing in the same logical frame.
+typedef struct AuroraNativeDrawStats {
+  uint64_t vertex_high_water, uniform_high_water, index_high_water;
+  uint64_t capacity_cancellations;
+} AuroraNativeDrawStats;
+AuroraNativeDrawStats aurora_native_draw_stats(void);
+
 // Borrow a disjoint range from the admitted frame's existing draw memory.
-// Returns false on a skipped frame or exhausted space. Never waits or wraps.
+// Returns false on a skipped frame or exhausted space. An admitted frame that
+// exhausts space is canceled as a whole. Never waits or wraps.
 // Fill before submitting and do not retain a writable view after frame end.
 int aurora_allocate_native_geometry(uint32_t vertices, uint32_t indices,
                                     AuroraNativeGeometry* out);
