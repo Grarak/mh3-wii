@@ -52,15 +52,6 @@ struct Manager {
 };
 std::unique_ptr<Manager> manager;
 uint64_t generation = 0;
-void Trace(const char* stage, uint32_t index) {
-#ifdef MH3_DEVELOPMENT
-    if (std::getenv("MH3_NATIVE_ASSET_TRACE"))
-        std::fprintf(stderr, "MH3 native asset trace: pack %u %s\n", index, stage);
-#else
-    (void)stage;
-    (void)index;
-#endif
-}
 uint32_t Word(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
@@ -292,7 +283,6 @@ std::unique_ptr<Assets> OpenPack(Manager& m, const std::filesystem::path& path, 
     return next;
 }
 void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerGPU) {
-    Trace("insert metadata owner", index);
     std::unique_lock lock(m.lock);
     const auto [entry, inserted] = m.loaded.emplace(index, std::move(next));
     if (!inserted)
@@ -309,9 +299,7 @@ void Admit(Manager& m, uint32_t index, std::unique_ptr<Assets> next, bool eagerG
             RegisterNativeModelGPU(asset.pack, name.c_str(), asset.handle(), asset.generation);
             asset.gpuRegistered = true;
         }
-        Trace("register source catalog", index);
         RegisterNativeModelPack(&asset.pack, &asset.catalog, asset.handle(), asset.generation);
-        Trace("source catalog registered", index);
         asset.catalogRegistered = true;
     } catch (...) {
         Retire(asset);

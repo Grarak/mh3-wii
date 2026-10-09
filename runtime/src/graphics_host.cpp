@@ -49,16 +49,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_DEVELOPMENT)
+#ifdef MH3_DEVELOPMENT
 #include "gx/gx.hpp"
 #endif
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
-#include "gx/command_processor.hpp"
 #include "isa/ppc_isa_context.h"
-#endif
-#ifdef MH3_ENABLE_GX_DIAGNOSTICS
-#include <fstream>
 #endif
 #ifdef MH3_ENABLE_EFB_COPY_TRACE
 #include "efb_copy_trace.h"
@@ -123,9 +119,6 @@ void FlushHostEfbPokes() {
     efbDirty = false;
 }
 std::atomic<uint64_t> guestCopies{0}; // logical frames, counted on the game thread
-#ifdef MH3_ENABLE_GX_DIAGNOSTICS
-#include "gx_diagnostics.inc"
-#endif
 // Stats (MH3_STATS line, MH3_PROFILE frames= profile, GX counters) are built
 // only with MH3_DEVELOPMENT; MH3_STAT(...) compiles its argument away otherwise.
 #ifdef MH3_DEVELOPMENT
@@ -254,15 +247,6 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
         if (n > 0)
             VISetFrameBufferScale(n);
     }
-    // The draw log looks at one command per packet.
-    if (std::getenv("MH3_GX_DRAW_LOG"))
-        guestStream.coalesce = false;
-    if (std::getenv("MH3_GX_SOURCE_CAPTURE")) {
-        guestStream.traceDraw = aurora::gx::fifo::set_capture_display_list;
-    }
-#endif
-#ifdef MH3_ENABLE_GX_DIAGNOSTICS
-    guestStream.coalesce = false;
 #endif
 #ifdef MH3_DEVELOPMENT
     if (const uint64_t interval = ProfileOptions().Number("frames", 0)) {

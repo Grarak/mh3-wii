@@ -19,7 +19,6 @@ if(MH3_PROFILE_FRAME_POINTERS)
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-mframe-chain=aapcs+leaf>)
   endif()
 endif()
-option(MH3_ENABLE_GX_DIAGNOSTICS "Enable controlled renderer isolation and state logging" OFF)
 # Supported targets: arm32/arm64 Linux with GLES, and Vita with native GXM.
 # MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
 # configurable for development only; they are not a supported product.
@@ -188,10 +187,6 @@ if(TARGET aurora::core)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()
     target_sources(MH3 PRIVATE src/audio_output.cpp)
-  endif()
-  if(MH3_ENABLE_GX_DIAGNOSTICS)
-    set_property(SOURCE src/graphics_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_ENABLE_GX_DIAGNOSTICS=1)
-    target_link_libraries(MH3 PRIVATE absl::flat_hash_map)
   endif()
   if(MH3_ENABLE_EFB_COPY_TRACE)
     target_sources(MH3 PRIVATE src/efb_copy_trace.cpp)

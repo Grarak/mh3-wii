@@ -135,3 +135,8 @@ Removed on 2026-10-03 with the code behind them (git history keeps them):
   `MH3_STEP_COUNTER_RAW` (the step counter counting steps), `MH3_FIELD_WAIT`
   (the field jump's 30-step wait), `MH3_NATIVE_MODEL_DRAW=0` (the translated
   model draw walk; `MH3_PORT_CHECK=G3dDrawOpaXlu` still compares it).
+- Rendering and model traces: `MH3_MODEL_TRACE` (model submissions, with
+  `scripts/vita-model-submissions.py`), `MH3_MODEL_POSE_TRACE`,
+  `MH3_GX_DRAW_LOG`, `MH3_GX_SOURCE_CAPTURE`, `MH3_GX_DEBUG_CONTROL` (with the
+  `MH3_ENABLE_GX_DIAGNOSTICS` build option), `MH3_TRACE_EFB`,
+  `MH3_MISSING_TARGET_MEM1_DUMP`.

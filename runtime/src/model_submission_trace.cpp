@@ -1,6 +1,5 @@
-// Host GLES model submission validation and thin ABI adapter to native C.
-// Rendering still uses the existing dispatch while its material/pose inputs
-// are measured. The native walk replaces 80078b00, not the downstream GX path.
+// The model draw walk (G3dDrawOpaXlu, 80078b00): a thin ABI adapter to the
+// native C walk. It replaces 80078b00, not the downstream dispatch.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -66,74 +65,6 @@ uint32_t Address(const ModelView& view, size_t offset) {
     return view.base + uint32_t(offset);
 }
 
-#ifdef MH3_DEVELOPMENT
-struct TraceConfig {
-    FILE* file = nullptr;
-    uint32_t first = 0, last = UINT32_MAX;
-    uint64_t calls = 0;
-    TraceConfig() {
-        const char* setting = std::getenv("MH3_MODEL_TRACE");
-        if (!setting || !*setting)
-            return;
-        std::string path(setting);
-        const auto comma = path.find(',');
-        if (comma != std::string::npos) {
-            if (std::sscanf(path.c_str() + comma, ",%u,%u", &first, &last) != 2 || last < first)
-                throw std::runtime_error("MH3_MODEL_TRACE expects path,first,last");
-            path.resize(comma);
-        }
-        file = std::fopen(path.c_str(), "w");
-        if (!file)
-            throw std::runtime_error("Could not open MH3_MODEL_TRACE");
-        std::setvbuf(file, nullptr, _IOFBF, 64 * 1024);
-        std::fprintf(file, "# MH3 model submission trace v2; paced game frames; game-thread inputs\n");
-    }
-    ~TraceConfig() {
-        if (file)
-            std::fclose(file);
-    }
-};
-TraceConfig& Config() {
-    static TraceConfig config;
-    return config;
-}
-struct TraceScope {
-    TraceScope* previous;
-    ModelView view;
-    std::vector<mh3_model_draw_item> expected;
-    uint32_t frame, actual = 0, mismatches = 0;
-    uint64_t call;
-};
-TraceScope* activeTrace = nullptr; // game thread
-
-mh3_res_status Predict(void* opaque, const mh3_model_draw_item* item) {
-    auto& trace = *static_cast<TraceScope*>(opaque);
-    trace.expected.push_back(*item);
-    std::fprintf(Config().file, "decision\t%u\t%llu\t%llu\t%u\t%u\t%u\t%u\t%08x\t%08x\t%08x\t%x\t%s\t%s\t%s\n", trace.frame, static_cast<unsigned long long>(trace.call),
-                 static_cast<unsigned long long>(trace.expected.size() - 1), item->draw.material_id, item->draw.shape_id, item->draw.node_id, item->draw.priority,
-                 Address(trace.view, item->material.offset), Address(trace.view, item->shape.offset), Address(trace.view, item->node.offset), item->dispatch_flags, item->material.name,
-                 item->shape.name, item->node.name);
-    return MH3_RES_OK;
-}
-
-void TraceDispatch(const NativeModelDispatch& d) {
-    if (!activeTrace)
-        return;
-    auto& trace = *activeTrace;
-    const uint32_t material = Memory::Read32(d.material);
-    const uint32_t shape = Memory::Read32(d.shape);
-    bool matches = trace.actual < trace.expected.size();
-    if (matches) {
-        const auto& item = trace.expected[trace.actual];
-        matches = material == Address(trace.view, item.material.offset) && shape == Address(trace.view, item.shape.offset) && d.flags == item.dispatch_flags;
-    }
-    if (!matches)
-        ++trace.mismatches;
-    std::fprintf(Config().file, "dispatch\t%u\t%llu\t%u\t%08x\t%08x\t%x\t%08x\t%08x\t%08x\t%08x\t%u\n", trace.frame, static_cast<unsigned long long>(trace.call), trace.actual++, material, shape,
-                 d.flags, d.position, d.normal, d.bindings, d.descriptor, unsigned(matches));
-}
-#endif
-
 struct SubmitContext {
     CpuContext* cpu;
     const ModelView* view;
@@ -181,65 +112,13 @@ void RunDraw(CpuContext* cpu) {
     NativeDraw(cpu);
 }
 
-#ifdef MH3_DEVELOPMENT
-const char* ModelName(const ModelView& view) {
-    size_t at;
-    const size_t field = view.model.offset + (view.model.version == 11 ? 0x48 : 0x3c);
-    if (mh3_res_relative(view.model.container, view.model.offset, field, 1, &at) != MH3_RES_OK || !std::memchr(view.model.container.data + at, 0, view.model.container.size - at))
-        return "unknown";
-    return reinterpret_cast<const char*>(view.model.container.data + at);
-}
-const char* BytecodeName(const ModelView& view) {
-    size_t dictionary;
-    uint32_t count;
-    if (mh3_res_model_dictionary(&view.model, MH3_RES_BYTECODE, &dictionary, &count) != MH3_RES_OK)
-        return "unknown";
-    for (uint32_t i = 0; i < count; ++i) {
-        mh3_res_entry entry;
-        if (mh3_res_model_entry(&view.model, MH3_RES_BYTECODE, i, &entry) == MH3_RES_OK && entry.offset == view.bytecode)
-            return entry.name;
-    }
-    return "dynamic";
-}
-#endif
 } // namespace
 
 extern "C" void MH3_ModelDraw(CpuContext* cpu) {
-#ifdef MH3_DEVELOPMENT
-    auto& config = Config();
-    const uint32_t frame = config.file ? Memory::Read32(cpu->gpr[13] - 0x45b8) : 0;
-    if (config.file && frame >= config.first && frame <= config.last) {
-        TraceScope trace{activeTrace, View(cpu), {}, frame, 0, 0, ++config.calls};
-        const uint32_t options = cpu->gpr[6];
-        std::fprintf(config.file, "model\t%u\t%llu\t%08x\t%08x\t%08x\t%x\t%llu\t%s\t%s\n", frame, static_cast<unsigned long long>(trace.call), trace.view.resource,
-                     Address(trace.view, trace.view.bytecode), trace.view.replacement, options, static_cast<unsigned long long>(trace.view.visibility.size), ModelName(trace.view),
-                     BytecodeName(trace.view));
-        mh3_model_draw_stats stats;
-        const auto status = mh3_model_draw_walk(&trace.view.model, trace.view.bytecode, trace.view.visibility, options, Predict, &trace, &stats);
-        if (status != MH3_RES_OK)
-            throw std::runtime_error("Native model prediction failed: " + std::to_string(status));
-        activeTrace = &trace;
-        try {
-            RunDraw(cpu);
-        } catch (...) {
-            activeTrace = trace.previous;
-            throw;
-        }
-        activeTrace = trace.previous;
-        if (trace.actual != trace.expected.size())
-            ++trace.mismatches;
-        std::fprintf(config.file, "summary\t%u\t%llu\t%u\t%u\t%u\t%u\t%llu\t%u\t%u\n", frame, static_cast<unsigned long long>(trace.call), stats.records, stats.hidden_nodes, stats.hidden_shapes,
-                     stats.repeated_materials, static_cast<unsigned long long>(trace.expected.size()), trace.actual, trace.mismatches);
-        std::fflush(config.file);
-        return;
-    }
-#endif
     RunDraw(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80078B00, MH3_ModelDraw, "G3dDrawOpaXlu");
 
-void TraceNativeModelDispatch(const NativeModelDispatch& dispatch) {
-#ifdef MH3_DEVELOPMENT
-    TraceDispatch(dispatch);
-#endif
+void TraceNativeModelDispatch(const NativeModelDispatch&) {
+    // The model submission trace was removed; model_scope.cpp still calls this.
 }
