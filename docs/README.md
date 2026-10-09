@@ -8,6 +8,7 @@ Current:
 - [aurora-dependency.md](aurora-dependency.md): the Aurora copy and its GLES renderer.
 - [module-inventory.md](module-inventory.md): the disc's RSO modules and field layout.
 - [slow-path-access.md](slow-path-access.md): the memory-access survey behind the flat guest memory.
+- [variable-step.md](variable-step.md): what runs by the step's length and what still on whole ticks.
 
 Historical bring-up notes. These were written on the earlier macOS/Metal
 build; the mechanisms they describe mostly still exist, but paths, build

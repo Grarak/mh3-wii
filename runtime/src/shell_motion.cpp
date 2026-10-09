@@ -74,7 +74,6 @@ constexpr uint32_t kRateCalls[] = {
     0x801CC344u, 0x801CC368u, // 0x801CBD94: position += velocity
     0x801CF5D4u, 0x801CF614u, // 0x801CF124: position += velocity
     0x801D2674u, 0x801D2698u, // 0x801D2208: position += velocity
-    0x802ACFACu, 0x802AD1DCu, // 0x802AC4E8: +0x24 += +0x3C
     0x802C35C4u, 0x802C35D0u, // 0x802C3444: +0x178 += +0x1D4, +0x1D4 += +0x1E0
     0x802D3304u,              // 0x802D32E0: +0x1D4 += +0x1E0
     0x802D8578u,              // 0x802D853C camera demo actor: +0x178 += +0x470
@@ -83,7 +82,6 @@ constexpr uint32_t kRateCalls[] = {
     0x8031E48Cu,              // 0x8031DF1C: +0x14 += +0x20
     0x80328E2Cu,              // 0x80328BDC enemy: velocity += acceleration
     0x80369404u, 0x80369818u, 0x80369C54u, // 0x803692F0 desert object group: position += velocity
-    0x803BC9ECu,              // 0x803BC584 ambient creature: position += velocity
 };
 
 bool IsRateCall(uint32_t lr) {

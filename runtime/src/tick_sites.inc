@@ -190,8 +190,6 @@
 {0x803BC20Cu, TickSite::CountdownPastZero}, // ambient creature: countdown (+0x10) while leaving
 {0x803BC220u, TickSite::CountdownPastZero}, // ambient creature: countdown (s16 +0xE), fires below 0
 {0x803BC338u, TickSite::CountdownPastZero}, // ambient creature: countdown (+0x10), fires below 0
-{0x803BC85Cu, TickSite::Countdown},          // ambient creature (803BC584): countdown (+0x10), fires at 0
-{0x803BC8C0u, TickSite::Countdown},          // ambient creature: countdown (+0x10)
 {0x803C37D4u, TickSite::Advance, 255},      // online marker effect (803C3574): spin angle (+0x28)
 {0x803C37E0u, TickSite::Advance, 512},      // online marker effect: bob phase (u16)
 {0x803C3A28u, TickSite::Advance, 255},

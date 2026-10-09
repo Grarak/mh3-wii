@@ -14,13 +14,16 @@
 // All of it ran once per step, so at short steps the creature bobbed and
 // circled faster (the height by 2 units a step). The port moves the phase by
 // the step's share of the rate and the height by speed * scale, and rolls the
-// per-tick chances once per whole tick of the step. At the stock step it is
+// per-tick chances once per whole tick of the step. At a bound the phase rests
+// until the next whole tick, as the Wii's clamp does. At the stock step it is
 // the original.
 #include "abi_bridge.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
+
+#include <cmath>
 
 namespace {
 
@@ -45,6 +48,17 @@ enum : uint32_t {
 
 constexpr int32_t kSdaTargetSource = -22408; // r13: u32 copied to +0x20
 
+// The phase's way back from a bound. The Wii clamps it to the bound on the
+// tick that crosses it, so it rests there until the next whole tick and only
+// then turns. Of the time since the crossing (over / perTick ticks), the part
+// after that tick boundary moves it back; at the stock step there is none.
+uint32_t Back(uint32_t over, uint32_t perTick) {
+    if (!perTick) return 0;
+    const double past = double(over) / perTick, fraction = GameStep::Fraction();
+    if (past < fraction) return 0;
+    return uint32_t(perTick * (fraction + std::floor(past - fraction)));
+}
+
 enum : uint32_t {
     Random = 0x800CEF20,  // ran_suu(long)
     SinDegrees = 0x80059210,
@@ -61,19 +75,22 @@ static void AmbientHover(CpuContext* ctx) {
     if (state != 12 && state != 16) return;
     auto random = [&] { return call(Random, {0}) & 0xFFFF; };
 
-    const int32_t rate = GameStep::Share(Memory::Read16(w + kPhaseRate));
+    const uint32_t perTick = Memory::Read16(w + kPhaseRate);
+    const int32_t rate = GameStep::Share(int32_t(perTick));
     uint32_t phase = Memory::Read32(w + kPhase);
     if (!Memory::Read8(w + kRising)) {
+        const uint32_t over = uint32_t(rate) - phase; // past 0, when it wraps
         phase = (phase - rate) & 0xFFFF;
         if (phase >= 0x8000) {
-            phase = 0;
+            phase = Back(over, perTick);
             Memory::Write8(w + kRising, 1);
             if (random() & 1) Memory::WriteFloat32(w + kHeightSpeed, 2.0f);
         }
     } else {
+        const uint32_t over = phase + uint32_t(rate) - 0x8000; // past 0x8000, when it gets there
         phase = (phase + rate) & 0xFFFF;
         if (phase >= 0x8000) {
-            phase = 0x8000;
+            phase = 0x8000 - Back(over, perTick);
             Memory::Write8(w + kRising, 0);
             if (random() & 1) Memory::WriteFloat32(w + kHeightSpeed, -2.0f);
         }

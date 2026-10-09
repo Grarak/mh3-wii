@@ -949,3 +949,8 @@
 80135558 EnemyAddTurnedVelocity
 80135064 EnemyGlide
 803822d8 CreatureFade
+803bc584 AmbientFlutter
+802ac4e8 YureChain
+802ad830 YureNodeAngles
+802ad958 YureNodeHeading
+80051324 ClampReach
