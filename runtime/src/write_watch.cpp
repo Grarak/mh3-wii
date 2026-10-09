@@ -1,7 +1,7 @@
 // Debug-only (MH3_WRITE_WATCH build): find the guest code that writes an
-// address range. MH3_WRITE_WATCH=start,length (hex) routes every guest store
-// into the range through the slow write path, which calls RecordWatchedWrite
-// with the host return address: a translated func_XXXXXXXX (the build links
+// address range. MH3_WRITE_WATCH=start,length (hex) makes every inline guest
+// store into the range call NoteWatchedWrite, which records the host return
+// address: a translated func_XXXXXXXX (the build links
 // with -rdynamic so dladdr can name it). Every 5 s (MH3_WRITE_WATCH_MS) the
 // writers are listed per (function, guest lr, offset in the range), with a
 // count and the last value.
@@ -112,6 +112,11 @@ void RecordWatchedWrite(uint32_t address, uint32_t size, uint64_t value, const v
         Report();
         reporting = false;
     }
+}
+
+void NoteWatchedWrite(uint32_t address, uint32_t size, uint64_t value) {
+    // Out of line, so the return address is the translated store's function.
+    RecordWatchedWrite(address, size, value, __builtin_return_address(0));
 }
 
 } // namespace MemoryInline

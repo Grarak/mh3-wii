@@ -227,7 +227,7 @@ public class PpcRuntimeHelperTests
         harness.AppendLine("    return 0;");
         harness.AppendLine("}");
         harness.AppendLine("int main() {");
-        harness.AppendLine("    Memory::Init(Memory::Config::WiiDefaults());");
+        harness.AppendLine("    Memory::Init(Memory::kMem1Size);");
         harness.AppendLine("    CpuContext ctx{};");
         harness.AppendLine("    ctx.gpr[1] = 0x817FF000u;");
         harness.AppendLine("    ctx.gqr[0] = 0;");
@@ -352,17 +352,12 @@ public class PpcRuntimeHelperTests
         harness.AppendLine("        PPC_FPR pair{}; pair.paired.ps0 = FromBits(a); pair.paired.ps1 = FromBits(b);");
         harness.AppendLine("        if (PpcQuantizePairPsqU8Scale61PackedInline(pair.d) != Reference(pair.d)) return 2;");
         harness.AppendLine("    }");
-        harness.AppendLine("    Memory::Init(Memory::Config::WiiDefaults()); CpuContext ctx{}; CpuContextScope scope(&ctx);");
+        harness.AppendLine("    Memory::Init(Memory::kMem1Size); CpuContext ctx{}; CpuContextScope scope(&ctx);");
         harness.AppendLine("    constexpr uint32_t base = 0x80010000u; PPC_FPR pair{}; pair.paired.ps0 = 2039.0f; pair.paired.ps1 = 15.9f;");
         harness.AppendLine("    const uint16_t expected = Reference(pair.d);");
         harness.AppendLine("    PPC_PsqStKnownInline<0u, 6u, 0x3D043D04u>(&ctx, base, pair.d);");
         harness.AppendLine("    if (Memory::Read16(base) != expected) return 3;");
-        harness.AppendLine("    const uint32_t page = base >> MemoryInline::kPageShift;");
-        harness.AppendLine("    const uintptr_t savedBias = MemoryInline::g_fullWritablePageBias[page];");
-        harness.AppendLine("    if (savedBias == 0) return 4;");
-        harness.AppendLine("    MemoryInline::g_fullWritablePageBias[page] = 0;");
-        harness.AppendLine("    PPC_PsqStKnownInline<0u, 6u, 0x3D043D04u>(&ctx, base + 2, pair.d);");
-        harness.AppendLine("    MemoryInline::g_fullWritablePageBias[page] = savedBias;");
+        harness.AppendLine("    MemoryHw::PPC_PsqStKnownInline<0u, 6u, 0x3D043D04u>(&ctx, base + 2, pair.d);");
         harness.AppendLine("    if (Memory::Read16(base + 2) != expected) return 5;");
         harness.AppendLine("    uint8_t* range = MemoryInline::ResolveRangeHost(base, 0, 64, false, true);");
         harness.AppendLine("    if (!range) return 6;");
@@ -371,7 +366,7 @@ public class PpcRuntimeHelperTests
         harness.AppendLine("    PPC_PsqStKnownStackInline<0u, 6u, 0x3D043D04u>(&ctx, base + 6, pair.d);");
         harness.AppendLine("    if (Memory::Read16(base + 6) != expected) return 8;");
         harness.AppendLine("    PPC_FPR exceptional{}; exceptional.paired.ps0 = std::numeric_limits<float>::quiet_NaN(); exceptional.paired.ps1 = std::numeric_limits<float>::infinity();");
-        harness.AppendLine("    PPC_PsqStKnownInline<0u, 6u, 0x3D043D04u>(&ctx, 0xCC008000u, exceptional.d);");
+        harness.AppendLine("    MemoryHw::PPC_PsqStKnownInline<0u, 6u, 0x3D043D04u>(&ctx, 0xCC008000u, exceptional.d);");
         harness.AppendLine("    if (g_fifo16Count != 1 || g_fifo16 != Reference(exceptional.d)) return 9;");
         harness.AppendLine("    std::cout << \"ok\"; return 0;");
         harness.AppendLine("}");

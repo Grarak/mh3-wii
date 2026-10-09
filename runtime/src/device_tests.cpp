@@ -97,22 +97,19 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         if (!ieee) throw std::runtime_error("Single rounding without FPSCR[NI] flushed");
     }
     {
-        // Exercise the published scalar-read biases across pages and aliases,
-        // and ensure they cannot bypass the end of an allocation or MMIO.
+        // Every alias of a RAM byte is the same shared-memory byte, including
+        // accesses straddling a host page.
         for (uint32_t base : {0u, 0x10000000u}) {
             const uint32_t address = base + 0xFFFFD;
             Memory::Write64(address, 0x0123456789ABCDEFull);
-            for (uint32_t alias : {0u, 0x80000000u, 0xC0000000u}) {
-                uint64_t value = 0;
-                if (!MemoryInline::TryReadGuestScalar(address | alias, value) ||
-                    value != 0x0123456789ABCDEFull)
-                    throw std::runtime_error("Fast RAM read boundary/alias failed");
+            for (uint32_t alias : {0x80000000u, 0xC0000000u}) {
+                if (MemoryInline::FlatLoad<uint64_t>(address | alias) != 0x0123456789ABCDEFull ||
+                    Memory::Read64(address | alias) != 0x0123456789ABCDEFull)
+                    throw std::runtime_error("Flat RAM alias/page straddle failed");
             }
         }
         for (uint32_t address : {0x817FFFFCu, 0x93FFFFFCu, 0x48000000u, 0xC8000000u, 0xCC008000u}) {
-            uint64_t value = 0;
-            if (MemoryInline::TryReadGuestScalar(address, value))
-                throw std::runtime_error("Fast read accepted terminal RAM or MMIO");
+            if (Memory::Contains(address, 8)) throw std::runtime_error("Terminal RAM or MMIO reported as mapped");
         }
         bool rejected = false;
         try { Memory::Read64(0x817FFFFC); } catch (const Memory::AccessViolation&) { rejected = true; }
@@ -130,21 +127,26 @@ void RunDeviceSelfTests(CpuContext* cpu) {
         RecompMod::RegisterExecutableRange(start, end, "duplicate registration");
         RecompMod::RegisterExecutableRange(end, end + 4, "shared-page neighbor");
         const auto rejectsWrite = [](uint32_t address) {
-            try { Memory::Write32(address, 1); } catch (const std::runtime_error&) { return true; }
+            try { RecompMod::CheckExecutableWrite(address, 4, 0x5A5A5A5A); } catch (const std::runtime_error&) { return true; }
             return false;
         };
         for (auto alias : {0u, 0x80000000u, 0xC0000000u}) {
-            const auto address = ((end - 4) & 0x3FFFFFFF) | alias;
-            if (!RecompMod::ExecutableWriteGuardMayHit(address, 4) || !rejectsWrite(address))
-                throw std::runtime_error("Executable final-page/alias protection failed");
+            if (!rejectsWrite(((end - 4) & 0x3FFFFFFF) | alias))
+                throw std::runtime_error("Executable final-word/alias protection failed");
         }
-        Memory::Write32(start, 0); // Identical loader writes remain valid.
+        RecompMod::CheckExecutableWrite(start, 4, 0); // Identical loader writes remain valid.
+        RecompMod::VerifyExecutableRanges();
+        Memory::Write32(start + 4, 1);
+        bool detected = false;
+        try { RecompMod::VerifyExecutableRanges(); } catch (const std::runtime_error&) { detected = true; }
+        if (!detected) throw std::runtime_error("Code checksum missed a store to translated code");
         RecompMod::UnregisterExecutableRange(start, end);
         Memory::Write32(start, 1);
         Memory::Write32(end - 4, 1);
         if (!rejectsWrite(end)) throw std::runtime_error("Unlink removed neighboring code protection");
         RecompMod::RegisterExecutableRange(start, end, "relinked image");
         if (!rejectsWrite(start + 4)) throw std::runtime_error("Reload did not restore code protection");
+        RecompMod::VerifyExecutableRanges(); // A relinked image takes a fresh checksum.
         RecompMod::UnregisterExecutableRange(start, end);
         RecompMod::UnregisterExecutableRange(end, end + 4);
         bool invoked = false;

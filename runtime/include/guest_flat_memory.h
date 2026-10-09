@@ -1,134 +1,67 @@
 #pragma once
 
-// Flat 4 GiB guest address space: a guest access is just `*(T*)(kFlatGuestBase + addr)` plus a
-// byte swap, no page-table load/branch. Two views alias the same physical memory: the GUEST
-// view at kFlatGuestBase has page protections as the interception mechanism (unmapped/MMIO/
-// executable/deferred-read pages are uncommitted or protected), while the HOST view is a plain
-// alias native runtime code (image loading, DVD reads, HLE, GX) writes through unchecked.
+// Flat guest address space. Every guest address is a host address: a guest
+// access is `*(T*)(kGuestBase + addr)` plus a byte swap, with no page table,
+// no bias lookup and no per-access check. At startup the whole window is
+// reserved PROT_NONE and guest RAM is mapped into it from one shared-memory
+// object, once per alias:
+//
+//   MEM1   24 MiB  0x80000000 (cached)  0xC0000000 (uncached)  0x00000000 (physical, 64-bit only)
+//   MEM2   64 MiB  0x90000000           0xD0000000             0x10000000 (physical, 64-bit only)
+//   locked cache 16 KiB at 0xE0000000
+//
+// Hardware (MMIO at 0xCC000000..0xCDFFFFFF, the EFB at 0xC8000000) and every
+// other address stay PROT_NONE. A translated function that touches hardware
+// is listed in runtime/src/hardware_access.inc and uses MemoryHw instead; any
+// other access to an unmapped address faults, and ReportGuestFault names the
+// guest address and the translated function doing it.
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 namespace GuestFlat {
 
-// Fixed base so the emitted access is `[reg + imm64-in-register]` with no load
-// of a global.
-inline constexpr uint64_t kGuestSpaceSize = 0x1'0000'0000ull;
-inline constexpr size_t kGuestPageSize = 0x1000;
 #if defined(__x86_64__)
-// 16 TiB: clear of the Windows ASan shadow (32 TiB) and of the usual image/heap
-// placement.
-inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'1000'0000'0000ull;
-#elif defined(__aarch64__) && defined(__APPLE__)
-// Keep this well above the low address ranges that Darwin's ASLR may use for
-// a PIE executable and its shared cache. Apple Silicon's user VA is wider
-// than Linux's 39-bit minimum, so this 512 GiB region is available while the
-// Linux AArch64 target retains its 64 GiB placement below.
-inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'0080'0000'0000ull;
+inline constexpr uintptr_t kGuestBase = 0x0000'1000'0000'0000ull;
 #elif defined(__aarch64__)
-// 16 TiB (this arch's x86_64 sibling value) is unreachable on any AArch64
-// kernel configured for 39-bit virtual addresses (512 GiB ceiling) - common on
-// older/embedded targets (e.g. this project's own tested Jetson/L4T board, kernel
-// 4.9). There mmap() silently ignores a hint above the ceiling and hands back an
-// address near the top of the real range instead, which this module's caller
-// then rejects as "already occupied". 64 GiB is reachable on every AArch64 VA
-// width in real use (39-bit minimum and up) and was confirmed via direct mmap
-// probing to sit far below where the PIE image, heap, shared libraries and
-// stack actually land (all clustered above ~340 GiB on a 39-bit/512 GiB system).
-inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'0010'0000'0000ull;
+// Reachable on every AArch64 VA width in use (39-bit and up), far below where
+// the PIE image, heap, libraries and stack land.
+inline constexpr uintptr_t kGuestBase = 0x0000'0010'0000'0000ull;
 #elif defined(__arm__)
-// A 32-bit process cannot reserve a 4 GiB guest window. Every guest access uses the checked
-// page-table path instead (RequiresCheckedAccess() is constant true below), so this base is
-// never dereferenced.
-#define MKW_GUEST_FLAT_UNAVAILABLE 1
-inline constexpr uintptr_t kFixedFlatGuestBase = 0;
+// A 32-bit process can't reserve 4 GiB, so the window wraps: the host address
+// is (kGuestBase + addr) mod 2^32. Guest 0x80000000..0xE0004000 lands at host
+// 0x10000000..0x70004000, above the executable and below the mmap area.
+// Physical guest addresses (0x0.../0x1...) fall outside the window; only host
+// code uses them, through Memory::GetPointer.
+#define MH3_GUEST_WINDOW_WRAPS 1
+inline constexpr uintptr_t kGuestBase = 0x9000'0000u;
 #else
-#error "guest_flat_memory.h has no fixed flat guest base chosen for this architecture"
+#error "guest_flat_memory.h has no guest base for this architecture"
 #endif
 
-#define MKW_FLAT_GUEST_BASE (reinterpret_cast<uint8_t*>(GuestFlat::kFixedFlatGuestBase))
+// The host address of a guest address.
+inline uint8_t* Host(uint32_t guestAddress) noexcept {
+    return reinterpret_cast<uint8_t*>(kGuestBase + guestAddress);
+}
 
-enum class Backing {
-    Owned,
-    Mem1,
-    Mem2,
-};
+// Reserves the window and maps MEM1, MEM2 and the locked cache into it from a
+// fresh shared-memory object (zero filled), then installs the fault reporter.
+// Throws std::runtime_error when the window is already occupied. Calling it
+// again remaps fresh zeroed memory.
+void Initialize();
 
-struct RegionRequest {
-    uint32_t base = 0;
-    uint64_t size = 0;
-    Backing backing = Backing::Owned;
-};
+// True for the guest addresses of the MMIO blocks and the EFB: the ones only
+// MemoryHw and the host API may touch.
+constexpr bool IsHardwareAddress(uint32_t address) noexcept {
+    const uint32_t top = address >> 24;
+    return (top & 0xFE) == 0xCC || top == 0xC8;
+}
 
-struct FaultCounters {
-    uint32_t mmio = 0;      // MMIO access that reached the handler
-    uint32_t efb = 0;       // deferred (EFB) read materialized from a trap
-    uint32_t xguard = 0;    // executable-page write trap
-    uint32_t unmapped = 0;  // guest touches that landed outside every mapped region
-    uint32_t unmappedRegions = 0;  // distinct 64 KiB blocks committed on demand
-};
+// The guest address range [address, address + length) lies wholly in mapped
+// memory (RAM through any alias, or the locked cache).
+bool IsMapped(uint32_t address, size_t length) noexcept;
 
-// True once the reservation exists and translated code may use the flat path.
-bool IsActive();
-
-// True when a host VM page covers more than one 4 KiB Wii page. In that
-// configuration, guest-view page protection cannot safely represent per-Wii-
-// page MMIO, deferred-read, or executable-write state, so general translated
-// accesses must use the checked Memory::* path.
-// Windows user mode and x86-64 always use a 4 KiB base page, so those builds
-// fold this to a compile-time false: it appears in every flat access and must
-// not become a hot-path load. Only AArch64, where the page size is a kernel
-// configuration (4/16/64 KiB), has to probe it at runtime.
-#if defined(_WIN32) || defined(__x86_64__)
-#define MKW_GUEST_FLAT_FIXED_PAGE_SIZE 1
-#endif
-
-#if defined(MKW_GUEST_FLAT_UNAVAILABLE)
-inline constexpr bool RequiresCheckedAccess() noexcept { return true; }
-#elif defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
-inline constexpr bool RequiresCheckedAccess() noexcept { return false; }
-#else
-extern bool g_requiresCheckedAccess;
-inline bool RequiresCheckedAccess() noexcept { return g_requiresCheckedAccess; }
-#endif
-
-// Reserves the 4 GiB space (once per process) and maps every requested region
-// into both views. Throws std::runtime_error with a precise diagnosis when the
-// reservation, the section objects or a view cannot be created - a silent
-// fallback would let translated code read from an unmapped constant base.
-void Initialize(const std::vector<RegionRequest>& regions);
-
-// Host-view pointer for a mapped guest address, or nullptr when the address is
-// outside every mapped region. This is what the page table and
-// Memory::GetPointer hand out.
-uint8_t* HostPointer(uint32_t guestAddress);
-
-// Deferred (EFB) reads: the covered guest pages are made PAGE_NOACCESS in the
-// guest view so a flat read traps and materializes the copy.
-void ProtectDeferredRange(uint32_t address, size_t length);
-void UnprotectDeferredRange(uint32_t address, size_t length);
-
-// Executable-write guard: pages fully covered by a registered executable range
-// become PAGE_READONLY in the guest view. Registration order does not matter -
-// ranges registered before the mapping exists are re-applied by Initialize.
-void RegisterExecutableRange(uint32_t start, uint32_t end);
-
-FaultCounters Counters();
-
-// End-of-run report for the counters above. An unmapped touch is a wild guest
-// pointer whose block this module silently committed so execution could go on,
-// which makes it invisible unless it is repeated at shutdown; a nonzero count
-// is therefore reported as a warning. Idempotent, so every exit path (normal
-// return, caught exception, abort handler) may call it.
-void LogFaultSummary() noexcept;
-
-// Returns true when the access violation was a guest-space fault this module
-// resolved; the caller must then resume execution. `faultAddress` is the raw
-// host pointer the access violation trapped on (Windows: ExceptionInformation[1];
-// POSIX: siginfo_t::si_addr) and `isWrite` is whether it was a write access
-// (Windows: ExceptionInformation[0] != 0; POSIX: derived from the ucontext).
-// The platform-specific handler that calls this is expected to have already
-// done that extraction - this function only ever works with the parsed pair.
-bool HandleAccessViolation(void* faultAddress, bool isWrite) noexcept;
+// Host pointer for a mapped guest address, physical aliases included; nullptr
+// when [address, address + length) is not wholly mapped.
+uint8_t* HostPointer(uint32_t address, size_t length) noexcept;
 
 } // namespace GuestFlat

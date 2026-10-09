@@ -388,7 +388,7 @@ public class MtxIntegrationTests
 
         harness.AppendLine("int main() {");
         harness.AppendLine("    std::puts(\"mtx harness start\");");
-        harness.AppendLine("    Memory::Init(0x02000000);");
+        harness.AppendLine("    Memory::Init(Memory::kMem1Size);");
         harness.AppendLine("    InitializeDataSections();");
         harness.AppendLine("    CpuContext g_cpu{};");
         harness.AppendLine("    g_cpu.gpr[1] = 0x81700000;");

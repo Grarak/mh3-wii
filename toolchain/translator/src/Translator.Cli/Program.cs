@@ -66,6 +66,10 @@ if (project?.Translation.TickSitesPath is { } tickSitesPath)
 {
     Translator.Core.Lifting.GuestLoadHooks.TickSites = Translator.Core.Lifting.GuestLoadHooks.Load(tickSitesPath);
 }
+if (project?.Translation.HardwareAccessPath is { } hardwareAccessPath)
+{
+    Translator.Core.CodeGen.GuestHardwareAccess.Current = Translator.Core.CodeGen.GuestHardwareAccess.Load(hardwareAccessPath);
+}
 var root = project?.WorkspaceRoot ?? Directory.GetCurrentDirectory();
 var preferCachedInputs = HasFlag(tail, "--prefer-cached-inputs");
 var dolFile = new Lazy<DolFile>(LoadDol);

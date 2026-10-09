@@ -4,6 +4,7 @@
 #include "audio_dma.h"
 #include "os_alarm.h"
 #include "controller_host.h"
+#include "recomp_mod_loader.h"
 #include <chrono>
 #include <thread>
 #include <cstdio>
@@ -48,6 +49,10 @@ void ServiceVideoRetrace(CpuContext* cpu) {
     const uint32_t after = Memory::Read32(saved.gpr[13] - 0x379C);
     if (after != before + 1) throw std::runtime_error("VI handler did not deliver a retrace");
     if (after <= 3) std::fprintf(stderr, "MH3 VI retrace delivered: %u\n", after);
+#ifdef MH3_DEVELOPMENT
+    // Every five seconds: translated code must still match the guest image.
+    if (after % 300 == 0) RecompMod::VerifyExecutableRanges();
+#endif
 }
 extern "C" void MH3_VIWaitForRetrace(CpuContext* cpu) {
     std::this_thread::sleep_until(nextRetrace);

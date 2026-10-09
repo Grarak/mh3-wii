@@ -28,6 +28,8 @@ translation:
   load_hooks_path: runtime/src/step_counter_sites.inc
   # Step counters and countdowns advanced by the ticks of each step (tick_sites.cpp).
   tick_sites_path: runtime/src/tick_sites.inc
+  # Functions whose accesses may reach hardware; all others use flat guest memory.
+  hardware_access_path: runtime/src/hardware_access.inc
 
 # Mario Kart's address-specific native registrations must not be used for MH3.
 runtime:

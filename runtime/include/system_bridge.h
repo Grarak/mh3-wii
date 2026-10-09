@@ -73,10 +73,6 @@ class SystemBridge {
 public:
     static void Initialize();
 
-private:
-    static const Memory::RegionConfig* FindRegionConfig(const Memory::Config& config, std::string_view name);
-    static void SeedLowMemDefaults(const Memory::Config& config);
-    
 public:
     static void DumpCpuState(const struct CpuContext* cpu);
     static void DumpCpuState(std::ostream& os, const struct CpuContext* cpu);

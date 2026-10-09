@@ -150,14 +150,9 @@ internal static class TranslatorCppTestHarness
             }
 
             namespace RecompMod {
-            std::atomic<bool> g_executableWriteGuardEnabled{false};
-            std::atomic<uint8_t> g_executableWriteGuardPages[kExecutableWriteGuardPageCount]{};
-            std::atomic<uint8_t> g_executableWriteGuardCoarsePages[kExecutableWriteGuardCoarsePageCount]{};
-            std::atomic<uint8_t> g_executableWriteGuardMidPages[kExecutableWriteGuardMidPageCount]{};
             ScopedTranslatedExecutionAddress::ScopedTranslatedExecutionAddress(uint32_t) noexcept {}
             ScopedTranslatedExecutionAddress::~ScopedTranslatedExecutionAddress() noexcept {}
             uint32_t CurrentTranslatedExecutionAddress() noexcept { return 0; }
-            bool HandleExecutableWrite(uint32_t, size_t, uint64_t) { return false; }
             void CheckExecutableWrite(uint32_t, size_t, uint64_t) {}
             }
 

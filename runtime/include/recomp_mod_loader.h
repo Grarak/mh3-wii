@@ -48,18 +48,6 @@ private:
     uint32_t previous_ = 0;
 };
 
-inline constexpr uint32_t kExecutableWriteGuardPageShift = 12;
-inline constexpr uint32_t kExecutableWriteGuardPageCount = 1u << (32 - kExecutableWriteGuardPageShift);
-inline constexpr uint32_t kExecutableWriteGuardCoarsePageShift = 20;
-inline constexpr uint32_t kExecutableWriteGuardCoarsePageCount = 1u << (32 - kExecutableWriteGuardCoarsePageShift);
-inline constexpr uint32_t kExecutableWriteGuardMidPageShift = 16;
-inline constexpr uint32_t kExecutableWriteGuardMidPageCount = 1u << (32 - kExecutableWriteGuardMidPageShift);
-
-extern std::atomic<bool> g_executableWriteGuardEnabled;
-extern std::atomic<uint8_t> g_executableWriteGuardPages[kExecutableWriteGuardPageCount];
-extern std::atomic<uint8_t> g_executableWriteGuardCoarsePages[kExecutableWriteGuardCoarsePageCount];
-extern std::atomic<uint8_t> g_executableWriteGuardMidPages[kExecutableWriteGuardMidPageCount];
-
 // Two initializer phases, both emitted by the translator's mod data-patch
 // writer. (A third, plain RegisterInitializer/RunInitializers pair existed with
 // no registrant on either side and was removed.)
@@ -97,58 +85,12 @@ void UnregisterExecutableRange(uint32_t start, uint32_t end);
 // Fixed-address RSO code is callable only while its verified image is linked.
 void CheckRsoExecution(uint32_t address);
 bool TryDispatchRsoOverlay(uint32_t address, CpuContext* cpu);
-bool HandleExecutableWrite(uint32_t address, size_t length, uint64_t value);
+// Host services that write guest memory (DMA, report copies) check here that
+// they leave translated code untouched.
 void CheckExecutableWrite(uint32_t address, size_t length, uint64_t value);
-
-inline bool ExecutableWriteGuardMayHit(uint32_t address, size_t length) noexcept {
-    if (length == 0 || !g_executableWriteGuardEnabled.load(std::memory_order_relaxed)) {
-        return false;
-    }
-
-    const uint64_t endExclusive = static_cast<uint64_t>(address) + length;
-    const uint32_t firstCoarsePage = address >> kExecutableWriteGuardCoarsePageShift;
-    const uint64_t lastCoarsePage64 = (endExclusive - 1) >> kExecutableWriteGuardCoarsePageShift;
-    const uint32_t lastCoarsePage = lastCoarsePage64 >= kExecutableWriteGuardCoarsePageCount
-        ? kExecutableWriteGuardCoarsePageCount - 1
-        : static_cast<uint32_t>(lastCoarsePage64);
-    bool coarseHit = false;
-    for (uint32_t page = firstCoarsePage; page <= lastCoarsePage; ++page) {
-        if (g_executableWriteGuardCoarsePages[page].load(std::memory_order_relaxed) != 0) {
-            coarseHit = true;
-            break;
-        }
-    }
-    if (!coarseHit) {
-        return false;
-    }
-
-    const uint32_t firstMidPage = address >> kExecutableWriteGuardMidPageShift;
-    const uint64_t lastMidPage64 = (endExclusive - 1) >> kExecutableWriteGuardMidPageShift;
-    const uint32_t lastMidPage = lastMidPage64 >= kExecutableWriteGuardMidPageCount
-        ? kExecutableWriteGuardMidPageCount - 1
-        : static_cast<uint32_t>(lastMidPage64);
-    bool midHit = false;
-    for (uint32_t page = firstMidPage; page <= lastMidPage; ++page) {
-        if (g_executableWriteGuardMidPages[page].load(std::memory_order_relaxed) != 0) {
-            midHit = true;
-            break;
-        }
-    }
-    if (!midHit) {
-        return false;
-    }
-
-    const uint32_t firstPage = address >> kExecutableWriteGuardPageShift;
-    const uint64_t lastPage64 = (endExclusive - 1) >> kExecutableWriteGuardPageShift;
-    const uint32_t lastPage = lastPage64 >= kExecutableWriteGuardPageCount
-        ? kExecutableWriteGuardPageCount - 1
-        : static_cast<uint32_t>(lastPage64);
-    for (uint32_t page = firstPage; page <= lastPage; ++page) {
-        if (g_executableWriteGuardPages[page].load(std::memory_order_relaxed) != 0) {
-            return true;
-        }
-    }
-    return false;
-}
+// Development builds: guest stores go straight to memory, so a store that
+// changes translated code is caught afterwards by comparing each registered
+// range against the checksum taken on its first verification.
+void VerifyExecutableRanges();
 
 } // namespace RecompMod

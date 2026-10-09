@@ -10,8 +10,6 @@
 
 class Memory {
 public:
-    using DeferredReadCallback = bool (*)(void* user);
-
     static constexpr size_t kMem1Size = 24u * 1024u * 1024u;
     static constexpr size_t kMem2Size = 64u * 1024u * 1024u;
     static constexpr uint32_t kMem1PhysicalBase = 0x00000000u;
@@ -27,17 +25,6 @@ public:
     static constexpr uint32_t kMem2UncachedEnd =
         kMem2UncachedBase + static_cast<uint32_t>(kMem2Size);
 
-    struct RegionConfig {
-        std::string name;
-        uint32_t baseAddress = 0;
-        size_t sizeBytes = 0;
-    };
-
-    struct Config {
-        std::vector<RegionConfig> regions;
-        static Config WiiDefaults();
-    };
-
     class AccessViolation : public std::runtime_error {
     public:
         AccessViolation(uint32_t address, size_t length, std::string_view reason);
@@ -52,16 +39,9 @@ public:
         std::string reason_;
     };
 
-    static void Init(const Config& config);
-    // Single flat MEM1 region. Not used by the shipped runtime, but the
-    // translator integration-test harnesses emit calls to it.
+    // Maps fresh, zeroed guest memory (guest_flat_memory.h). MEM1 is always
+    // 24 MiB; the size is checked, not configurable.
     static void Init(size_t mem1Size);
-    static void Reset();
-    // Executable ranges are normally registered during startup. Rebuild the
-    // writable fast-path classification after each registration so a page
-    // previously classified as ordinary data cannot retain a stale direct
-    // write bias.
-    static void RefreshWritableFastPathsForExecutableRanges();
 
     static uint8_t Read8(uint32_t addr);
     static uint16_t Read16(uint32_t addr);
@@ -78,8 +58,7 @@ public:
 
     // Exception-safe scalar access for HLE code. These keep Read32/Write32's
     // full mapping behavior and only convert an unmapped address into a failure
-    // result; they are deliberately not MemoryInline::Try*GuestScalar, which is
-    // the translated-code fast path over the page table.
+    // result.
     static bool TryRead32(uint32_t addr, uint32_t& value) noexcept {
         try {
             value = Read32(addr);
@@ -101,15 +80,6 @@ public:
     static uint8_t* GetPointer(uint32_t addr);
     static uint8_t* GetPointer(uint32_t addr, size_t length);
     static bool Contains(uint32_t addr, size_t length = 1);
-
-    static uint64_t RegisterDeferredRead(uint32_t addr, size_t length,
-                                         DeferredReadCallback callback, void* user);
-    static void ClearDeferredReads();
-
-    // sizeBytes reports the storage actually allocated, which is not always the
-    // configured size (aliased MEM1/MEM2 windows are clamped to what is behind
-    // them). Used by the crash dump.
-    static std::vector<RegionConfig> DescribeRegions();
 };
 
 // The translated-code access layer is kept separately from the public memory API.

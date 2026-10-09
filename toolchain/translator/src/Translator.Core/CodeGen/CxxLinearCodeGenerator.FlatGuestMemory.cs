@@ -1,9 +1,10 @@
 ﻿namespace Translator.Core.CodeGen;
 
 /// <summary>
-/// Selects the runtime helper family for guest memory accesses. Checked helpers resolve through the 1 MiB page
-/// table each access; flat helpers use the 4 GiB guest reservation, so an access is just a byte swap with
-/// MMIO/EFB/executable-write interception moved to host page protections. Both families behave identically.
+/// Selects the runtime helper for guest memory accesses. Guest RAM is mapped flat into one host reservation, so
+/// an access is a byte swap at <c>kGuestBase + address</c>; hardware is left unmapped. Functions listed in
+/// <c>translation.hardware_access_path</c> have their helpers requalified to <c>MemoryHw</c>
+/// (<see cref="GuestHardwareAccess"/>), where the <c>FlatWrite*</c>/<c>FlatWriteRam*</c> split still matters.
 /// </summary>
 public sealed partial class CxxLinearCodeGenerator
 {
@@ -61,9 +62,8 @@ public sealed partial class CxxLinearCodeGenerator
         FlatHelper(FlatMemoryHelperFamily.Write, bits, isFloat);
 
     /// <summary>
-    /// The exact predicate <c>MemoryInline::FlatWriteNeedsPolicy</c> uses:
-    /// 0xCC000000..0xCDFFFFFF. Kept in sync by construction - the two must never
-    /// disagree, because that is what makes the check-free family sound.
+    /// The MMIO window, 0xCC000000..0xCDFFFFFF: a constant address outside it
+    /// never needs the hardware check of <c>MemoryHw::FlatWrite*</c>.
     /// </summary>
     private static bool FlatWriteNeedsPolicy(uint address) =>
         (address & 0xFE000000u) == 0xCC000000u;

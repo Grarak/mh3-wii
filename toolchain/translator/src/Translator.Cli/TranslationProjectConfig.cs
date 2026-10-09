@@ -100,12 +100,16 @@ internal sealed class TranslationProjectConfig
         string? tickSitesPath = dto.Translation?.TickSitesPath is { Length: > 0 } ticks
             ? ResolvePath(workspaceRoot, ticks)
             : null;
+        string? hardwareAccessPath = dto.Translation?.HardwareAccessPath is { Length: > 0 } hardware
+            ? ResolvePath(workspaceRoot, hardware)
+            : null;
         var translation = new ProjectTranslation(
             entryPoints,
             functionMapPath,
             dto.Translation?.AllowUnsupportedInstructions ?? false,
             loadHooksPath,
-            tickSitesPath);
+            tickSitesPath,
+            hardwareAccessPath);
 
         var abiDirectories = (dto.Runtime?.NativeAbiDirectories ?? [])
             .Select(pathValue => ResolvePath(workspaceRoot, pathValue))
@@ -419,6 +423,10 @@ internal sealed class TranslationProjectConfig
         // A file naming guest loads (lwz/lha/lhz/lbz, one `{0xPC` per line) of step counters and
         // countdowns; the runtime's MH3_TickLoad adjusts each loaded value by the step's ticks.
         public string? TickSitesPath { get; init; }
+        // A file naming the guest functions (one `0xADDRESS` per line) that touch hardware:
+        // MMIO registers, the GX FIFO or the EFB. Their accesses go through MemoryHw; every
+        // other function addresses guest memory as plain host memory.
+        public string? HardwareAccessPath { get; init; }
     }
 
     private sealed class FunctionMapDto
@@ -488,7 +496,8 @@ internal sealed record ProjectTranslation(
     string? FunctionMapPath,
     bool AllowUnsupportedInstructions,
     string? LoadHooksPath = null,
-    string? TickSitesPath = null);
+    string? TickSitesPath = null,
+    string? HardwareAccessPath = null);
 internal sealed record ProjectRuntime(
     IReadOnlyList<string> NativeAbiDirectories,
     string NativeRegistrationRoot);

@@ -723,7 +723,7 @@ public sealed class FunctionTranslator
         RepresentationEnvironment types,
         TranslationOptions options)
     {
-        return new CxxLinearCodeGenerator(_guestAbiProvider).EmitWithFacts(
+        var emission = new CxxLinearCodeGenerator(_guestAbiProvider).EmitWithFacts(
             entryPoint,
             ssa,
             signature,
@@ -747,6 +747,9 @@ public sealed class FunctionTranslator
             gqrConstantsRequireRuntimeGuard: options.GqrConstantsRequireRuntimeGuard,
             enableLeafAbiSpillElision: options.EnableLeafAbiSpillElision,
             modOverridableCallTargets: options.ModOverridableCallTargets);
+        return GuestHardwareAccess.Current.Contains(entryPoint)
+            ? emission with { Code = GuestHardwareAccess.Rewrite(emission.Code) }
+            : emission;
     }
 
     private static IrTracePpc CreateTrace(PpcInstruction instruction)

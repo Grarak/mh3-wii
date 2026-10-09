@@ -4,9 +4,11 @@
 // line. Nothing here depends on another isa/ header beyond the configuration.
 
 #include "ppc_isa_config.h"
+#include "guest_flat_memory.h"
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 
 inline uint32_t PpcRotl32Inline(uint32_t value, uint32_t shift)
@@ -15,7 +17,13 @@ inline uint32_t PpcRotl32Inline(uint32_t value, uint32_t shift)
 }
 
 extern "C" uint32_t OSSystemCall();
-extern "C" int32_t memset_zero_32(int32_t address);
+// dcbz: zero one 32-byte block of guest memory (the translator aligns the
+// address). Never used on hardware.
+inline int32_t memset_zero_32(int32_t address)
+{
+    std::memset(GuestFlat::Host(static_cast<uint32_t>(address)), 0, 32);
+    return 0;
+}
 extern "C" void OS_HLE_ProcessAlarms(int maxToProcess);
 
 extern "C" uint32_t PPC_Mcrxr(uint32_t crField);

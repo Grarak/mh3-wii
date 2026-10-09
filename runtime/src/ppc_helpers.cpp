@@ -892,24 +892,6 @@ extern "C" void PPC_PsqSt(uint32_t addr, double value, uint32_t w, uint32_t i)
     }
 }
 
-extern "C" int32_t memset_zero_32(int32_t address)
-{
-    // dcbz zeros a 32-byte block.
-    // The translator aligns the address to 32 bytes before calling this.
-    try {
-        // Try fast path: get direct pointer to memory
-        uint8_t* ptr = Memory::GetPointer(static_cast<uint32_t>(address), 32);
-        std::memset(ptr, 0, 32);
-    } catch (...) {
-        // Fallback or MMIO (rare for dcbz): write using scalar helpers
-        uint32_t addr = static_cast<uint32_t>(address);
-        for (int i = 0; i < 8; ++i) {
-             Memory::Write32(addr + i * 4, 0);
-        }
-    }
-    return 0;
-}
-
 // Floating-point comparison (fcmpu/fcmpo)
 // Sets the specified CR field based on comparing two double values.
 extern "C" void PPC_Fcmp(uint32_t crField, double a, double b)
