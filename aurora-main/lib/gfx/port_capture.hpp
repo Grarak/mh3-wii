@@ -16,6 +16,8 @@ struct DrawState {
   uint32_t primitives = 1;
   uint32_t displayList = 0, displayListOffset = 0;
   std::array<uint32_t, 4> callers{};
+  // Guest texture addresses on the Wii FIFO path, captured before state changes.
+  std::array<uint32_t, 8> textureSources{};
 };
 enum DrawFlags : uint32_t {
   DepthCompare = 1, DepthWrite = 2, ZBeforeTexture = 4, Blend = 8,

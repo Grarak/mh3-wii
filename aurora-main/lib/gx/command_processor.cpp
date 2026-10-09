@@ -2388,6 +2388,10 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
         if (!gfx::port_capture::enabled()) return gfx::port_capture::DrawState{};
         auto capture = s_captureSource;
         capture.frame = gfx::current_frame();
+        for (u32 i = 0; i < MaxTextures; ++i) {
+          if (info.sampledTextures[i] || info.sampledIndTextures[i])
+            capture.textureSources[i] = g_gxState.textures[i].texObj.texObjId;
+        }
         const auto& alpha = g_gxState.alphaCompare;
         capture.alphaCompare = alpha.ref0 | (alpha.ref1 << 8) |
                                (uint32_t(alpha.comp0) << 16) | (uint32_t(alpha.comp1) << 19) |

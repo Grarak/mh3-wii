@@ -48,6 +48,12 @@ void draw(const DrawState& s, uint64_t vh, uint64_t fh, uint32_t vertices,
       s.frame, (unsigned long long)vh, (unsigned long long)fh, vertices, indices,
       instances, s.primitives, s.flags, s.alphaCompare, discard, depthReplace,
       s.displayList, s.displayListOffset, s.callers[0], s.callers[1], s.callers[2], s.callers[3]);
+  // Keep this adjacent to its draw under the same lock. Existing draw readers
+  // retain their fixed schema; resource readers join this additional row.
+  std::fprintf(c.events, "draw_textures\t%u\t%016llx-%016llx", s.frame,
+               (unsigned long long)vh, (unsigned long long)fh);
+  for (const auto source : s.textureSources) std::fprintf(c.events, "\t%08x", source);
+  std::fputc('\n', c.events);
 }
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment) noexcept {
   auto& c = capture();

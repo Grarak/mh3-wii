@@ -21,5 +21,5 @@ cmake -S runtime -B "$task_build_dir" -G Ninja \
   -DAURORA_GXM=ON -DAURORA_ENABLE_CARD=OFF \
   -DAURORA_SDL3_PROVIDER=vendor -DAURORA_SDL3_LINKAGE=static \
   -DBUILD_SHARED_LIBS=OFF "${task_args[@]}"
-cmake --build "$task_build_dir" --target mh3-vita.vpk --parallel "${BUILD_JOBS:-4}"
+cmake --build "$task_build_dir" --target mh3-vita.vpk --parallel "${BUILD_JOBS:-$(nproc)}"
 echo "Built $task_build_dir/mh3-vita.vpk (clang-21, native GXM)"
