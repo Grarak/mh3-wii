@@ -109,3 +109,6 @@ mh3_native_vertex_source ReadNativeVertexResource(uint32_t reference, mh3_vertex
 mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_vertex_kind kind);
 void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& source);
 bool ReadNativeVertexSource(uint32_t semantic, mh3_native_vertex_source* out);
+/* The bound source of `semantic` without a copy, or null when none is bound;
+ * valid until the next bind or retirement. */
+const mh3_native_vertex_source* PeekNativeVertexSource(uint32_t semantic);

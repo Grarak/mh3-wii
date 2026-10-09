@@ -502,6 +502,17 @@ mh3_matrix_sources PoseSources(const ModelPose& pose) {
             tables[i]->bytes.data = pose.bytes.data() + pose.offset[i];
     return sources;
 }
+// The bound array of `semantic` is the shape's authored source, unwritten
+// since conversion (no producer generation): the converted mesh matches it.
+bool BoundOriginal(const ShapeSources& originals, uint32_t semantic) {
+    if (!(originals.known & (1u << semantic)))
+        return false;
+    const auto* selected = PeekNativeVertexSource(semantic);
+    if (!selected || selected->source_generation)
+        return false;
+    const uint32_t bound = selected->payload_address, original = originals.source[semantic].payload_address;
+    return bound == original || Canonical(bound) == Canonical(original);
+}
 void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
     item.owner = context.owner;
     const auto& prepared = *context.sources->prepared;
@@ -509,13 +520,11 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
     const auto& originals = *context.sources;
     for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
-        mh3_native_vertex_source selected{};
         // These are immutable authoritative primitive matrix indices packed by
         // the extractor, not replacements for one of the twelve array sources.
         if (semantic >= 12 && prepared.palette_batch_count)
             continue;
-        if (!(originals.known & (1u << semantic)) || !ReadNativeVertexSource(semantic, &selected) || Canonical(selected.payload_address) != Canonical(originals.source[semantic].payload_address) ||
-            selected.source_generation)
+        if (!BoundOriginal(originals, semantic))
             throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
     }
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);
@@ -827,11 +836,9 @@ void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& cont
     const auto& originals = *context.sources;
     for (uint32_t i = 0; i < prepared.immutable.layout.count; i++) {
         const uint32_t semantic = prepared.immutable.layout.attributes[i].semantic;
-        mh3_native_vertex_source selected{};
         if (semantic >= 12 && prepared.palette_batch_count)
             continue;
-        if (!(originals.known & (1u << semantic)) || !ReadNativeVertexSource(semantic, &selected) || Canonical(selected.payload_address) != Canonical(originals.source[semantic].payload_address) ||
-            selected.source_generation)
+        if (!BoundOriginal(originals, semantic))
             throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
     }
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);

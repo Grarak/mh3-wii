@@ -5,6 +5,8 @@
 #include "memory.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include <array>
+#include <cstddef>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -93,10 +95,15 @@ mh3_native_vertex_source ReadNativeVertexResourceData(uint32_t resource, mh3_ver
     return source;
 }
 void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& source) {
-    Observe();
     auto& state = vertexBindings;
     if (semantic >= 12 || !source.payload_address || state.generation == UINT64_MAX)
         throw std::runtime_error("Invalid native vertex source binding");
+    // Rebinding the bound array (every draw of a shape does) changes nothing:
+    // its source generation is kept current while bound (MarkNativeVertexProduced)
+    // and a retirement unbinds it.
+    if (state.known[semantic] && std::memcmp(&state.bindings[semantic], &source, offsetof(mh3_native_vertex_source, source_generation)) == 0)
+        return;
+    Observe();
     state.bindings[semantic] = source;
     state.bindings[semantic].binding_generation = ++state.generation;
     state.known[semantic] = true;
@@ -106,6 +113,11 @@ void StoreNativeVertexSource(uint32_t semantic, const mh3_native_vertex_source& 
         state.bindings[semantic].source_generation = generation->second.value;
         generation->second.bytes = source.payload_bytes;
     }
+}
+const mh3_native_vertex_source* PeekNativeVertexSource(uint32_t semantic) {
+    if (semantic >= 12 || !vertexBindings.known[semantic])
+        return nullptr;
+    return &vertexBindings.bindings[semantic];
 }
 bool ReadNativeVertexSource(uint32_t semantic, mh3_native_vertex_source* out) {
     if (semantic >= 12 || !out)
