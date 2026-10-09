@@ -149,6 +149,12 @@ bool PublishNativeModelPose(uint32_t position, uint32_t normal, uint32_t environ
 
     uint32_t model = 0;
     Checked(mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &model));
+    return PublishNativeModelPoseFor(position, normal, environment, count, model);
+}
+
+bool PublishNativeModelPoseFor(uint32_t position, uint32_t normal, uint32_t environment, uint32_t count, uint32_t model) {
+    if (!count)
+        return false;
 
     if (pose_revision == UINT64_MAX)
         MH3_THROW(std::runtime_error("Native model pose revision overflow"));

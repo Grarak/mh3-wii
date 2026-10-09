@@ -22,6 +22,11 @@ void MtxTo33(uint32_t dst, uint32_t src);               // 0x80501968 MTX34ToMTX
 void MtxRotXYZFIdx(uint32_t m, float x, float y, float z,
                    uint32_t r2);                                                                                                         // 0x80501AB4 MTX34RotXYZFIdx
 
+// g3d_calc_world.cpp: the scene walk's view passes, recorded on the walking
+// thread while enabled and run into their view arrays before the scene draws.
+void DeferViewPasses(bool enabled);
+void RunDeferredViewPasses();
+
 // g3d_anm_result.cpp
 void ResNodeChrAnmResult(uint32_t ref, uint32_t result);        // 0x80098FD0
 void ResNodePatchChrAnmResult(uint32_t ref, uint32_t result);   // 0x80098DC0

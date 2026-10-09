@@ -6,6 +6,7 @@
 #include "guest_call.h"
 #include "memory.h"
 #include "frame_split.h"
+#include "g3d_native.h"
 #include "native_graphics.h"
 #include "scene_cull.h"
 #include "../native/mh3_scene_queue.h"
@@ -475,14 +476,18 @@ void Prepare(CpuContext* cpu) {
     PrepareGraph(cpu);
 }
 
+// The walk's view passes run when the scene draws (g3d_calc_world.cpp).
 void PrepareGraph(CpuContext* cpu) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
+    G3dNative::DeferViewPasses(true);
     PrepareSingle(cpu);
+    G3dNative::DeferViewPasses(false);
     Flatten();
 }
 
 void DrawPrepared(CpuContext* cpu) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
+    G3dNative::RunDeferredViewPasses();
     DrawPreparedSingle(cpu, true);
 }
 

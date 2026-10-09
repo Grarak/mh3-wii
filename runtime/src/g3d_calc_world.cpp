@@ -41,9 +41,12 @@
 #include "ppc_runtime.h"
 #include "runtime/native/adapters/model_catalog_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
+#include "runtime/native/mh3_model_view.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <utility>
 #include <vector>
 #if defined(__ARM_NEON)
@@ -53,6 +56,7 @@
 #ifdef MH3_DEVELOPMENT
 void MH3FrameSplitCall(unsigned kind); // game_frame.cpp
 #endif
+const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
 
 // The passes' scratch (0x18000 bytes): the game thread's at 0x8066D300, the
@@ -638,6 +642,148 @@ extern "C" void MH3_G3dCalcViewLc(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800711FC, MH3_G3dCalcViewLc, "G3dCalcViewLc");
 
+// Deferred view passes. The game thread waits for the scene walk at the end
+// of its frame side (game_frame.cpp JoinScenePrepare), and the walk's view
+// passes were most of it (1 ms of the Jhen walk on the devkit). While
+// SceneQueue::PrepareGraph enables it, a plain view pass of a model without
+// billboard matrices on the walking thread records what it reads instead:
+// the camera, the world rows and matrix attributes (the next logic step
+// rewrites the world arrays while the scene draws) and the node views
+// (FindNativeModelNodeViews answers only during the walk).
+// SceneQueue::DrawPrepared runs the records into the same view arrays,
+// retiring and publishing them as the pass does, before its first model
+// draw. The skin bones past the views are copied at the walk as before.
+// Billboards call into the game with the live arrays, so those models run
+// at once. No guest code reads the view arrays between the two: their
+// getters' only callers are the model draws.
+namespace {
+struct DeferredView {
+    uint32_t position, normal, environment, count, model;
+    size_t rows; // the first of its rows in deferredRows
+    std::shared_ptr<const NativeModelNodeViews> views;
+    mh3_matrix34 camera;
+};
+
+std::atomic<unsigned> deferThread{~0u};
+std::vector<DeferredView> deferredViews;
+std::vector<mh3_matrix34> deferredRows, viewPositions, viewEnvironments;
+std::vector<uint32_t> deferredAttributes;
+std::vector<mh3_matrix33> viewNormals;
+
+// Each run of matrix IDs the pass makes: all of them, or the node views'.
+template <typename F>
+void ForEachViewRun(const NativeModelNodeViews* views, uint32_t count, F&& run) {
+    if (!views) {
+        run(0u, count);
+        return;
+    }
+
+    for (const auto& [begin, end] : views->runs)
+        if (begin < count)
+            run(uint32_t(begin), end < count ? uint32_t(end) : count);
+}
+
+mh3_matrix34 ReadMatrix(uint32_t address) {
+    mh3_matrix34 m;
+
+    for (unsigned i = 0; i < 12; ++i)
+        m.v[i / 4][i % 4] = ReadFloat(address + 4 * i);
+
+    return m;
+}
+
+void StoreFloats(uint32_t address, const float* values, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        WriteFloat(address + uint32_t(4 * i), values[i]);
+}
+
+// The view pass's arguments (G3dCalcViewPlain's registers): recorded and true,
+// or false to run it now.
+bool DeferViewPass(const CpuContext* ctx) {
+    if (deferThread.load(std::memory_order_relaxed) != PpcThread::CurrentThread())
+        return false;
+
+    const uint32_t world = ctx->gpr[5], attributes = ctx->gpr[6], count = ctx->gpr[7], reference = ctx->gpr[9];
+
+    if (!count)
+        return false;
+
+    for (uint32_t i = 0; i < count; ++i)
+        if (Read32(attributes + 4 * i) & 0xFF)
+            return false;
+
+    uint32_t model = 0;
+
+    if (mh3_res_runtime_reference(&MH3NativeResourceMemory(), reference, 1, &model) != MH3_RES_OK)
+        return false;
+
+    DeferredView view{ctx->gpr[3], ctx->gpr[4], ctx->gpr[10], count, model, deferredRows.size(), FindNativeModelNodeViews(Read32(reference)), ReadMatrix(ctx->gpr[8])};
+    ForEachViewRun(view.views.get(), count, [&](uint32_t begin, uint32_t end) {
+        for (uint32_t i = begin; i < end; ++i) {
+            deferredRows.push_back(ReadMatrix(world + 0x30 * i));
+            deferredAttributes.push_back(Read32(attributes + 4 * i));
+        }
+    });
+    deferredViews.push_back(std::move(view));
+    return true;
+}
+} // namespace
+
+// Enabling drops the records of a scene walked and never drawn.
+void G3dNative::DeferViewPasses(bool enabled) {
+    if (enabled) {
+        deferredViews.clear();
+        deferredRows.clear();
+        deferredAttributes.clear();
+    }
+
+    deferThread.store(enabled ? PpcThread::CurrentThread() : ~0u, std::memory_order_relaxed);
+}
+
+void G3dNative::RunDeferredViewPasses() {
+    for (const auto& view : deferredViews) {
+        // CalcView's outputs as a whole, retired before they are written.
+        LcRetire(view.position, view.count * 0x30);
+
+        if (view.normal) {
+            LcRetire(view.normal, view.count * 0x24);
+
+            if (view.environment)
+                LcRetire(view.environment, view.count * 0x30);
+        }
+
+        size_t row = view.rows;
+        ForEachViewRun(view.views.get(), view.count, [&](uint32_t begin, uint32_t end) {
+            const uint32_t n = end - begin;
+
+            if (viewPositions.size() < n) {
+                viewPositions.resize(n);
+                viewNormals.resize(n);
+                viewEnvironments.resize(n);
+            }
+
+            const bool environment = view.normal && view.environment;
+            const mh3_model_view_native_input input{n, view.camera, &deferredRows[row], &deferredAttributes[row], viewPositions.data(), view.normal ? viewNormals.data() : nullptr,
+                                                    environment ? viewEnvironments.data() : nullptr};
+            mh3_model_view_native_static(&input);
+            StoreFloats(view.position + 0x30 * begin, &viewPositions[0].v[0][0], size_t(n) * 12);
+
+            if (view.normal)
+                StoreFloats(view.normal + 0x24 * begin, &viewNormals[0].v[0][0], size_t(n) * 9);
+
+            if (environment)
+                StoreFloats(view.environment + 0x30 * begin, &viewEnvironments[0].v[0][0], size_t(n) * 12);
+
+            row += n;
+        });
+        PublishNativeModelPoseFor(view.position, view.normal, view.environment, view.count, view.model);
+    }
+
+    deferredViews.clear();
+    deferredRows.clear();
+    deferredAttributes.clear();
+}
+
 // 0x80070884, the plain CalcView, which 0x8007FADC (ScnMdlSimple's view
 // task) runs when the locked cache is not granted, as it never is now.
 extern "C" void func_80070884(CpuContext* ctx);
@@ -648,6 +794,12 @@ extern "C" void MH3_G3dCalcViewPlain(CpuContext* ctx) {
     const uint32_t position = ctx->gpr[3], normal = ctx->gpr[4], environment = ctx->gpr[10];
     const uint32_t count = ctx->gpr[7], model_reference = ctx->gpr[9];
     const uint32_t world = ctx->gpr[5], camera = ctx->gpr[8];
+
+    if (DeferViewPass(ctx)) {
+        PublishSkinView(position, world, camera, count, model_reference);
+        return;
+    }
+
     PortCheck::Call(ctx, "G3dCalcViewPlain", func_80070884, CalcViewPlain);
     PublishNativeModelPose(position, normal, environment, count, model_reference);
     PublishSkinView(position, world, camera, count, model_reference);
