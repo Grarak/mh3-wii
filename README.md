@@ -73,8 +73,7 @@ independently. Configure and build logs go to `logs/aurora-*.log`.
 Build options: disc images decode with the native decoder
 ([docs/rom-decoder.md](docs/rom-decoder.md)); `-DMH3_ROM_DECODER=OFF` leaves
 it out (only a decrypted ISO from `nodtool convert --decrypt` can then be
-read), and `-DMH3_ROM_DECODER_NOD=ON` uses the earlier nod Rust library
-instead (needs `cargo`).
+read).
 `MH3_BUILD_VITA_TEXTURE_PACKER` (ON by default) builds the offline texture
 packer tool and needs upstream `stb_dxt.h` (`/usr/include/stb`,
 `../Vita3K/external/stb` or `STB_INCLUDE_DIR`).

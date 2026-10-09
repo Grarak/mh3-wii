@@ -52,7 +52,7 @@ how to build, run (including the Vita devkit) and debug.
 
 - [vita-platform.md](vita-platform.md): the Vita build, threads, clocks, memory, guest RAM views, files and device checks.
 - [vita-launcher.md](vita-launcher.md): the launcher, reading the disc image in place, load-time conversion, custom quests, devkit and host runs.
-- [rom-decoder.md](rom-decoder.md): the native ISO/RVZ/WIA decoder, its check against nod, and the Vita runtime helpers the nod archive used to supply.
+- [rom-decoder.md](rom-decoder.md): the native ISO/RVZ/WIA decoder, its check against nod, and where the Vita's runtime helpers come from.
 - [vita-controls.md](vita-controls.md): the Classic Controller the game sees and how the Vita, SDL gamepads and the keyboard map onto it.
 - [wpad-bridge.md](wpad-bridge.md): the WPAD bridge that feeds the game its controller, and scripted input.
 - [vita-tls-lookup-optimization.md](vita-tls-lookup-optimization.md): the SDK TLS fast paths.
@@ -65,7 +65,6 @@ how to build, run (including the Vita devkit) and debug.
 
 - [profiling.md](profiling.md): the statistics lines, Vita CPU profiles (flat or with stack snapshots), offline callers, build setup, Pi and VM profiling.
 - [vita-razor.md](vita-razor.md): Vita GPU captures with Sony Razor and the last measurement.
-- [vita-rust-async-cfi.md](vita-rust-async-cfi.md): audited frame rules for the Rust memory helpers in snapshot unwinding.
 - [hdmi-audio-capture.md](hdmi-audio-capture.md): the devkit's HDMI video and audio capture.
 - [native-active-gameplay.md](native-active-gameplay.md), [native-model-transform-check.md](native-model-transform-check.md): host capture and transform-check tools (last used on the October 2 renderer).
 

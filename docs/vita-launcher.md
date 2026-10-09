@@ -280,10 +280,7 @@ untracked `cheats.txt` and `cheats/` are untouched.
 ## Build and verification
 
 The disc image decoder is C++ with vendored C codecs, built like the rest of
-the game; no Rust toolchain is needed. `-DMH3_ROM_DECODER_NOD=ON` still builds
-the earlier nod Rust library (`runtime/vita/rom_decoder`, `nightly-2025-09-28`
-with `rust-src` and the locked Cargo dependencies cached, through
-`scripts/build-vita-rom-decoder.sh`). The C++ sources and GXM shaders use the
+the game; no Rust toolchain is needed. The C++ sources and GXM shaders use the
 port's clang build and the offline [shader bank](vita-shader-bank.md). The
 launcher does not compile shaders at runtime.
 

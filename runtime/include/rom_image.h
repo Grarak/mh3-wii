@@ -6,8 +6,8 @@
 #include <vector>
 
 // The European RMHP08 disc image (RVZ, WIA or decrypted ISO), read in place.
-// nod decodes RVZ/WIA chunks and the Wii encryption; a decrypted ISO is read
-// sector by sector. Reads are positioned and serialized: any thread may read.
+// The native decoder (rom_decoder.cpp) decodes RVZ/WIA chunks and the Wii
+// encryption; a decrypted ISO is read sector by sector. Reads are positioned and serialized: any thread may read.
 class RomImage {
   public:
     explicit RomImage(const std::filesystem::path& path);

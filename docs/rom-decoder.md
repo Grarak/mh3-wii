@@ -28,23 +28,20 @@ LZMA stream decodes straight into its group buffer, which serves as the
 dictionary, so a large dictionary size costs no memory. AES-128 (32-bit
 tables built at compile time) and SHA-1 are local.
 
-`-DMH3_ROM_DECODER_NOD=ON` still builds the nod bridge (`runtime/vita/rom_decoder`,
-needs cargo) for comparison. `-DMH3_ROM_DECODER=OFF` (Linux) leaves decoding
-out; only a decrypted ISO can be read then.
+`-DMH3_ROM_DECODER=OFF` (Linux) leaves decoding out; only a decrypted ISO can
+be read then. The nod Rust bridge it replaced is no longer built.
 
 ## Vita runtime helpers
 
-The nod archive was linked ahead of the SDK libraries, so its Rust
-compiler-builtins supplied runtime helpers to the whole Vita program, not only
-to the decoder. Without it:
+The earlier nod decoder's Rust archive supplied runtime helpers to the whole
+Vita program through its compiler-builtins. They come from these sources now:
 
 - The EABI memory helpers (`__aeabi_memcpy`, `memmove`, `memset`, `memclr` and
   their 4/8 forms) come from `runtime/vita/aeabi_memory.c`, a C port of the
   same compiler-builtins 0.1.160 routines: scalar word loops in the generic
   bodies, a 16-byte NEON loop in the aligned copy and set (it changes `d16/d17`,
   as before), the 4/8 and move forms sharing one body each. The SDK's would be
-  a byte loop for move and a scalar loop for set
-  ([helper audit](vita-memory-helper-selection.md)). The audit's fixture
+  a byte loop for move and a scalar loop for set. The helper benchmark
   (`tests/native/benchmark_vita_memory.c`) passes for the port under QEMU
   Cortex-A9 with the Rust objects' register masks; on the idle Pi 5, ns per
   call at 4 KiB / 32 KiB, aligned:
@@ -62,8 +59,7 @@ to the decoder. Without it:
   `fabs`, `fmin` and `fmax` from newlib's libm. These have exactly specified
   results; their speed on the Vita is unmeasured (`__udivmodsi4` was 3.3% of
   the game thread in [the October 3 profile](vita-oct03-fixed-render-profile.md)).
-- `scripts/vita-unwind-snapshots.py --rust-memory-cfi` adds its companion only
-  to builds with the Rust helpers; the C helpers have ordinary CFI.
+- The C helpers have ordinary CFI for snapshot unwinding.
 
 ## Verification (2026-10-03)
 

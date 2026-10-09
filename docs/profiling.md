@@ -95,7 +95,7 @@ Rules for reading them:
 
 ```sh
 python3 scripts/vita-unwind-snapshots.py --info RUN/native-cpu.register-info.json \
-  --elf RUN/game.elf --out RUN/analysis/snapshot-cfi --max-depth 64 --rust-memory-cfi
+  --elf RUN/game.elf --out RUN/analysis/snapshot-cfi --max-depth 64
 python3 scripts/vita_vprof.py --samples RUN/analysis/snapshot-cfi.samples \
   --stacks RUN/analysis/snapshot-cfi.stacks.jsonl --stack-source 'SHA-verified ARM32 DWARF CFI' \
   --deci-log RUN/deci4p.log --elf RUN/game.elf --hz 199 --out RUN/analysis/snapshot-cfi
@@ -104,10 +104,8 @@ vprof-cli functions RUN/analysis/snapshot-cfi.vprof --elf RUN/game.elf --inclusi
 
 The unwinder checks the recorded hashes, the exact ELF and the interrupted
 context, reads only the captured stack bytes and uses DWARF CFI; it never
-scans for return addresses. `--rust-memory-cfi` adds audited frame rules for
-the Rust memory helpers of `MH3_ROM_DECODER_NOD` builds
-([details](vita-rust-async-cfi.md)); other builds' C helpers have their own
-CFI, and the option is skipped. Every chain is a
+scans for return addresses. The EABI memory helpers
+(`runtime/vita/aeabi_memory.c`) have ordinary CFI. Every chain is a
 prefix that stops at the captured stack's end, a missing CFI frame or an
 unverified mapping; 8 KiB stacks favour shallow draw-phase stacks. Snapshot
 events are a separate stream: never pair them with primary samples or use
@@ -119,9 +117,8 @@ register.
 
 `MH3_PROFILE_FRAME_POINTERS` (default: the value of `MH3_DEVELOPMENT`) adds
 `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -funwind-tables` (ARM32
-also `-mframe-chain=aapcs+leaf`) to the game, the runtime and Aurora, and
-frame pointers and unwind tables to the Rust ROM decoder. Compare timings only
-between builds with the same setting.
+also `-mframe-chain=aapcs+leaf`) to the game, the runtime and Aurora.
+Compare timings only between builds with the same setting.
 
 `scripts/build-vita.sh` packages with the patched `vita-elf-create`
 (`/path/to/vita-toolchain/build-unwind/src/vita-elf-create`, or
@@ -133,14 +130,15 @@ the build for missing or wrong registration and writes
 
 ### Memory and math helpers in Vita profiles
 
-From audits of the October 2026 ELFs: `__aeabi_memcpy4/8`, `__aeabi_memclr*`
-and the generic `compiler_builtins::mem::memcpy`/`memmove` come from the Rust
-ROM decoder's `compiler_builtins` (16-byte NEON loops for the aligned
-variants), and are linked ahead of the SDK. Public `memcpy`, `memmove` and
-`memset` tail-call `sceClibMemcpy`/`Memmove`/`Memset`; `memcmp` is the SDK's
-scalar loop. The aligned `compiler_builtins` copy and set helpers clobber
-`d16`/`d17`, which the Arm runtime ABI reserves for the caller (a
-helper/ABI mismatch, not a known fault). Hot byte comparisons in the renderer
+The EABI memory helpers (`__aeabi_memcpy`, `memmove`, `memset`, `memclr` and
+their 4/8 forms) come from `runtime/vita/aeabi_memory.c`, a C port of the
+compiler-builtins routines the earlier Rust ROM decoder supplied (16-byte NEON
+loops for the aligned copy and set) ([helpers](rom-decoder.md#vita-runtime-helpers)).
+Public `memcpy`, `memmove` and `memset` tail-call
+`sceClibMemcpy`/`Memmove`/`Memset`; `memcmp` is the SDK's scalar loop. The
+aligned copy and set helpers clobber `d16`/`d17`, which the Arm runtime ABI
+reserves for the caller (a helper/ABI mismatch kept from compiler-builtins,
+not a known fault). Hot byte comparisons in the renderer
 use `BytesEqual` (`runtime/include/bytes_equal.h`, NEON, equality only)
 instead of `memcmp`. The SDK's TLS lookups for its prebuilt libraries go
 through the fast paths in [vita-tls-lookup-optimization.md](vita-tls-lookup-optimization.md).

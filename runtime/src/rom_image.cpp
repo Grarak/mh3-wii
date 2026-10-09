@@ -103,8 +103,9 @@ uint32_t Word(const std::vector<uint8_t>& b, size_t at) {
 }
 } // namespace
 
-// nod handles RVZ/WIA decompression and Wii title-key/AES decoding. Native
-// callbacks retain full 64-bit source offsets on Vita's 32-bit newlib.
+// The decoder (rom_decoder.cpp) handles RVZ/WIA decompression and Wii
+// title-key/AES decoding. Its read callback keeps full 64-bit source offsets
+// on Vita's 32-bit newlib.
 class RomImage::Source {
   public:
     File file;
@@ -115,8 +116,8 @@ class RomImage::Source {
         std::array<uint8_t, 0x100> header{};
         file.Read(0, header.data(), header.size());
 
-        // nod 1.4 treats plain ISO sectors as encrypted. nodtool's decrypted
-        // ISO marks byte 0x61; retain the bounded native sector reader for it.
+        // The decoder treats ISO sectors as encrypted. nodtool's decrypted
+        // ISO marks byte 0x61; the bounded sector reader below reads it.
         if (header[0x61] == 1 && std::string(header.begin(), header.begin() + 6) == "RMHP08")
             return;
 
