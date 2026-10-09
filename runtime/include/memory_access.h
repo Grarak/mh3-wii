@@ -501,6 +501,8 @@ MKW_MEMORY_FORCE_INLINE T ReadResolved(uint8_t* host, uint32_t rangeOffset, uint
     if (ReadResolvedScalar(host, rangeOffset, value)) {
         return value;
     }
+    // Checked access resolves no ranges: the page's bias still reads it inline.
+    if (TryReadGuestScalar(address, value)) return value;
     [[unlikely]] return slow(address);
 }
 
@@ -512,12 +514,12 @@ MKW_MEMORY_FORCE_INLINE uint32_t ReadResolved32(uint8_t* r, uint32_t o, uint32_t
 MKW_MEMORY_FORCE_INLINE uint64_t ReadResolved64(uint8_t* r, uint32_t o, uint32_t a) { return ReadResolved<uint64_t>(r, o, a, ReadResolvedFallback<uint64_t>); }
 MKW_MEMORY_FORCE_INLINE float ReadResolvedFloat32(uint8_t* r, uint32_t o, uint32_t a) {
     uint32_t bits = 0;
-    if (!ReadResolvedScalar(r, o, bits)) [[unlikely]] return ReadResolvedFallbackFloat32(a);
+    if (!ReadResolvedScalar(r, o, bits) && !TryReadGuestScalar(a, bits)) [[unlikely]] return ReadResolvedFallbackFloat32(a);
     float value; std::memcpy(&value, &bits, sizeof(value)); return value;
 }
 MKW_MEMORY_FORCE_INLINE double ReadResolvedFloat64(uint8_t* r, uint32_t o, uint32_t a) {
     uint64_t bits = 0;
-    if (!ReadResolvedScalar(r, o, bits)) [[unlikely]] return ReadResolvedFallbackFloat64(a);
+    if (!ReadResolvedScalar(r, o, bits) && !TryReadGuestScalar(a, bits)) [[unlikely]] return ReadResolvedFallbackFloat64(a);
     double value; std::memcpy(&value, &bits, sizeof(value)); return value;
 }
 
@@ -527,6 +529,7 @@ MKW_MEMORY_FORCE_INLINE void WriteResolved(uint8_t* host, uint32_t rangeOffset, 
     if (WriteResolvedScalar(host, rangeOffset, value)) {
         return;
     }
+    if (TryWriteGuestScalar(address, value)) return;
     [[unlikely]] slow(address, value);
 }
 
@@ -537,12 +540,12 @@ MKW_MEMORY_FORCE_INLINE void WriteResolved32(uint8_t* r, uint32_t o, uint32_t a,
 MKW_MEMORY_FORCE_INLINE void WriteResolved64(uint8_t* r, uint32_t o, uint32_t a, uint64_t v) { WriteResolved(r, o, a, v, WriteResolvedFallback<uint64_t>); }
 MKW_MEMORY_FORCE_INLINE void WriteResolvedFloat32(uint8_t* r, uint32_t o, uint32_t a, double v) {
     const uint32_t bits = ConvertPpcDoubleToSingleBits(v);
-    if (WriteResolvedScalar(r, o, bits)) return;
+    if (WriteResolvedScalar(r, o, bits) || TryWriteGuestScalar(a, bits)) return;
     [[unlikely]] WriteResolvedFallbackFloat32(a, v);
 }
 MKW_MEMORY_FORCE_INLINE void WriteResolvedFloat64(uint8_t* r, uint32_t o, uint32_t a, double v) {
     uint64_t bits; std::memcpy(&bits, &v, sizeof(bits));
-    if (WriteResolvedScalar(r, o, bits)) return;
+    if (WriteResolvedScalar(r, o, bits) || TryWriteGuestScalar(a, bits)) return;
     [[unlikely]] WriteResolvedFallbackFloat64(a, v);
 }
 
@@ -561,7 +564,11 @@ MKW_MEMORY_FORCE_INLINE void WriteResolvedFloat64(uint8_t* r, uint32_t o, uint32
 template <typename T>
 MKW_MEMORY_FORCE_INLINE T FlatLoad(uint32_t address) {
     // MH3's checked RAM backend does not reserve a fixed 4 GiB host window.
-    if (GuestFlat::RequiresCheckedAccess()) return ReadResolvedFallback<T>(address);
+    if (GuestFlat::RequiresCheckedAccess()) {
+        T value{};
+        if (TryReadGuestScalar(address, value)) return value;
+        return ReadResolvedFallback<T>(address);
+    }
     T value{};
     std::memcpy(&value, MKW_FLAT_GUEST_BASE + address, sizeof(T));
     return MaybeByteSwap(value);
@@ -572,6 +579,7 @@ MKW_MEMORY_FORCE_INLINE void FlatStore(uint32_t address, T value) {
     // Also covers translator-proven stack stores (FlatWriteRam*), which bypass
     // the general FlatWrite* policy but still need an actual host RAM mapping.
     if (GuestFlat::RequiresCheckedAccess()) {
+        if (TryWriteGuestScalar(address, value)) return;
         WriteResolvedFallback<T>(address, value);
         return;
     }
