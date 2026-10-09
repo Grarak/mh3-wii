@@ -20,6 +20,7 @@
 #include "guest_call.h"
 
 #include <algorithm>
+#include <unordered_map>
 
 namespace {
 
@@ -57,6 +58,39 @@ enum : uint32_t { kSetFrame = 0x1C, kGetFrame = 0x20, kUpdateFrame = 0x24, kGetW
 
 float F32(uint32_t address) { return Memory::ReadFloat32(address); }
 
+// The pause and hold counters count ticks of game time. A tick can be part
+// used up when a step ends: the part is kept here, with the count it belongs
+// to (a count the game sets anew starts from a whole tick).
+struct Partial {
+    uint8_t count = 0;
+    double used = 0;
+};
+struct Counters {
+    Partial pause, hold;
+};
+std::unordered_map<uint32_t, Counters> counters;
+
+// Spends up to `time` ticks on the u8 count at `address`; returns the time
+// left over once it has run out (0 while it still runs).
+double Spend(uint32_t address, Partial& partial, double time) {
+    uint8_t count = Memory::Read8(address);
+    if (count != partial.count) partial.used = 0;
+    while (count > 0 && time > 0) {
+        const double need = 1.0 - partial.used;
+        if (time >= need) {
+            time -= need;
+            partial.used = 0;
+            --count;
+        } else {
+            partial.used += time;
+            time = 0;
+        }
+    }
+    Memory::Write8(address, count);
+    partial.count = count;
+    return count > 0 ? 0 : time;
+}
+
 } // namespace
 
 static void MHcharRootMotionPort(CpuContext* ctx) {
@@ -75,14 +109,22 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         *ctx = saved;
         return;
     }
-    // The pause (hit stop) and hold counters are in steps; they count whole
-    // ticks of game time (the original: 1 per step).
-    const uint32_t ticks = GameStep::Ticks();
-    if (const uint8_t pause = Memory::Read8(self + kPauseSteps)) {
-        Memory::Write8(self + kPauseSteps, uint8_t(pause - std::min<uint32_t>(ticks, pause)));
+    // The pause (hit stop) and hold counters count ticks of game time (the
+    // original: 1 per step), to the exact time within the step: the animation
+    // only advances for the part of the step after the pause, and the
+    // character only moves for the part after the hold.
+    const double step = GameStep::Scale();
+    Counters& state = counters[self];
+    const bool pausing = Memory::Read8(self + kPauseSteps) != 0;
+    const double animated = pausing ? Spend(self + kPauseSteps, state.pause, step) : step;
+    if (animated <= 0) {
         *ctx = saved;
         return;
     }
+    // The part of the step after a pause: the animation's base rate is the
+    // step's length, so it advances by that part here.
+    const float stepRate = F32(kAnimationBaseRate);
+    if (animated != step) Memory::WriteFloat32(kAnimationBaseRate, float(stepRate * (animated / step)));
     game(InitAnmResult, {result});
     for (uint32_t i = 0; i < 6; ++i) Memory::Write32(channel(i, kPrevFrame), Memory::Read32(channel(i, kFrame)));
     if (Memory::Read8(self + kSkipAdvance) == 0) game.Virtual(channelSet, kUpdateFrame);
@@ -126,11 +168,14 @@ static void MHcharRootMotionPort(CpuContext* ctx) {
         game(VecScale, {scaled, delta}, {game.F1()});
         game(VecAdd, {sum, scaled});
     }
-    if (const uint8_t hold = Memory::Read8(self + kHoldSteps)) {
-        Memory::Write8(self + kHoldSteps, uint8_t(hold - std::min<uint32_t>(ticks, hold)));
-    } else if ((Memory::Read32(self + kFlags) & 2) == 0) { // 0x800E19BC, inlined
+    Memory::WriteFloat32(kAnimationBaseRate, stepRate);
+    const bool holding = Memory::Read8(self + kHoldSteps) != 0;
+    const double moved = holding ? Spend(self + kHoldSteps, state.hold, animated) : animated;
+    if (moved > 0 && (Memory::Read32(self + kFlags) & 2) == 0) { // 0x800E19BC, inlined
+        // After a hold ends within the step, only the motion of the rest of it.
+        const float part = moved == animated ? 1.0f : float(moved / animated);
         for (uint32_t k = 0; k < 3; ++k)
-            Memory::WriteFloat32(sum + k * 4, F32(sum + k * 4) * F32(self + kScale + k * 4));
+            Memory::WriteFloat32(sum + k * 4, F32(sum + k * 4) * F32(self + kScale + k * 4) * part);
         game(RotVecZXY, {sum, self + kRotation});
         game(VecAdd, {self + kPosition, sum});
     }
