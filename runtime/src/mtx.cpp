@@ -18,6 +18,7 @@
 #include "port_check.h"
 #include "ppc_runtime.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -49,10 +50,31 @@ PpcPairVec Madd(PpcPairVec a, PpcPairVec c, PpcPairVec b) { return PpcFmaddPairI
 
 struct Matrix {
     PpcPairVec p[6]; // +0x00, +0x08, ... +0x28
+    Matrix() = default;
     explicit Matrix(uint32_t address) {
         for (unsigned i = 0; i < 6; ++i) p[i] = LoadPair(address + 8 * i);
     }
+    // Element (row, column): ps0 of a pair is lane1.
+    float& At(unsigned row, unsigned column) {
+        PpcPairVec& pair = p[2 * row + column / 2];
+        return column % 2 == 0 ? pair.lane1 : pair.lane0;
+    }
+    void Store(uint32_t address) const {
+        for (unsigned i = 0; i < 6; ++i) StorePair(address + 8 * i, p[i]);
+    }
 };
+
+// PSMTXConcat's product of host matrices.
+Matrix ConcatMatrices(const Matrix& m, const Matrix& n) {
+    const PpcPairVec unit = LoadPair(0x807963C8u);
+    Matrix ab;
+    for (unsigned r = 0; r < 3; ++r) {
+        const PpcPairVec x = m.p[2 * r], y = m.p[2 * r + 1];
+        ab.p[2 * r] = Madd(n.p[4], Ps0(y), Madd(n.p[2], Ps1(x), Mul(n.p[0], Ps0(x))));
+        ab.p[2 * r + 1] = Madd(unit, Ps1(y), Madd(n.p[5], Ps0(y), Madd(n.p[3], Ps1(x), Mul(n.p[1], Ps0(x)))));
+    }
+    return ab;
+}
 
 void Copy(uint32_t src, uint32_t dst) {
     for (unsigned i = 0; i < 12; ++i) MemoryInline::FlatWrite32(dst + 4 * i, MemoryInline::FlatRead32(src + 4 * i));
@@ -246,3 +268,168 @@ static uint32_t InverseChecked(uint32_t r1, uint32_t r3, uint32_t r4) {
 }
 extern "C" void MH3_PSMTXInverse(CpuContext* ctx) { ctx->gpr[3] = InverseChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]); }
 REGISTER_NATIVE_FUNCTION_AS(0x804C6560, MH3_PSMTXInverse, "PSMTXInverse");
+
+// 0x80501AB4 (MTX34RotXYZFIdx, nw4r::math): m = Rz * Ry * Rx from three
+// angles in FIdx units (a turn is the float at r2 - 0x5C8, 256). Each |angle|
+// is wrapped to [0, 256] by subtracting a turn while it is above one, split by
+// a GQR3 (u16, the SDK's fast-cast setting) quantized store into a table index
+// (its low byte) and the fraction, and looked up in the {sin, cos, dsin, dcos}
+// table at 0x805744A0 with linear interpolation; a negative angle negates its
+// sine. The multiplies and multiply-adds are the paired-single lanes'.
+namespace {
+
+struct SinCos {
+    float s, c;
+};
+
+SinCos SinCosFIdx(float angle, float turn) {
+    float a = std::fabs(angle);
+    while (a > turn) a = a - turn;
+    const float whole = float(uint16_t(a)); // psq_st u16 (truncating), psq_l back
+    const float fraction = a - whole;
+    const uint32_t entry = 0x805744A0u + ((uint32_t(uint16_t(a)) & 0xFF) << 4);
+    SinCos r{PpcFmaFloatInline(LoadFloat(entry + 8), fraction, LoadFloat(entry)),
+             PpcFmaFloatInline(LoadFloat(entry + 12), fraction, LoadFloat(entry + 4))};
+    if (angle < 0.0f) r.s = -r.s;
+    return r;
+}
+
+void RotXYZFIdx(uint32_t m, float x, float y, float z, uint32_t r2) {
+    const float turn = LoadFloat(r2 - 0x5C8);
+    const SinCos rx = SinCosFIdx(x, turn), ry = SinCosFIdx(y, turn), rz = SinCosFIdx(z, turn);
+    const float sx = rx.s, cx = rx.c, sy = ry.s, cy = ry.c, sz = rz.s, cz = rz.c;
+    StoreFloat(m + 0x2C, sx - sx); // ps_sub f7,f0,f0: the translation's 0
+    const float zero = sx - sx;
+    StoreFloat(m + 0x00, cz * cy);
+    StoreFloat(m + 0x04, PpcFmaFloatInline(sx * cz, sy, -cx * sz));
+    StoreFloat(m + 0x08, PpcFmaFloatInline(cx * cz, sy, sx * sz));
+    StoreFloat(m + 0x0C, zero);
+    StoreFloat(m + 0x10, sz * cy);
+    StoreFloat(m + 0x14, PpcFmaFloatInline(sx * sz, sy, -(-cx * cz)));
+    StoreFloat(m + 0x18, PpcFmaFloatInline(cx * sz, sy, -(sx * cz)));
+    StoreFloat(m + 0x1C, zero);
+    StoreFloat(m + 0x20, -sy);
+    StoreFloat(m + 0x24, sx * cy);
+    StoreFloat(m + 0x28, cx * cy);
+}
+
+} // namespace
+
+extern "C" void func_80501AB4(CpuContext* ctx);
+static void RotXYZFIdxPort(CpuContext* p) {
+    RotXYZFIdx(p->gpr[3], float(p->fpr[1].d), float(p->fpr[2].d), float(p->fpr[3].d), p->gpr[2]);
+}
+static void RotXYZFIdxChecked(uint32_t r1, uint32_t r2, uint32_t m, double x, double y, double z) {
+    MH3_MTX_CHECK("MTX34RotXYZFIdx", func_80501AB4, RotXYZFIdxPort, m, 0x30, c->gpr[1] = r1, c->gpr[2] = r2,
+                  c->gpr[3] = m, c->fpr[1].d = x, c->fpr[2].d = y, c->fpr[3].d = z);
+    RotXYZFIdx(m, float(x), float(y), float(z), r2);
+}
+extern "C" void MH3_MTX34RotXYZFIdx(CpuContext* ctx) {
+    RotXYZFIdxChecked(ctx->gpr[1], ctx->gpr[2], ctx->gpr[3], ctx->fpr[1].d, ctx->fpr[2].d, ctx->fpr[3].d);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80501AB4, MH3_MTX34RotXYZFIdx, "MTX34RotXYZFIdx");
+
+// 0x80501A10 (MTX34MultTrans, nw4r::math): out = m * Trans(v): m's rotation,
+// and per row the translation m[r][0..2] . v + m[r][3], summed as the paired
+// code does: (m2 * vz + m0 * vx) + (m3 * 1 + m1 * vy).
+namespace {
+
+Matrix MultTrans(const Matrix& m, float vx, float vy, float vz) {
+    const PpcPairVec xy{vy, vx}, z1{1.0f, vz};
+    Matrix out = m;
+    for (unsigned r = 0; r < 3; ++r) {
+        const PpcPairVec sum = Madd(m.p[2 * r + 1], z1, Mul(m.p[2 * r], xy));
+        out.At(r, 3) = sum.lane1 + sum.lane0;
+    }
+    return out;
+}
+
+// 0x800D7814 (WorldMtxNodeStepMayaScale): a node's world matrix and scale from
+// its parent's with Maya segment-scale compensation. node: u32 flags, VEC3
+// scale at +4, the local Mtx34 at +0x1C. flags (r7) carry the calc state; bit
+// 31 says the accumulated scale is 1. Node flag 2 or 4: world = parent;
+// 0x20: translation only (world = parent * Trans(t), t scaled unless bit 31);
+// else world = parent * local (its translation scaled unless bit 31).
+// Then the world scale: node flag 8 keeps the parent's (bit 30 set), else
+// parent scale * node scale (bit 30 cleared with 31); node flag 0x10 sets bit
+// 28, else bits 28-31 are cleared. Returns the flags.
+uint32_t WorldMtxNodeStepMayaScale(uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale,
+                                   uint32_t flags, uint32_t node) {
+    const uint32_t nodeFlags = MemoryInline::FlatRead32(node);
+    const bool unitScale = (flags & 0x80000000u) != 0;
+    const float sx = LoadFloat(scale), sy = LoadFloat(scale + 4), sz = LoadFloat(scale + 8);
+    if ((nodeFlags & 6) != 0) {
+        Copy(parent, world);
+    } else if ((nodeFlags & 0x20) != 0) {
+        const float tx = LoadFloat(node + 0x28), ty = LoadFloat(node + 0x38), tz = LoadFloat(node + 0x48);
+        const Matrix m(parent);
+        (unitScale ? MultTrans(m, tx, ty, tz) : MultTrans(m, sx * tx, sy * ty, sz * tz)).Store(world);
+    } else {
+        Matrix local(node + 0x1C);
+        if (!unitScale) {
+            local.At(0, 3) = local.At(0, 3) * sx;
+            local.At(1, 3) = local.At(1, 3) * sy;
+            local.At(2, 3) = local.At(2, 3) * sz;
+        }
+        ConcatMatrices(Matrix(parent), local).Store(world);
+    }
+    if ((nodeFlags & 8) != 0) {
+        flags |= 0x40000000u;
+        StoreFloat(worldScale, sx);
+        StoreFloat(worldScale + 4, sy);
+        StoreFloat(worldScale + 8, sz);
+    } else {
+        flags &= 0x3FFFFFFFu;
+        StoreFloat(worldScale, sx * LoadFloat(node + 4));
+        StoreFloat(worldScale + 4, sy * LoadFloat(node + 8));
+        StoreFloat(worldScale + 8, sz * LoadFloat(node + 0xC));
+    }
+    return (nodeFlags & 0x10) != 0 ? flags | 0x10000000u : flags & 0x0FFFFFFFu;
+}
+
+} // namespace
+
+extern "C" void func_80501A10(CpuContext* ctx);
+static void MultTransPort(CpuContext* p) {
+    MultTrans(Matrix(p->gpr[4]), LoadFloat(p->gpr[5]), LoadFloat(p->gpr[5] + 4), LoadFloat(p->gpr[5] + 8))
+        .Store(p->gpr[3]);
+}
+static void MultTransChecked(uint32_t r1, uint32_t out, uint32_t m, uint32_t v) {
+    MH3_MTX_CHECK("MTX34MultTrans", func_80501A10, MultTransPort, out, 0x30, c->gpr[1] = r1, c->gpr[3] = out,
+                  c->gpr[4] = m, c->gpr[5] = v);
+    MultTrans(Matrix(m), LoadFloat(v), LoadFloat(v + 4), LoadFloat(v + 8)).Store(out);
+}
+extern "C" void MH3_MTX34MultTrans(CpuContext* ctx) { MultTransChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]); }
+REGISTER_NATIVE_FUNCTION_AS(0x80501A10, MH3_MTX34MultTrans, "MTX34MultTrans");
+
+extern "C" void func_800D7814(CpuContext* ctx);
+static void WorldStepPort(CpuContext* p) {
+    p->gpr[3] = WorldMtxNodeStepMayaScale(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7], p->gpr[8]);
+}
+static uint32_t WorldStepChecked(uint32_t r1, uint32_t world, uint32_t worldScale, uint32_t parent, uint32_t scale,
+                                 uint32_t flags, uint32_t node) {
+#ifdef MH3_DEVELOPMENT
+    static const bool check = PortCheck::Enabled("WorldMtxNodeStepMayaScale");
+    if (check) [[unlikely]] {
+        CpuContext* c = TryGetCpuContext();
+        c->gpr[1] = r1;
+        c->gpr[3] = world;
+        c->gpr[4] = worldScale;
+        c->gpr[5] = parent;
+        c->gpr[6] = scale;
+        c->gpr[7] = flags;
+        c->gpr[8] = node;
+        PortCheck::RunOutput(c, "WorldMtxNodeStepMayaScale", func_800D7814, WorldStepPort,
+                             {{world, 0x30}, {worldScale, 12}});
+        return c->gpr[3];
+    }
+#else
+    (void)r1;
+#endif
+    return WorldMtxNodeStepMayaScale(world, worldScale, parent, scale, flags, node);
+}
+extern "C" void MH3_WorldMtxNodeStepMayaScale(CpuContext* ctx) {
+    ctx->gpr[3] = WorldStepChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7],
+                                   ctx->gpr[8]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800D7814, MH3_WorldMtxNodeStepMayaScale, "WorldMtxNodeStepMayaScale");

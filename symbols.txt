@@ -664,6 +664,7 @@
 800c7d44 EffectDrawTextureSetup
 800be424 EffectDrawFreeStrategy
 80501ab4 MTX34RotXYZFIdx
+80501a10 MTX34MultTrans
 804c63d0 PSMTXConcatArray
 80471590 AXSyncPBs
 # ResAnmChr key helpers (ported in runtime/src/anm_chr_keys.cpp): the hermite blend, a
