@@ -156,9 +156,15 @@ public:
   // Render thread only. Compiles on first use; returns 0 if that failed.
   GLuint get() noexcept;
   [[nodiscard]] const std::string& label() const noexcept { return m_desc.label; }
+  [[nodiscard]] uint64_t vertex_hash() const noexcept { return m_vertexHash; }
+  [[nodiscard]] uint64_t fragment_hash() const noexcept { return m_fragmentHash; }
+  [[nodiscard]] bool uses_discard() const noexcept { return m_usesDiscard; }
+  [[nodiscard]] bool replaces_depth() const noexcept { return m_replacesDepth; }
 
 private:
   ProgramDesc m_desc;
+  uint64_t m_vertexHash = 0, m_fragmentHash = 0;
+  bool m_usesDiscard = false, m_replacesDepth = false;
   GLuint m_program = 0;
   bool m_failed = false;
 };

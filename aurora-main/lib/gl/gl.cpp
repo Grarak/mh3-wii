@@ -4,6 +4,7 @@
 #include "../gfx/port_capture.hpp"
 
 #include <SDL3/SDL.h>
+#include <xxhash.h>
 #include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
@@ -440,6 +441,10 @@ void bind_framebuffer(GLuint color, GLuint depth) noexcept {
 
 
 Program::Program(ProgramDesc desc) noexcept : m_desc(std::move(desc)) {
+  m_vertexHash = XXH3_64bits(m_desc.vertex.data(), m_desc.vertex.size());
+  m_fragmentHash = XXH3_64bits(m_desc.fragment.data(), m_desc.fragment.size());
+  m_usesDiscard = m_desc.fragment.find("discard;") != std::string::npos;
+  m_replacesDepth = m_desc.fragment.find("gl_FragDepth =") != std::string::npos;
   gfx::port_capture::shader(m_desc.label, m_desc.vertex, m_desc.fragment);
 }
 

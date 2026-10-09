@@ -73,5 +73,12 @@ void render(const DrawData& data, DrawEncodeState& state, bool requireReadyPipel
     gl::set_blend_color(0.f, 0.f, 0.f, static_cast<float>(data.dstAlpha) / 255.f);
   }
   gl::draw_indexed(data.indexCount, data.idxRange.offset, data.instanceCount);
+  if (gfx::port_capture::enabled()) {
+    const auto* pipeline = gfx::find_pipeline_object(data.pipeline);
+    const auto& program = *pipeline->program;
+    gfx::port_capture::draw(data.capture, program.vertex_hash(), program.fragment_hash(),
+                           data.vtxCount, data.indexCount, data.instanceCount,
+                           program.uses_discard(), program.replaces_depth());
+  }
 }
 } // namespace aurora::gx

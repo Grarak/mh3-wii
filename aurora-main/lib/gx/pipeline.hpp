@@ -3,6 +3,7 @@
 #include "../gfx/common.hpp"
 #include "../gfx/pipeline_cache.hpp"
 #include "shader_info.hpp"
+#include "../gfx/port_capture.hpp"
 
 namespace aurora::gx {
 struct DrawData {
@@ -17,6 +18,7 @@ struct DrawData {
   bool expandedPrimitive;
   GXBindGroups bindGroups;
   uint32_t dstAlpha;
+  gfx::port_capture::DrawState capture;
 };
 
 constexpr uint32_t GXPipelineConfigVersion = 19;

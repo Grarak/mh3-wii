@@ -406,6 +406,8 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 run.Flush();
                 GuestGxStream child;
                 child.coalesce = coalesce;
+                child.traceDraw = traceDraw;
+                child.displayListAddress = address;
                 child.bp = bp; child.cp = cp; child.bpMask = bpMask;
                 child.textureBound = textureBound; child.textureDirty = textureDirty;
                 child.paletteRevision = paletteRevision;
@@ -520,6 +522,10 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
                 throw std::runtime_error("Guest GX copy/token/finish requires event integration (BP register " + std::to_string(reg) + ")");
         }
         if (p[0] >= 0x80 && p[0] <= 0xBF) {
+            if (traceDraw) {
+                run.Flush();
+                traceDraw(displayListAddress, displayListAddress ? uint32_t(offset) : 0);
+            }
             ++drawCount;
             BindDrawArrays(std::span<const uint8_t>(p, length), emit, resolver);
             for (unsigned slot = 0; slot < 8; ++slot)
@@ -528,7 +534,7 @@ void GuestGxStream::Write(std::span<const uint8_t> bytes, const Sink& sink, cons
             BindDrawPalettes(emit, resolver);
         }
         offset += length;
-        if (!coalesce) {
+        if (!coalesce || traceDraw) {
             run.at = offset;
             run.Flush();
         }

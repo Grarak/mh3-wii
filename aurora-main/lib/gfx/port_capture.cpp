@@ -1,5 +1,6 @@
 #include "port_capture.hpp"
 #include <xxhash.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -12,6 +13,7 @@ struct Capture {
   std::mutex mutex;
   std::filesystem::path root;
   FILE* events = nullptr;
+  uint32_t drawInterval = 30;
   Capture() {
     const char* path = std::getenv("AURORA_PORT_CAPTURE");
     if (!path || !*path) return;
@@ -21,6 +23,9 @@ struct Capture {
     if (error) { root.clear(); return; }
     events = std::fopen((root / "events.tsv").c_str(), "w");
     if (!events) root.clear();
+    if (const char* interval = std::getenv("AURORA_PORT_CAPTURE_DRAW_INTERVAL"))
+      drawInterval = std::clamp(std::strtoul(interval, nullptr, 10), 1ul,
+                                static_cast<unsigned long>(UINT32_MAX));
   }
   ~Capture() { if (events) std::fclose(events); }
 };
@@ -31,6 +36,18 @@ void write(const std::filesystem::path& path, std::string_view source) {
     std::fclose(file);
   }
 }
+} // namespace
+bool enabled() noexcept { return capture().events != nullptr; }
+void draw(const DrawState& s, uint64_t vh, uint64_t fh, uint32_t vertices,
+          uint32_t indices, uint32_t instances, bool discard, bool depthReplace) noexcept {
+  auto& c = capture();
+  if (!c.events || s.frame % c.drawInterval != 0) return;
+  std::lock_guard lock(c.mutex);
+  std::fprintf(c.events,
+      "draw\t%u\t%016llx-%016llx\t%u\t%u\t%u\t%u\t%u\t%06x\t%u\t%u\t%08x\t%u\t%08x\t%08x\t%08x\t%08x\n",
+      s.frame, (unsigned long long)vh, (unsigned long long)fh, vertices, indices,
+      instances, s.primitives, s.flags, s.alphaCompare, discard, depthReplace,
+      s.displayList, s.displayListOffset, s.callers[0], s.callers[1], s.callers[2], s.callers[3]);
 }
 void shader(std::string_view label, std::string_view vertex, std::string_view fragment) noexcept {
   auto& c = capture();

@@ -5,6 +5,11 @@
 
 namespace aurora::gx::fifo {
 
+// Optional development capture. Callers describe the FIFO producer, rather
+// than the later GX worker. Display-list offsets are set before each draw.
+void set_capture_callers(const uint32_t* callers);
+void set_capture_display_list(uint32_t address, uint32_t offset);
+
 // Reset the CP write-deduplication state whenever the GX shadow state is reinitialized.
 void reset_cp_register_cache();
 

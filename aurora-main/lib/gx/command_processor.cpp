@@ -24,6 +24,14 @@
 
 namespace aurora::gx::fifo {
 static Module Log("aurora::gx::fifo");
+static thread_local gfx::port_capture::DrawState s_captureSource;
+void set_capture_callers(const uint32_t* callers) {
+  std::copy_n(callers, s_captureSource.callers.size(), s_captureSource.callers.begin());
+}
+void set_capture_display_list(uint32_t address, uint32_t offset) {
+  s_captureSource.displayList = address;
+  s_captureSource.displayListOffset = offset;
+}
 
 using IndexBuffer = std::vector<u16>;
 
@@ -2242,6 +2250,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
       lastDraw->idxRange.size += idxRange.size;
       lastDraw->vtxCount += vtxCount;
       lastDraw->indexCount += numIndices;
+      ++lastDraw->capture.primitives;
       ++gfx::g_mergedDrawCallCount;
       // This primitive now renders through the draw we merged into, so its palette slots belong to that draw's interpolation snapshot as well.
       if (s_lastDrawRecordedInterpolation) UNLIKELY {
@@ -2375,6 +2384,26 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
       .expandedPrimitive = prim == GX_LINES || prim == GX_LINESTRIP || prim == GX_POINTS,
       .bindGroups = bindGroups,
       .dstAlpha = pipelineState.dstAlpha,
+      .capture = [&] {
+        if (!gfx::port_capture::enabled()) return gfx::port_capture::DrawState{};
+        auto capture = s_captureSource;
+        capture.frame = gfx::current_frame();
+        const auto& alpha = g_gxState.alphaCompare;
+        capture.alphaCompare = alpha.ref0 | (alpha.ref1 << 8) |
+                               (uint32_t(alpha.comp0) << 16) | (uint32_t(alpha.comp1) << 19) |
+                               (uint32_t(alpha.op) << 22);
+        using namespace gfx::port_capture;
+        const auto* p = gfx::find_pipeline_object(pipeline);
+        capture.flags = (g_gxState.depthCompare ? DepthCompare : 0u) |
+                        (g_gxState.depthUpdate ? DepthWrite : 0u) |
+                        (g_gxState.zCompLocBeforeTex ? ZBeforeTexture : 0u) |
+                        (p && p->raster.blend ? Blend : 0u) |
+                        (p && p->raster.colorMask[0] ? ColorWrite : 0u) |
+                        (p && p->raster.colorMask[3] ? AlphaWrite : 0u) |
+                        (g_gxState.zTextureOp != GX_ZT_DISABLE ? ZTexture : 0u) |
+                        (uint32_t(g_gxState.depthFunc) << DepthFunctionShift);
+        return capture;
+      }(),
   });
   g_gxState.stateDirty = false;
 }

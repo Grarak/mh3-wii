@@ -30,6 +30,9 @@ public:
     unsigned PixelFormat() const { return bp[0x43] & 7; }
     // Sink one command per call instead of runs of them (per-draw diagnostics).
     bool coalesce = true;
+    // Optional source trace, before a draw reaches the sink. Address zero
+    // denotes the CPU FIFO; other addresses identify guest display lists.
+    std::function<void(uint32_t address, uint32_t offset)> traceDraw;
     // Commands and draws framed, display lists included.
     inline static uint64_t commandCount = 0, drawCount = 0;
     // Textures hashed, and clears of the hashes kept until an invalidation.
@@ -46,6 +49,7 @@ private:
     std::array<bool, 8> textureBound{};
     uint32_t textureDirty = 0; // slots whose metadata is due before the next draw
     unsigned displayListDepth = 0;
+    uint32_t displayListAddress = 0;
     uint32_t bpMask = 0xFFFFFF, paletteRevision = 0;
     struct PaletteMemory {
         std::array<uint8_t, 1024 * 1024> bytes{};

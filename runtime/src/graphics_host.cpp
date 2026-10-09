@@ -33,6 +33,10 @@
 #if defined(MH3_ENABLE_GX_DIAGNOSTICS) || defined(MH3_DEVELOPMENT)
 #include "gx/gx.hpp"
 #endif
+#ifdef MH3_DEVELOPMENT
+#include "gx/command_processor.hpp"
+#include "isa/ppc_isa_context.h"
+#endif
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
 #include <fstream>
 #endif
@@ -265,6 +269,9 @@ void InitializeGraphics(int argc, char** argv) {
     }
     // The draw log looks at one command per packet.
     if (std::getenv("MH3_GX_DRAW_LOG")) guestStream.coalesce = false;
+    if (std::getenv("MH3_GX_SOURCE_CAPTURE")) {
+        guestStream.traceDraw = aurora::gx::fifo::set_capture_display_list;
+    }
 #endif
 #ifdef MH3_ENABLE_GX_DIAGNOSTICS
     guestStream.coalesce = false;
@@ -357,6 +364,25 @@ namespace {
 // Frames guest FIFO bytes into Aurora: on the GX worker, or on the game thread
 // without one.
 void ProcessGuestGxBytes(const uint8_t* data, size_t size) {
+#ifdef MH3_DEVELOPMENT
+    if (guestStream.traceDraw) {
+        std::array<uint32_t, 4> callers{};
+        if (const auto* cpu = TryGetCpuContext()) {
+            callers[0] = cpu->lr;
+            uint32_t stack = cpu->gpr[1];
+            for (unsigned i = 1; i < callers.size(); ++i) {
+                const uint32_t physical = stack & 0x3fffffff;
+                if ((stack & 3) || !((physical < Memory::kMem1Size - 8) ||
+                    (physical >= Memory::kMem2PhysicalBase && physical < Memory::kMem2PhysicalEnd - 8))) break;
+                const uint32_t next = Memory::Read32(stack);
+                callers[i] = Memory::Read32(stack + 4);
+                if (next <= stack) break;
+                stack = next;
+            }
+        }
+        aurora::gx::fifo::set_capture_callers(callers.data());
+    }
+#endif
     if (!frameActive) {
         std::lock_guard lock(auroraFrameMutex);
         if (hasBegunFrame) aurora::gfx::preserve_next_efb_frame();
@@ -498,7 +524,8 @@ void SubmitGuestGxBytes(const uint8_t* data, size_t size) {
 #ifdef MH3_DEVELOPMENT
             // MH3_GX_WORKER=0: GX on the game thread; the draw log needs it there too.
             const char* v = std::getenv("MH3_GX_WORKER");
-            if ((v && v[0] == '0') || std::getenv("MH3_GX_DRAW_LOG")) return false;
+            if ((v && v[0] == '0') || std::getenv("MH3_GX_DRAW_LOG") ||
+                std::getenv("MH3_GX_SOURCE_CAPTURE")) return false;
 #endif
             return true;
 #endif
