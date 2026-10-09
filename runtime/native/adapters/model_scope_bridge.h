@@ -21,6 +21,9 @@ struct NativeModelDispatch {
     uint32_t material, shape, position, normal, flags, bindings, descriptor;
 };
 uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference);
+// The same with the referenced material and shape already read (both nonzero
+// or as the references hold them).
+uint32_t NativeModelIndirectMatricesAt(uint32_t material, uint32_t shape, uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference);
 void DispatchNativeModel(const NativeModelDispatch& dispatch);
 void TraceNativeModelDispatch(const NativeModelDispatch& dispatch);
 // Draw tables (model_catalog_bridge.h): a model draw resolves its model's
@@ -38,6 +41,11 @@ NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<Na
 // when the table has no record for the item: dispatch it by address instead.
 bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t material_id, uint32_t shape_id, const mh3_model_material_bindings* replacements,
                                 const NativeModelDispatch& dispatch);
+// The table's draw-stream entries for mh3_model_draw_walk_entries.
+const mh3_model_draw_entries* NativeModelDrawEntries(const NativeModelDrawTable& table);
+// MH3_DRAW_TABLE=2: check indexed draws against the address path.
+bool NativeModelDrawTableCompare();
+void ReportNativeModelDrawTableMismatch(const char* what);
 // Builds the tables of every certified model that has none (loading screens).
 void PrepareNativeModelDrawTables();
 // Development statistics (MH3_PREPARE_DIAGNOSTICS / MH3_DRAW_TABLE_TRACE).

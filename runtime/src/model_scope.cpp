@@ -378,6 +378,14 @@ struct NativeModelDrawTable {
     std::vector<mh3_model_material_scope> materials;
     // prepared == nullptr: no record (by address).
     std::vector<ShapeSources> shapes;
+    // The draw walk's material, shape and node entries by ID (offsets from
+    // the MDL0, UINT32_MAX unknown) and the walk's view of them.
+    std::vector<uint32_t> material_entries, shape_entries, node_entries;
+    mh3_model_draw_entries entries{};
+    void ViewEntries() {
+        entries = {material_entries.data(), shape_entries.data(), node_entries.data(), uint32_t(material_entries.size()), uint32_t(shape_entries.size()),
+                   uint32_t(node_entries.size())};
+    }
     NativeModelDrawTable() = default;
     NativeModelDrawTable(const NativeModelDrawTable&) = delete;
     // Shape sources may be bound in place (DispatchDeferred).
@@ -435,14 +443,15 @@ bool TableTrace() {
 // u32 little-endian words: "M3DT", version, pack count; per pack the name's
 // byte count, the name (zero-padded to words), the five key words, the model
 // count and per model its record's byte count and the record (none: 0); then
-// the FNV-1a of everything before it. A record: material and shape counts;
+// the FNV-1a of everything before it. A record: material, shape and node
+// counts; the material, shape and node entry offsets (UINT32_MAX unknown);
 // per material a presence mask (bit 0 record, 1 fur, 2..12 the eleven slots),
 // its own, fur and slot offsets; per shape flags (bit 0 record, 1 normal,
 // 2 covers layout), offset, mesh pack index, matrix ID, known semantics and
 // per known semantic a vertex source: resource and payload offsets, source ID,
 // resource and payload bytes, count, stride, components, format, fraction,
 // component mode, sample index, count and stride, kind.
-constexpr uint32_t TableMagic = 0x5444334d, TableVersion = 2, TableKeyWords = 5, SourceWords = 15;
+constexpr uint32_t TableMagic = 0x5444334d, TableVersion = 3, TableKeyWords = 5, SourceWords = 15;
 struct CachedPack {
     uint32_t key[TableKeyWords]{};
     std::vector<std::vector<uint8_t>> records; // by catalog model index
@@ -573,9 +582,13 @@ CachedPack* TablesOf(const NativeModelOwner& owner) {
 std::vector<uint8_t> EncodeTable(const NativeModelDrawTable& table) {
     const uint32_t model = table.model;
     std::vector<uint8_t> out;
-    out.reserve(8 + table.materials.size() * 56 + table.shapes.size() * 140);
+    out.reserve(12 + table.materials.size() * 60 + table.shapes.size() * 144 + table.node_entries.size() * 4);
     Put32(out, uint32_t(table.materials.size()));
     Put32(out, uint32_t(table.shapes.size()));
+    Put32(out, uint32_t(table.node_entries.size()));
+    for (const auto* entries : {&table.material_entries, &table.shape_entries, &table.node_entries})
+        for (const uint32_t offset : *entries)
+            Put32(out, offset);
     for (const auto& scope : table.materials) {
         uint32_t present = scope.material_address ? 1u : 0u;
         if (present && scope.fur_address)
@@ -614,7 +627,7 @@ std::vector<uint8_t> EncodeTable(const NativeModelDrawTable& table) {
 }
 // Fills the table from a record made for the same pack content and model;
 // false (table untouched) when the record does not fit the live model.
-bool DecodeTable(const std::vector<uint8_t>& record, uint32_t materials, uint32_t shapes, NativeModelDrawTable& table) {
+bool DecodeTable(const std::vector<uint8_t>& record, uint32_t materials, uint32_t shapes, uint32_t nodes, NativeModelDrawTable& table) {
     const uint8_t* p = record.data();
     size_t left = record.size();
     const auto word = [&](uint32_t& value) {
@@ -625,9 +638,16 @@ bool DecodeTable(const std::vector<uint8_t>& record, uint32_t materials, uint32_
         left -= 4;
         return true;
     };
-    uint32_t count[2];
-    if (!word(count[0]) || !word(count[1]) || count[0] != materials || count[1] != shapes)
+    uint32_t count[3];
+    if (!word(count[0]) || !word(count[1]) || !word(count[2]) || count[0] != materials || count[1] != shapes || count[2] != nodes)
         return false;
+    std::vector<uint32_t> entries[3];
+    for (unsigned kind = 0; kind < 3; kind++) {
+        entries[kind].resize(count[kind]);
+        for (auto& offset : entries[kind])
+            if (!word(offset))
+                return false;
+    }
     const auto& owner = table.owner;
     const uint32_t model = table.model;
     std::vector<mh3_model_material_scope> scopes(materials);
@@ -694,6 +714,9 @@ bool DecodeTable(const std::vector<uint8_t>& record, uint32_t materials, uint32_
         return false;
     table.materials = std::move(scopes);
     table.shapes = std::move(sources);
+    table.material_entries = std::move(entries[0]);
+    table.shape_entries = std::move(entries[1]);
+    table.node_entries = std::move(entries[2]);
     return true;
 }
 // Writes the table file when tables were added (loading screens).
@@ -760,13 +783,29 @@ std::shared_ptr<NativeModelDrawTable> BuildDrawTable(uint32_t model) {
         return view.guest_base + uint32_t(offset);
     };
     size_t dictionary = 0;
-    uint32_t materials = 0, shapes = 0;
+    uint32_t materials = 0, shapes = 0, nodes = 0;
     Checked(mh3_res_model_dictionary(&resource, MH3_RES_MATERIALS, &dictionary, &materials));
     Checked(mh3_res_model_dictionary(&resource, MH3_RES_SHAPES, &dictionary, &shapes));
+    Checked(mh3_res_model_dictionary(&resource, MH3_RES_NODES, &dictionary, &nodes));
     auto* cache = TablesOf(owner);
     const uint32_t index = owner.catalog_model_index;
-    const bool cached = cache && index < cache->records.size() && !cache->records[index].empty() && DecodeTable(cache->records[index], materials, shapes, *table);
+    const bool cached = cache && index < cache->records.size() && !cache->records[index].empty() && DecodeTable(cache->records[index], materials, shapes, nodes, *table);
     if (!cached) {
+        const auto entry = [&](mh3_res_kind kind, uint32_t id) {
+            mh3_res_entry value{};
+            return mh3_res_model_entry(&resource, kind, id, &value) == MH3_RES_OK && value.offset >= resource.offset && value.offset - resource.offset < UINT32_MAX
+                       ? uint32_t(value.offset - resource.offset)
+                       : UINT32_MAX;
+        };
+        table->material_entries.resize(materials);
+        table->shape_entries.resize(shapes);
+        table->node_entries.resize(nodes);
+        for (uint32_t id = 0; id < materials; id++)
+            table->material_entries[id] = entry(MH3_RES_MATERIALS, id);
+        for (uint32_t id = 0; id < shapes; id++)
+            table->shape_entries[id] = entry(MH3_RES_SHAPES, id);
+        for (uint32_t id = 0; id < nodes; id++)
+            table->node_entries[id] = entry(MH3_RES_NODES, id);
         table->materials.resize(materials);
         const mh3_model_material_bindings none{};
         for (uint32_t id = 0; id < materials; id++) {
@@ -814,6 +853,7 @@ std::shared_ptr<NativeModelDrawTable> BuildDrawTable(uint32_t model) {
             tableCache.dirty = true;
         }
     }
+    table->ViewEntries();
     AttachNativeModelDrawTable(owner, table);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     ++(cached ? tableStats.cached : tableStats.built);
@@ -826,6 +866,7 @@ std::shared_ptr<NativeModelDrawTable> BuildDrawTable(uint32_t model) {
                      Memory::Read32(0x80796d28));
     return table;
 }
+#ifdef MH3_DEVELOPMENT
 bool SameScope(const mh3_model_material_scope& a, const mh3_model_material_scope& b) {
     return a.material_address == b.material_address && a.fur_address == b.fur_address && a.replacement_mask == b.replacement_mask &&
            !std::memcmp(&a.selected, &b.selected, sizeof a.selected);
@@ -839,6 +880,7 @@ bool SameOwnerRecord(const NativeModelOwner& a, const NativeModelOwner& b) {
     return a.pack == b.pack && a.catalog == b.catalog && a.catalog_model_index == b.catalog_model_index && a.container_address == b.container_address && a.model_address == b.model_address &&
            a.resident_handle == b.resident_handle && a.resident_generation == b.resident_generation && a.source_generation == b.source_generation;
 }
+#endif
 } // namespace
 
 NativeModelDrawTable* NativeModelDrawTableFor(uint32_t model, std::shared_ptr<NativeModelDrawTable>& hold) {
@@ -891,6 +933,17 @@ void ReportLoadingScreen() {
 #endif
 }
 } // namespace
+const mh3_model_draw_entries* NativeModelDrawEntries(const NativeModelDrawTable& table) {
+    return &table.entries;
+}
+bool NativeModelDrawTableCompare() {
+    return DrawTableMode() == 2;
+}
+void ReportNativeModelDrawTableMismatch(const char* what) {
+    ++tableStats.compared;
+    if (tableStats.mismatches++ < 40)
+        std::fprintf(stderr, "MH3 draw table mismatch: %s\n", what);
+}
 void PrepareNativeModelDrawTables() {
     if (!DrawTableMode())
         return;
@@ -1333,9 +1386,11 @@ extern "C" void MH3_ModelShapePrimitive(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80087B34, MH3_ModelShapePrimitive, "ModelShapePrimitive");
 uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference) {
+    return NativeModelIndirectMatricesAt(Resource(material_reference), Resource(shape_reference), material_reference, node_reference, shape_reference);
+}
+uint32_t NativeModelIndirectMatricesAt(uint32_t material, uint32_t shape, uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference) {
     current_operator = {};
     operator_address = 0;
-    const uint32_t material = Resource(material_reference), shape = Resource(shape_reference);
     // Without a material, a shape or an indirect method the operator stays
     // inactive (mh3_matrix_runtime_indirect would only clear its records).
     if (!material || !shape || !(Memory::Read8(material + 0x20) || Memory::Read8(material + 0x21) || Memory::Read8(material + 0x22)))

@@ -50,6 +50,9 @@ typedef mh3_res_status (*mh3_model_record_read)(void *, uint32_t, mh3_model_draw
 /* Read one record at a time: callbacks can overwrite shared sort storage.
  * Emitted resource entries carry IDs/offsets; their unused names are null. */
 mh3_res_status mh3_model_draw_sorted_read(const mh3_res_model *, uint32_t, uint32_t, mh3_model_record_read, void *, mh3_model_draw_emit, void *, mh3_model_draw_stats *);
+/* The same, taking the IDs `entries` holds from them (mh3_model_draw_walk_entries). */
+mh3_res_status mh3_model_draw_sorted_read_entries(const mh3_res_model *, uint32_t, uint32_t, mh3_model_record_read, void *, const mh3_model_draw_entries *, mh3_model_draw_emit, void *,
+                                                  mh3_model_draw_stats *);
 
 typedef struct {
     void *user;

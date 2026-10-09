@@ -115,6 +115,24 @@ struct Model {
         return {Bytes(address, size_t(count) * 48), count, 48, 1};
     }
 };
+#ifdef MH3_DEVELOPMENT
+// MH3_DRAW_TABLE=2: the item's entries from the table are the dictionaries'.
+void CompareEntries(const Model& model, const mh3_model_draw_item& item) {
+    const struct {
+        mh3_res_kind kind;
+        uint32_t id;
+        size_t offset;
+        const char* name;
+    } entries[]{{MH3_RES_MATERIALS, item.draw.material_id, item.material.offset, "material entry"},
+                {MH3_RES_SHAPES, item.draw.shape_id, item.shape.offset, "shape entry"},
+                {MH3_RES_NODES, item.draw.node_id, item.node.offset, "node entry"}};
+    for (const auto& e : entries) {
+        mh3_res_entry expected{};
+        if (mh3_res_model_entry(&model.value, e.kind, e.id, &expected) != MH3_RES_OK || expected.offset != e.offset)
+            ReportNativeModelDrawTableMismatch(e.name);
+    }
+}
+#endif
 struct Submit {
     const Model& model;
     uint32_t replacement;
@@ -125,9 +143,14 @@ struct Submit {
         auto& s = *static_cast<Submit*>(user);
         const auto& r = s.refs;
         MH3_CENSUS(census.Add("item flags " + Census::Hex(item->dispatch_flags) + (s.replacement ? " replaced" : "")));
-        Memory::Write32(r.shape, s.model.Address(item->shape.offset));
+#ifdef MH3_DEVELOPMENT
+        if (s.table && NativeModelDrawTableCompare())
+            CompareEntries(s.model, *item);
+#endif
+        const uint32_t shape = s.model.Address(item->shape.offset), material = s.model.Address(item->material.offset);
+        Memory::Write32(r.shape, shape);
         Memory::Write32(r.node, s.model.Address(item->node.offset));
-        Memory::Write32(r.material, s.model.Address(item->material.offset));
+        Memory::Write32(r.material, material);
         mh3_model_material_bindings replacements{};
         if (s.replacement) {
             const auto status = mh3_model_material_select(Bytes(s.replacement, 64), item->material_index, &replacements);
@@ -142,7 +165,7 @@ struct Submit {
         // 80077814 and 80076A58 are the native ModelIndirectMatrices and
         // ModelDisplayListDispatch; neither reads guest registers or the
         // stack, so call them directly instead of through a guarded guest call.
-        const uint32_t descriptor = NativeModelIndirectMatrices(r.material, r.node, r.shape);
+        const uint32_t descriptor = NativeModelIndirectMatricesAt(material, shape, r.material, r.node, r.shape);
         const NativeModelDispatch dispatch{r.material, r.shape, 0, 0, item->dispatch_flags, bindings, descriptor};
         if (!s.table || !DispatchNativeModelIndexed(*s.table, item->draw.material_id, item->draw.shape_id, s.replacement ? &replacements : nullptr, dispatch))
             DispatchNativeModel(dispatch);
@@ -160,10 +183,13 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
     GuestFrame frame(cpu, 0x80);
     const References refs{frame[0x10], frame[0x14], frame[0x18], frame[0x20]};
     std::shared_ptr<NativeModelDrawTable> hold;
-    Submit submit{model, replacement, refs, NativeModelDrawTableFor(resource, hold)};
+    const auto* table = NativeModelDrawTableFor(resource, hold);
+    // A table also holds the draw stream's entries: no dictionary lookups.
+    const mh3_model_draw_entries* entries = table ? NativeModelDrawEntries(*table) : nullptr;
+    Submit submit{model, replacement, refs, table};
     BeginNativeModelDraw();
     if (sorted)
-        Checked(mh3_model_draw_sorted_read(&model.value, count, options, ReadRecord, &stream, Submit::Emit, &submit, nullptr));
+        Checked(mh3_model_draw_sorted_read_entries(&model.value, count, options, ReadRecord, &stream, entries, Submit::Emit, &submit, nullptr));
     else {
         mh3_res_span visibility{};
         if (replacement) {
@@ -174,7 +200,7 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
                 visibility = {view.span.data + view.offset, view.span.size - view.offset};
             }
         }
-        Checked(mh3_model_draw_walk(&model.value, model.Stream(stream), visibility, options, Submit::Emit, &submit, nullptr));
+        Checked(mh3_model_draw_walk_entries(&model.value, model.Stream(stream), visibility, options, entries, Submit::Emit, &submit, nullptr));
     }
 }
 uint32_t Collect(const Model& model, uint32_t position, uint32_t stream, uint32_t replacement) {

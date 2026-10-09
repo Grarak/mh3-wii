@@ -736,7 +736,7 @@ NativeModelOwner ResolveNativeModelOwner(uint32_t model_address) {
                 Canonical(address + Memory::Read32(address + 12), 1) != container)
                 throw std::runtime_error("Loaded native MDL0 header differs from registered source identity");
             NativeModelOwner related{p.pack, p.catalog, j, container, address, p.handle, p.generation, generation};
-            siblings.push_back({related, sibling});
+            siblings.push_back({related, sibling, nullptr});
         }
         NativeModelOwner owner{p.pack, p.catalog, index, container, model_address, p.handle, p.generation, generation};
         Certify(siblings);

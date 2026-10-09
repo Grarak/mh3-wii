@@ -310,8 +310,15 @@ mh3_res_status mh3_model_draw_collect(const mh3_model_draw_collection *input, mh
     *count = used;
     return MH3_RES_OK;
 }
+static mh3_res_status sorted_entry(const mh3_res_model *model, const mh3_model_draw_entries *entries, mh3_res_kind kind, uint16_t id, mh3_res_entry *out) {
+    return mh3_model_draw_entry(model, entries, kind, id, out) ? MH3_RES_OK : draw_entry(model, kind, id, out);
+}
 mh3_res_status mh3_model_draw_sorted_read(const mh3_res_model *model, uint32_t count, uint32_t options, mh3_model_record_read read, void *reader, mh3_model_draw_emit emit, void *user,
                                           mh3_model_draw_stats *stats) {
+    return mh3_model_draw_sorted_read_entries(model, count, options, read, reader, NULL, emit, user, stats);
+}
+mh3_res_status mh3_model_draw_sorted_read_entries(const mh3_res_model *model, uint32_t count, uint32_t options, mh3_model_record_read read, void *reader, const mh3_model_draw_entries *entries,
+                                                  mh3_model_draw_emit emit, void *user, mh3_model_draw_stats *stats) {
     mh3_model_draw_stats totals = {0};
     size_t previous = 0;
     int has_previous = 0;
@@ -327,7 +334,7 @@ mh3_res_status mh3_model_draw_sorted_read(const mh3_res_model *model, uint32_t c
         const mh3_model_draw_record *record = &value;
         mh3_model_draw_item item = {0};
         ++totals.records;
-        status = draw_entry(model, MH3_RES_SHAPES, record->shape, &item.shape);
+        status = sorted_entry(model, entries, MH3_RES_SHAPES, record->shape, &item.shape);
         if (status)
             return status;
         if (!resource_fits(model, item.shape.offset, 0x38))
@@ -336,10 +343,10 @@ mh3_res_status mh3_model_draw_sorted_read(const mh3_res_model *model, uint32_t c
             ++totals.hidden_shapes;
             continue;
         }
-        status = draw_entry(model, MH3_RES_MATERIALS, record->material, &item.material);
+        status = sorted_entry(model, entries, MH3_RES_MATERIALS, record->material, &item.material);
         if (status)
             return status;
-        status = draw_entry(model, MH3_RES_NODES, record->node, &item.node);
+        status = sorted_entry(model, entries, MH3_RES_NODES, record->node, &item.node);
         if (status)
             return status;
         if (!resource_fits(model, item.material.offset, 0x10))

@@ -9,7 +9,60 @@ static int contains_resource(const mh3_res_model *model, size_t offset, size_t b
     return offset >= model->offset && offset - model->offset <= model->size && bytes <= model->size - (offset - model->offset);
 }
 
+int mh3_model_draw_entry(const mh3_res_model *model, const mh3_model_draw_entries *entries, mh3_res_kind kind, uint32_t id, mh3_res_entry *out) {
+    const uint32_t *offsets;
+    uint32_t count;
+    if (!model || !entries || !out)
+        return 0;
+    if (kind == MH3_RES_MATERIALS) {
+        offsets = entries->materials;
+        count = entries->material_count;
+    } else if (kind == MH3_RES_SHAPES) {
+        offsets = entries->shapes;
+        count = entries->shape_count;
+    } else if (kind == MH3_RES_NODES) {
+        offsets = entries->nodes;
+        count = entries->node_count;
+    } else
+        return 0;
+    if (!offsets || id >= count || offsets[id] == UINT32_MAX || offsets[id] > model->size)
+        return 0;
+    out->id = id;
+    out->offset = model->offset + offsets[id];
+    out->name = NULL;
+    return 1;
+}
+static mh3_res_status draw_entry(const mh3_res_model *model, const mh3_model_draw_entries *entries, mh3_res_kind kind, uint32_t id, mh3_res_entry *out) {
+    return mh3_model_draw_entry(model, entries, kind, id, out) ? MH3_RES_OK : mh3_res_model_entry(model, kind, id, out);
+}
+/* mh3_res_draw_next without the dictionary checks of IDs the entries hold:
+ * they resolved through the same dictionaries. */
+static mh3_res_status draw_next(const mh3_res_model *model, size_t *cursor, const mh3_model_draw_entries *entries, mh3_res_draw *out) {
+    const size_t at = *cursor;
+    mh3_res_entry entry;
+    if (entries && contains_resource(model, at, 8) && model->container.size >= 8 && at <= model->container.size - 8 && model->container.data[at] == 4) {
+        const uint8_t *record = model->container.data + at;
+        const uint16_t material = (uint16_t)(record[1] << 8 | record[2]), shape = (uint16_t)(record[3] << 8 | record[4]), node = (uint16_t)(record[5] << 8 | record[6]);
+        if (mh3_model_draw_entry(model, entries, MH3_RES_MATERIALS, material, &entry) && mh3_model_draw_entry(model, entries, MH3_RES_SHAPES, shape, &entry) &&
+            mh3_model_draw_entry(model, entries, MH3_RES_NODES, node, &entry)) {
+            memset(out, 0, sizeof(*out));
+            out->offset = at;
+            out->material_id = material;
+            out->shape_id = shape;
+            out->node_id = node;
+            out->priority = record[7];
+            *cursor = at + 8;
+            return MH3_RES_OK;
+        }
+    }
+    return mh3_res_draw_next(model, cursor, out);
+}
+
 mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t cursor, mh3_res_span visibility, uint32_t options, mh3_model_draw_emit emit, void *user, mh3_model_draw_stats *stats) {
+    return mh3_model_draw_walk_entries(model, cursor, visibility, options, NULL, emit, user, stats);
+}
+mh3_res_status mh3_model_draw_walk_entries(const mh3_res_model *model, size_t cursor, mh3_res_span visibility, uint32_t options, const mh3_model_draw_entries *entries,
+                                           mh3_model_draw_emit emit, void *user, mh3_model_draw_stats *stats) {
     mh3_model_draw_stats totals = {0};
     size_t previous_material = 0;
     int has_previous_material = 0;
@@ -24,7 +77,7 @@ mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t cursor, mh
         uint32_t node_id;
         int visible;
         memset(&item, 0, sizeof(item));
-        status = mh3_res_draw_next(model, &cursor, &item.draw);
+        status = draw_next(model, &cursor, entries, &item.draw);
         if (status == MH3_RES_END) {
             status = MH3_RES_OK;
             break;
@@ -32,10 +85,10 @@ mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t cursor, mh
         if (status != MH3_RES_OK)
             break;
         ++totals.records;
-        status = mh3_res_model_entry(model, MH3_RES_NODES, item.draw.node_id, &item.node);
+        status = draw_entry(model, entries, MH3_RES_NODES, item.draw.node_id, &item.node);
         if (status != MH3_RES_OK)
             break;
-        status = mh3_res_model_entry(model, MH3_RES_SHAPES, item.draw.shape_id, &item.shape);
+        status = draw_entry(model, entries, MH3_RES_SHAPES, item.draw.shape_id, &item.shape);
         if (status != MH3_RES_OK)
             break;
         if (!contains_resource(model, item.node.offset, 0x18) || !contains_resource(model, item.shape.offset, 0x38)) {
@@ -60,7 +113,7 @@ mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t cursor, mh
             ++totals.hidden_shapes;
             continue;
         }
-        status = mh3_res_model_entry(model, MH3_RES_MATERIALS, item.draw.material_id, &item.material);
+        status = draw_entry(model, entries, MH3_RES_MATERIALS, item.draw.material_id, &item.material);
         if (status != MH3_RES_OK)
             break;
         if (!contains_resource(model, item.material.offset, 0x10)) {

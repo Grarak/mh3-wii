@@ -26,6 +26,20 @@ typedef mh3_res_status (*mh3_model_draw_emit)(void *user, const mh3_model_draw_i
  * flags on each iteration; animations may change them between submissions.
  * Callback order is bytecode order. Only a submitted material updates cache. */
 mh3_res_status mh3_model_draw_walk(const mh3_res_model *model, size_t bytecode, mh3_res_span visibility, uint32_t options, mh3_model_draw_emit emit, void *user, mh3_model_draw_stats *stats);
+/* A model's material, shape and node entries by draw-stream ID: their offsets
+ * from the MDL0 (mh3_res_model.offset) as mh3_res_model_entry resolves them,
+ * UINT32_MAX where unknown. Entries carry no name. */
+typedef struct {
+    const uint32_t *materials, *shapes, *nodes;
+    uint32_t material_count, shape_count, node_count;
+} mh3_model_draw_entries;
+/* mh3_model_draw_walk that takes the IDs `entries` holds from them instead of
+ * the model's dictionaries (NULL: the dictionaries for all). */
+mh3_res_status mh3_model_draw_walk_entries(const mh3_res_model *model, size_t bytecode, mh3_res_span visibility, uint32_t options, const mh3_model_draw_entries *entries,
+                                           mh3_model_draw_emit emit, void *user, mh3_model_draw_stats *stats);
+/* An entry the table holds, as mh3_res_model_entry would resolve it; 0 when
+ * the table does not hold it. */
+int mh3_model_draw_entry(const mh3_res_model *model, const mh3_model_draw_entries *entries, mh3_res_kind kind, uint32_t id, mh3_res_entry *out);
 
 typedef enum {
     MH3_MAT_TEXTURE_OBJECTS,
