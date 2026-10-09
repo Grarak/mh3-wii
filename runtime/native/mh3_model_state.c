@@ -783,14 +783,18 @@ mh3_res_status mh3_light_state_select(mh3_res_mut_span state, uint32_t id, mh3_n
         *slots = x;
         return MH3_RES_OK;
     }
-    status = light_state_read((mh3_res_span){state.data, state.size}, lights, &count, &sets);
-    if (status)
-        return status;
+    if (state.size < MH3_LIGHT_STATE_BYTES)
+        return MH3_RES_RANGE;
+    if (be16(state.data) > 128 || be16(state.data + 2) > 128)
+        return MH3_RES_RANGE;
     /* LightState owns128 set/ambient records independent of source capacity. */
     memcpy(set.light, state.data + 0x242c + (size_t)id * 12, 8);
     memcpy(&set.ambient, state.data + 0x2434 + (size_t)id * 12, 1);
-    memcpy(ambient, state.data + 0x222c, sizeof ambient);
-    x.ambient = set.ambient < 0 ? (mh3_rgba8){255, 255, 255, 255} : ambient[(uint8_t)set.ambient];
+    if (set.ambient < 0)
+        x.ambient = (mh3_rgba8){255, 255, 255, 255};
+    else
+        memcpy(&x.ambient, state.data + 0x222c + (size_t)(uint8_t)set.ambient * 4, 4);
+    /* The set already selected keeps its slots and masks: no light decoding. */
     if (be32(state.data + 16) == id) {
         x.diffuse_color = be32(state.data + 20);
         x.diffuse_alpha = be32(state.data + 24);
@@ -799,6 +803,10 @@ mh3_res_status mh3_light_state_select(mh3_res_mut_span state, uint32_t id, mh3_n
         *slots = x;
         return MH3_RES_OK;
     }
+    status = light_state_read((mh3_res_span){state.data, state.size}, lights, &count, &sets);
+    if (status)
+        return status;
+    memcpy(ambient, state.data + 0x222c, sizeof ambient);
     memcpy(x.source_ids, state.data + 36, 8);
     x.valid_mask = 0;
     for (i = 0; i < 8; i++)

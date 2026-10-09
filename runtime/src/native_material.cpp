@@ -483,6 +483,9 @@ void SetNativeFog(const mh3_native_fog& source) {
 }
 void SetNativeModelLights(const mh3_native_light_slots& source) {
     Owner();
+    // Models reselect their light set per draw; prepared lights follow the slots.
+    if (!std::memcmp(&lightSlots, &source, sizeof source))
+        return;
     std::array<mh3_shader_light, 8> next{};
     for (unsigned i = 0; i < 8; ++i)
         if (source.valid_mask & (1u << i))

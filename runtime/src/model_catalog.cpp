@@ -37,7 +37,10 @@ struct Pack {
     std::map<std::pair<uint64_t, uint32_t>, Origin> origins;
 };
 std::vector<Pack> packs;
-uint64_t source_epoch = 0;
+// source_epoch: any provenance/structure change (copies, loads, retirement).
+// block_epoch: typed material group writes, which change block provenance
+// but never a resource header, so resolved resources stay valid across them.
+uint64_t source_epoch = 0, block_epoch = 0;
 struct CachedOwner {
     NativeModelOwner owner;
     mh3_source_owner certificate;
@@ -47,7 +50,7 @@ struct CachedResource {
     mh3_catalog_resource resource;
 };
 struct CachedBlock {
-    uint64_t epoch, source_generation;
+    uint64_t epoch, block_epoch, source_generation;
     uintptr_t resident_handle;
     uint64_t resident_generation;
     uint32_t material_index;
@@ -82,6 +85,11 @@ void InvalidateSourceCache() {
     if (source_epoch == UINT64_MAX)
         throw std::runtime_error("Native model source cache epoch overflow");
     ++source_epoch;
+}
+void InvalidateBlockCache() {
+    if (block_epoch == UINT64_MAX)
+        throw std::runtime_error("Native model block cache epoch overflow");
+    ++block_epoch;
 }
 bool RetireCertificates(uint32_t address, uint32_t bytes) {
     bool retired = false;
@@ -245,7 +253,7 @@ void RecordNativeTypedMaterialWrite(uint32_t address, uint32_t bytes, mh3_model_
     if (mh3_source_intersects(&tracker, address, bytes))
         Checked(mh3_source_retire(&tracker, address, bytes));
     RetireLiveBlocks(address, bytes);
-    InvalidateSourceCache();
+    InvalidateBlockCache();
 }
 void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32_t bytes, mh3_model_material_block kind) {
     if (!bytes || destination == source)
@@ -259,7 +267,7 @@ void RecordNativeTypedMaterialCopy(uint32_t destination, uint32_t source, uint32
     if (mh3_source_intersects(&tracker, source, bytes) || mh3_source_intersects(&tracker, destination, bytes))
         Checked(mh3_source_record_copy(&tracker, destination, source, bytes, NextGeneration()));
     RetireLiveBlocks(destination, bytes);
-    InvalidateSourceCache();
+    InvalidateBlockCache();
 }
 void RegisterNativeModelPack(const mh3_mesh_pack* pack, const mh3_model_catalog* catalog, uintptr_t handle, uint64_t generation) {
     const auto trace = [](const char* stage, uint32_t index) {
@@ -504,12 +512,12 @@ NativeMaterialBlockDefaults ReadNativeMaterialBlockDefaults(const NativeModelOwn
             const uint64_t key = (uint64_t(actual_block) << 32) | (uint64_t(resource.pack_index) << 3) | uint32_t(kind);
             const auto cached = blocks.find(key);
             uint64_t generation = 0;
-            if (cached != blocks.end() && cached->second.epoch == source_epoch && cached->second.resident_handle == owner.resident_handle &&
+            if (cached != blocks.end() && cached->second.epoch == source_epoch && cached->second.block_epoch == block_epoch && cached->second.resident_handle == owner.resident_handle &&
                 cached->second.resident_generation == owner.resident_generation && cached->second.material_index == resource.pack_index)
                 generation = cached->second.source_generation;
             else {
                 Checked(mh3_source_resolve_material_block(&tracker, owner.catalog, actual_block, pack.material_catalog_indices.at(resource.pack_index), uint32_t(kind), &generation));
-                blocks.insert_or_assign(key, CachedBlock{source_epoch, generation, owner.resident_handle, owner.resident_generation, resource.pack_index});
+                blocks.insert_or_assign(key, CachedBlock{source_epoch, block_epoch, generation, owner.resident_handle, owner.resident_generation, resource.pack_index});
             }
             return {&pack.materials.at(resource.pack_index), actual_block, block.source_bytes, kind, generation};
         }
