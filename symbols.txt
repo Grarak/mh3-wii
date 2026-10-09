@@ -656,3 +656,11 @@
 80501ab4 MTX34RotXYZFIdx
 804c63d0 PSMTXConcatArray
 80471590 AXSyncPBs
+# ResAnmChr key helpers (ported in runtime/src/anm_chr_keys.cpp): the hermite blend, a
+# fres-plus-Newton reciprocal and the GQR3 u16 conversions.
+8008af34 AnmChrHermite
+80061110 FastReciprocal
+80050248 U16ToFloatGqr3
+80082f7c FloatToU16Gqr3
+8008bf6c AnmChrFVS32KeyValue
+8008be10 AnmChrFVS32KeySlope

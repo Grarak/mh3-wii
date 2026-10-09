@@ -137,4 +137,36 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
 #endif
 }
 
+void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*),
+             void (*port)(CpuContext*)) {
+#ifdef MH3_DEVELOPMENT
+    static std::map<std::string, uint64_t> counts;
+    static std::set<std::string> reported;
+    const CpuContext entry = *ctx;
+    original(ctx);
+    const uint64_t expected = returns == Returns::Gpr3 ? ctx->gpr[3] : ctx->fpr[1].raw;
+    *ctx = entry;
+    port(ctx);
+    const uint64_t actual = returns == Returns::Gpr3 ? ctx->gpr[3] : ctx->fpr[1].raw;
+    uint64_t& checks = counts[name];
+    ++checks;
+    if (expected != actual) {
+        char line[256];
+        std::snprintf(line, sizeof line,
+                      "MH3 port check: %s returns %016llx, the original %016llx (r3 %08x r4 %08x r5 %08x f1 %016llx f2 %016llx)\n",
+                      name, (unsigned long long)actual, (unsigned long long)expected, entry.gpr[3], entry.gpr[4],
+                      entry.gpr[5], (unsigned long long)entry.fpr[1].raw, (unsigned long long)entry.fpr[2].raw);
+        if (reported.size() < 64 && reported.insert(line).second) std::printf("%s", line);
+    } else if ((checks & (checks - 1)) == 0) {
+        std::printf("MH3 port check: %s matches the original (%llu calls)\n", name, (unsigned long long)checks);
+    }
+    std::fflush(stdout);
+#else
+    (void)name;
+    (void)returns;
+    (void)original;
+    port(ctx);
+#endif
+}
+
 } // namespace PortCheck
