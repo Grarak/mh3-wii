@@ -25,8 +25,15 @@
 #include "port_check.h"
 #include "ppc_runtime.h"
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <string>
 
 namespace {
@@ -207,10 +214,178 @@ double Evaluate(uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
     return Hermite(r2, v0, t0, v1, t1, s, d);
 }
 
+// The lean evaluation: the same walk in host float arithmetic. Quantized loads
+// and single multiplies and subtracts are exact in float, so they and the key
+// choice match the Gekko path; the fused multiply-adds (no FMA unit on the
+// Cortex-A9, so libm) are a double multiply-add rounded to single and the
+// reciprocal is a divide, which can differ in the last bits.
+float Pow2(int e) { return std::bit_cast<float>(uint32_t(127 + e) << 23); }
+// A GQR's load factor (2^-scale) and store factor (2^scale), scales 6-bit signed.
+float LoadFactor(uint32_t gqr) {
+    const int scale = int(gqr >> 24 & 0x3F);
+    return Pow2(scale < 32 ? -scale : 64 - scale);
+}
+float StoreFactor(uint32_t gqr) {
+    const int scale = int(gqr >> 8 & 0x3F);
+    return Pow2(scale < 32 ? scale : scale - 64);
+}
+// psq_st to an integer type: scale, clamp and truncate.
+template <typename T>
+T Quantize(float value, float factor) {
+    return T(std::clamp(value * factor, float(std::numeric_limits<T>::min()), float(std::numeric_limits<T>::max())));
+}
+float Madd(float a, float b, float c) { return float(double(a) * double(b) + double(c)); }
+
+// GQR types (bits 16-18 load, 0-2 store) the lean tracks assume: u8 for GQR2,
+// u16 for GQR3, s16 for GQR6 and GQR7.
+bool LeanGqrs(uint32_t gqr2, uint32_t gqr3, uint32_t gqr6, uint32_t gqr7) {
+    auto type = [](uint32_t gqr, uint32_t t) { return (gqr >> 16 & 7) == t && (gqr & 7) == t; };
+    return type(gqr2, 4) && type(gqr3, 5) && type(gqr6, 7) && type(gqr7, 7);
+}
+
+struct LeanBase {
+    uint32_t anm;
+    float scale, offset, u8Load, u8Store, u16Load, u16Store, s16Load6, s16Store6, s16Load7;
+    float ScaledU16(uint32_t raw) const { return Madd(scale, float(raw) * u16Load, offset); }
+};
+
+struct LeanFvs48 : LeanBase {
+    static constexpr uint32_t kSize = 6;
+    uint32_t Key(uint32_t index) const { return anm + 0x10 + index * kSize; }
+    float Frame(uint32_t key) const { return float(int16_t(MemoryInline::FlatRead16(key))) * s16Load6; }
+    float Value(uint32_t key) const { return ScaledU16(MemoryInline::FlatRead16(key + 2)); }
+    float Slope(uint32_t key) const { return float(int16_t(MemoryInline::FlatRead16(key + 4))) * s16Load7; }
+    int32_t Walk(float frame) const { return Quantize<int16_t>(frame, s16Store6); }
+    int32_t Raw(uint32_t key) const { return int16_t(MemoryInline::FlatRead16(key)); }
+};
+
+struct LeanFvs32 : LeanBase {
+    static constexpr uint32_t kSize = 4;
+    uint32_t Key(uint32_t index) const { return anm + 0x10 + index * kSize; }
+    float Frame(uint32_t key) const { return float(MemoryInline::FlatRead8(key)) * u8Load; }
+    float Value(uint32_t key) const { return ScaledU16(MemoryInline::FlatRead32(key) >> 12 & 0xFFF); }
+    float Slope(uint32_t key) const {
+        return float(int32_t(MemoryInline::FlatRead32(key) << 20) >> 20) * s16Load6;
+    }
+    uint32_t Walk(float frame) const { return Quantize<uint8_t>(frame, u8Store); }
+    uint32_t Raw(uint32_t key) const { return MemoryInline::FlatRead8(key); }
+};
+
+struct LeanFvs96 : LeanBase {
+    static constexpr uint32_t kSize = 12;
+    uint32_t Key(uint32_t index) const { return anm + 8 + index * kSize; }
+    float Frame(uint32_t key) const { return MemoryInline::FlatReadFloat32(key); }
+    float Value(uint32_t key) const { return MemoryInline::FlatReadFloat32(key + 4); }
+    float Slope(uint32_t key) const { return MemoryInline::FlatReadFloat32(key + 8); }
+    float Walk(float frame) const { return frame; }
+    float Raw(uint32_t key) const { return Frame(key); }
+};
+
+template <typename Track> struct Lean;
+template <> struct Lean<Fvs48> { using Type = LeanFvs48; };
+template <> struct Lean<Fvs32> { using Type = LeanFvs32; };
+template <> struct Lean<Fvs96> { using Type = LeanFvs96; };
+
+template <typename Track>
+double EvaluateLean(uint32_t r2, uint32_t anm, float frame, const CpuContext& cpu) {
+    if (!ValidPointer(anm)) Panic("NW4R:Pointer Error pAnm is not valid", anm);
+    typename Lean<Track>::Type t;
+    LeanBase& b = t;
+    b.anm = anm;
+    if constexpr (!std::is_same_v<Track, Fvs96>) {
+        b.scale = MemoryInline::FlatReadFloat32(anm + kScale);
+        b.offset = MemoryInline::FlatReadFloat32(anm + kOffset);
+        b.u8Load = LoadFactor(cpu.gqr[2]), b.u8Store = StoreFactor(cpu.gqr[2]);
+        b.s16Load6 = LoadFactor(cpu.gqr[6]), b.s16Store6 = StoreFactor(cpu.gqr[6]);
+        b.s16Load7 = LoadFactor(cpu.gqr[7]);
+    }
+    b.u16Load = LoadFactor(cpu.gqr[3]), b.u16Store = StoreFactor(cpu.gqr[3]);
+    const uint32_t count = MemoryInline::FlatRead16(anm + kKeyCount);
+    const uint32_t first = t.Key(0), last = t.Key(count - 1);
+
+    const float firstFrame = t.Frame(first);
+    if (frame <= firstFrame) return t.Value(first);
+    if (t.Frame(last) <= frame) return t.Value(last);
+
+    const float estimate = MemoryInline::FlatReadFloat32(anm + kInvSpan) *
+                           ((frame - firstFrame) * (float(count) * b.u16Load));
+    const uint32_t index = Quantize<uint16_t>(estimate, b.u16Store);
+    if (int32_t(index) > int32_t(count) - 1) Panic("estimatePos is out of bounds", index);
+
+    const auto walk = t.Walk(frame);
+    uint32_t key = t.Key(index);
+    if (walk < t.Raw(key)) {
+        do key -= Track::kSize;
+        while (walk < t.Raw(key));
+    } else {
+        do key += Track::kSize;
+        while (t.Raw(key) <= walk);
+        key -= Track::kSize;
+    }
+
+    const float f0 = t.Frame(key);
+    if (frame == f0) return t.Value(key);
+    const uint32_t next = key + Track::kSize;
+    const float v0 = t.Value(key), t0 = t.Slope(key);
+    const float v1 = t.Value(next), t1 = t.Slope(next);
+    const float f1 = t.Frame(next);
+    if (!(f0 <= frame && frame <= f1)) Panic("frame is out of bounds", 0);
+    const float d = frame - f0;
+    const float s = d * (1.0f / (f1 - f0));
+
+    // Hermite, as 0x8008AF34.
+    const float c0 = MemoryInline::FlatReadFloat32(r2 - 31672);
+    const float c1 = MemoryInline::FlatReadFloat32(r2 - 31668);
+    const float c2 = MemoryInline::FlatReadFloat32(r2 - 31664);
+    const float f7 = s - c0;
+    const float f6 = d * f7;
+    const float f4 = Madd(f7, t0, s * t1);
+    const float f2 = float(double(c1) * double(s) - double(c2));
+    const float blend = Madd(s, s * (f2 * (v0 - v1)), v0);
+    return Madd(f6, f4, blend);
+}
+
+// The evaluation the ports use: lean when the GQRs have the types it assumes.
+// MH3_ANM_KEYS_CHECK=1 (debugging): compare it with the Gekko path and report
+// the calls that differ by more than 1e-4 relative.
+template <typename Track>
+double EvaluateFast(const CpuContext& cpu, uint32_t r1, uint32_t r2, uint32_t anm, double frame) {
+    if (!LeanGqrs(cpu.gqr[2], cpu.gqr[3], cpu.gqr[6], cpu.gqr[7])) [[unlikely]] {
+#ifdef MH3_DEVELOPMENT
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            std::fprintf(stderr, "MH3 anm keys: GQRs %08x %08x %08x %08x not the lean types, Gekko path\n",
+                         cpu.gqr[2], cpu.gqr[3], cpu.gqr[6], cpu.gqr[7]);
+        }
+#endif
+        return Evaluate<Track>(r1, r2, anm, frame);
+    }
+    const double lean = EvaluateLean<Track>(r2, anm, float(frame), cpu);
+#ifdef MH3_DEVELOPMENT
+    static const bool check = std::getenv("MH3_ANM_KEYS_CHECK") != nullptr;
+    if (check) [[unlikely]] {
+        static uint64_t checked = 0, differing = 0, far = 0;
+        const double exact = Evaluate<Track>(r1, r2, anm, frame);
+        ++checked;
+        if (lean != exact) {
+            ++differing;
+            if (std::fabs(lean - exact) > 1e-4 * std::max(1.0, std::fabs(exact)) && ++far <= 16)
+                std::fprintf(stderr, "MH3 anm keys: track %08x frame %.6f lean %.9g exact %.9g\n", anm, frame, lean,
+                             exact);
+        }
+        if (checked % 200000 == 0)
+            std::fprintf(stderr, "MH3 anm keys: %llu checked, %llu differ in the last bits, %llu beyond 1e-4\n",
+                         (unsigned long long)checked, (unsigned long long)differing, (unsigned long long)far);
+    }
+#endif
+    return lean;
+}
+
 } // namespace
 
-// The ports, or with MH3_PORT_CHECK naming one the port checked against the
-// original on every call (registers from the current context).
+// The ports, or with MH3_PORT_CHECK naming one the (Gekko path) port checked
+// against the original on every call (registers from the current context).
 template <typename Track>
 double Checked(const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*), bool check,
                uint32_t r1, uint32_t r2, uint32_t r3, double f1) {
@@ -227,7 +402,7 @@ double Checked(const char* name, void (*original)(CpuContext*), void (*port)(Cpu
 #else
     (void)name, (void)original, (void)port, (void)check;
 #endif
-    return Evaluate<Track>(r1, r2, r3, f1);
+    return EvaluateFast<Track>(*TryGetCpuContext(), r1, r2, r3, f1);
 }
 
 #define MH3_ANM_CHR_KEYS(address, track, name)                                                              \
