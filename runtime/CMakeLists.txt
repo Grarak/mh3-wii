@@ -201,6 +201,10 @@ if(VITA)
   set_target_properties(MH3RomDecoder PROPERTIES IMPORTED_LOCATION "${rom_decoder_archive}")
   add_dependencies(MH3RomDecoder MH3RomDecoderBuild)
   target_link_libraries(MH3 PRIVATE MH3RomDecoder)
+  # Rust std includes POSIX helpers unsupported by Vita newlib. They are not
+  # reachable from the positioned-read ROM bridge; discard unused sections
+  # rather than retaining the complete static library's filesystem surface.
+  target_link_options(MH3 PRIVATE "-Wl,--gc-sections")
   set_property(SOURCE src/launcher_disc.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_HAS_ROM_DECODER=1)
   set_source_files_properties(src/launcher_textures.cpp vita/launcher.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")

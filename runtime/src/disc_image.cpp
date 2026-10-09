@@ -162,7 +162,6 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
         verify(0, boot);
         verify(uint64_t(Word(boot, 0x424)) * 4, fst);
     } else if (packed) throw std::runtime_error("Packed disc requires partition.bin");
-#ifdef __vita__
     const auto mapPath = root / "native-texture-map.bin";
     if (applyNativeTextures && Exists(mapPath)) {
         if (!Exists(root / "native-textures.bin")) throw std::runtime_error("Native texture map requires its payload pack");
@@ -183,7 +182,6 @@ DiscImage::DiscImage(const std::filesystem::path& root, bool applyNativeTextures
             previousEnd = offset + 4;
         }
     }
-#endif
 }
 void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>& data) const {
     const uint64_t end = offset + data.size();
