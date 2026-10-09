@@ -125,7 +125,13 @@ mh3_temporal_feedback_input TemporalInput(uint32_t self) {
     return input;
 }
 
-void SceneDrawBack(CpuContext *cpu, uint32_t self, int subtract) {
+// Draws a captured scene back over the frame. `restores` marks the glare's
+// draw-back of the capture it has just taken: the original restores the EFB
+// its bright pass used as scratch space, but the native bright pass draws into
+// its own targets, so the frame is still what was captured. Drawing it back
+// unchanged (untinted, replacing) would only cost a full-screen draw and
+// lower the frame to the capture's 640x448; its state still applies.
+void SceneDrawBack(CpuContext *cpu, uint32_t self, int subtract, bool restores = false) {
     uint32_t id = FlatRead32(self + 0x134);
 
     if (!id)
@@ -137,6 +143,12 @@ void SceneDrawBack(CpuContext *cpu, uint32_t self, int subtract) {
     Require(mh3_scene_capture_quad(id, FlatReadFloat32(self + 0x120), FlatReadFloat32(self + 0x124), FlatReadFloat32(self + 0x128), FlatReadFloat32(self + 0x12c), paused ? 120 : 255, subtract,
                                    &GetNativeDrawState(), &GetNativeMaterialState(), &plan),
             "Invalid captured scene quad");
+
+    if (restores && !paused && !subtract) {
+        State(plan);
+        return;
+    }
+
     Emit(plan);
 }
 
@@ -478,14 +490,16 @@ extern "C" void MH3_NativeGlareDraw(CpuContext *cpu) {
     GuestCall call{cpu};
     uint32_t self = frame.Arg(3);
 
-    if (call.Call<0x80046F70>() == 0 && FlatRead8(0x8066d294))
+    const bool captures = call.Call<0x80046F70>() == 0 && FlatRead8(0x8066d294);
+
+    if (captures)
         SceneCapture(0x8066d178, 0);
 
     if (!FlatRead8(self))
         return;
 
     GlareBrightPass(self);
-    SceneDrawBack(cpu, 0x8066d178, 0);
+    SceneDrawBack(cpu, 0x8066d178, 0, captures);
     mh3_scene_quad_plan plan;
     Require(mh3_scene_capture_quad(FlatRead32(self + 8), FlatRead16(self + 0x14), FlatRead16(self + 0x16), FlatReadFloat32(0x8066d2a0), FlatReadFloat32(0x8066d2a4), 255, 0, &GetNativeDrawState(),
                                    &GetNativeMaterialState(), &plan),
