@@ -39,6 +39,10 @@ void QueueNativeGraphicsTask(NativeTaskOrder order, std::function<void()> task);
 // The recording packet's exchange slot (0..2) and frame sequence.
 uint32_t NativeFramePacketSlot();
 uint64_t NativeFramePacketSequence();
+// Game thread: every packet up to this sequence has rendered or was replaced
+// unrendered, so nothing it recorded is read any more (all of them while no
+// render thread runs).
+uint64_t NativeFramePacketsDone();
 
 // ---- Frame lifecycle (graphics_host.cpp) ----
 // Start hands the calling (game) thread's graphics context to a new render

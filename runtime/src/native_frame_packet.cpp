@@ -652,6 +652,11 @@ uint32_t NativeFramePacketSlot() {
 uint64_t NativeFramePacketSequence() {
     return sequence;
 }
+uint64_t NativeFramePacketsDone() {
+    // The render thread takes packets in sequence order: once it finished
+    // one, every older packet has rendered or was replaced and is never read.
+    return running.load(std::memory_order_acquire) ? completed.load(std::memory_order_acquire) : UINT64_MAX;
+}
 
 void StartNativeRenderThread() {
     if (running)

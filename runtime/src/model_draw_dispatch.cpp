@@ -202,6 +202,7 @@ void Draw(CpuContext* cpu, uint32_t resource, uint32_t stream, uint32_t count, u
         }
         Checked(mh3_model_draw_walk_entries(&model.value, model.Stream(stream), visibility, options, entries, Submit::Emit, &submit, nullptr));
     }
+    EndNativeModelDraw();
 }
 uint32_t Collect(const Model& model, uint32_t position, uint32_t stream, uint32_t replacement) {
     const mh3_model_draw_collection input{

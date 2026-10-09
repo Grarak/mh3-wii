@@ -193,3 +193,11 @@ inline const DevOptions& ProfileOptions() {
     static const DevOptions options("MH3_PROFILE", {"frames", "split", "sync"});
     return options;
 }
+
+// MH3_VERIFY=[pose]: in-run checks that state reused instead of copied equals
+// a fresh copy: `pose` compares every reused pose version with the live view
+// arrays (model_pose.cpp).
+inline const DevOptions& VerifyOptions() {
+    static const DevOptions options("MH3_VERIFY", {"pose"});
+    return options;
+}

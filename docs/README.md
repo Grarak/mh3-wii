@@ -9,6 +9,7 @@ how to build, run (including the Vita devkit) and debug.
 - [native-renderer-status.md](native-renderer-status.md): the architecture, each platform's state, the culling and material A/B, GXM rules, shaders and memory limits. Start here.
 - [native-render-plan.md](native-render-plan.md): the fixed shading models, frame packets, draw state owners, deferred model preparation and the remaining steps.
 - [frame-state-slot-exchange.md](frame-state-slot-exchange.md): the three-slot exchange the frame packets use.
+- [game-thread-copies.md](game-thread-copies.md): the game thread's copies, the pose versions that replaced the per-draw pose copy, and `MH3_VERIFY=pose`.
 - [native-material-gpu.md](native-material-gpu.md): material uniforms in GPU memory.
 - [native-material-state.md](native-material-state.md): the typed material state, its writers, group publication, revisions and the shading-model classification.
 - [vita-shader-specializations.md](vita-shader-specializations.md): exact shader variants (linear fog, identity texgen, texture × vertex, destination alpha one) and their checks.

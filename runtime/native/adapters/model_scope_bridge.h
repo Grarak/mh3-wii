@@ -11,8 +11,10 @@ void PrepareNativeModelMaterial(uint32_t material_reference, uint32_t control, u
 void SubmitNativeModelShape(uint32_t shape_reference, uint32_t position, uint32_t normal);
 // SubmitNativeModelShape prepares on the game thread and records the draw in
 // the frame packet; the render thread executes it from that packet's slot.
-// Each model draw call starts its own pose copies.
+// A model draw (between Begin and End) asks once for the version of its pose
+// arrays (model_pose_bridge.h); a shape drawn outside one asks each time.
 void BeginNativeModelDraw();
+void EndNativeModelDraw();
 void ExecuteNativeModelDraw(uint32_t slot, uint32_t item);
 // RMHP08 display-list dispatch 80076A58: material/shape resource references,
 // direct position/normal matrices, dispatch flags, replacement bindings and the

@@ -1095,35 +1095,28 @@ namespace {
 // One model mesh draw split at the shading boundary. The game thread prepares
 // it (material scope, shape matrix selection, row selectors) and records it in
 // the frame packet with its shading state; the render thread rebuilds the
-// matrix palette from the copied pose and submits.
+// matrix palette from the pose version and submits.
 struct ModelItem {
     NativeModelOwner owner;
     const mh3_prepared_mesh* prepared;
     mh3_matrix_runtime_storage storage;
     mh3_shape_matrix_input input;
-    uint32_t pose;
+    const NativePoseVersion* pose;
+#ifdef MH3_DEVELOPMENT
+    uint32_t pose_epoch; // the version's epoch when captured (MH3_VERIFY=pose)
+#endif
     mh3_model_texcoord_sizes coordinate_sizes;
     // Deferred items carry the dispatch's preparation inputs instead of its
     // prepared input/coordinate sizes; the render thread prepares them.
     bool deferred = false, direct_position = false, direct_normal = false;
     ModelPrepInputs prep;
 };
-// Pose arrays as the draw found them: copied once per binding and pass.
-struct ModelPose {
-    uint32_t address[3];
-    std::vector<uint8_t> bytes;
-    size_t offset[3];
-    mh3_matrix_sources layout;
-};
-// Items and poses of one frame packet, indexed by its exchange slot: the game
-// thread fills the producer's store, the render thread reads the consumer's.
+// Items of one frame packet, indexed by its exchange slot: the game thread
+// fills the producer's store, the render thread reads the consumer's.
 struct ModelStore {
     std::vector<ModelItem> items;
-    std::vector<ModelPose> poses;
     ModelPrepSrtList srts;
-    // Poses are shared only within one model draw: a later view pass may
-    // rewrite the same matrix arrays.
-    size_t itemCount = 0, poseCount = 0, poseShared = 0;
+    size_t itemCount = 0;
     uint64_t sequence = UINT64_MAX;
 };
 std::array<ModelStore, 3> stores;
@@ -1131,55 +1124,50 @@ std::array<ModelStore, 3> stores;
 ModelStore scratch;
 ModelStore& Store() {
     if (!NativeGraphicsFrameShouldRender()) {
-        scratch.itemCount = scratch.poseCount = scratch.poseShared = 0;
+        scratch.itemCount = 0;
         scratch.srts.count = 0;
         return scratch;
     }
     auto& store = stores.at(NativeFramePacketSlot());
     if (store.sequence != NativeFramePacketSequence()) {
         store.sequence = NativeFramePacketSequence();
-        store.itemCount = store.poseCount = store.poseShared = 0;
+        store.itemCount = 0;
         store.srts.count = 0;
     }
     return store;
 }
-// The pose this model draw already copied from the same arrays, or -1.
-int64_t SharedPose(const ModelStore& capture, const uint32_t addresses[3]) {
-    for (size_t i = capture.poseCount; i-- > capture.poseShared;)
-        if (!std::memcmp(capture.poses[i].address, addresses, sizeof capture.poses[i].address))
-            return int64_t(i);
-    return -1;
-}
-uint32_t CapturePose(ModelStore& capture, const uint32_t addresses[3], const mh3_matrix_sources& sources) {
-    if (const auto shared = SharedPose(capture, addresses); shared >= 0)
-        return uint32_t(shared);
-    if (capture.poseCount == capture.poses.size())
-        capture.poses.emplace_back();
-    auto& pose = capture.poses[capture.poseCount];
-    std::memcpy(pose.address, addresses, sizeof pose.address);
-    pose.layout = sources;
-    const mh3_matrix_table* tables[3]{&sources.positions, &sources.normals, &sources.environment};
-    size_t total = 0;
-    for (unsigned i = 0; i < 3; ++i)
-        total += tables[i]->bytes.data ? tables[i]->bytes.size : 0;
-    pose.bytes.resize(total);
-    size_t offset = 0;
-    for (unsigned i = 0; i < 3; ++i) {
-        pose.offset[i] = offset;
-        if (!tables[i]->bytes.data)
-            continue;
-        std::memcpy(pose.bytes.data() + offset, tables[i]->bytes.data, tables[i]->bytes.size);
-        offset += tables[i]->bytes.size;
+// The shapes of one model draw share its binding: the version found for the
+// first serves the rest without reading the pose again. A later model draw,
+// even of the same arrays, asks for the version again (a view pass between
+// them may have rewritten the arrays), and so does every shape drawn outside
+// a model draw.
+struct DrawPose {
+    uint32_t address[3]{};
+    uint64_t sequence = UINT64_MAX;
+    const NativePoseVersion* version = nullptr;
+    bool active = false; // between BeginNativeModelDraw and EndNativeModelDraw
+} drawPose;
+// The version of the bound pose arrays (an empty one without arrays).
+const NativePoseVersion* Pose(const uint32_t addresses[3], uint32_t model) {
+    const uint64_t sequence = NativeFramePacketSequence();
+    if (drawPose.active && drawPose.version && drawPose.sequence == sequence && !std::memcmp(drawPose.address, addresses, sizeof drawPose.address)) {
+#ifdef MH3_DEVELOPMENT
+        if (addresses[0] && VerifyNativeModelPoses())
+            VerifyNativeModelPose(*drawPose.version, ReadNativeModelPose(addresses, model));
+#endif
+        return drawPose.version;
     }
-    return uint32_t(capture.poseCount++);
+    const auto live = addresses[0] ? ReadNativeModelPose(addresses, model) : mh3_matrix_sources{};
+    drawPose.version = VersionNativeModelPose(addresses, live);
+    drawPose.sequence = sequence;
+    std::memcpy(drawPose.address, addresses, sizeof drawPose.address);
+    return drawPose.version;
 }
-mh3_matrix_sources PoseSources(const ModelPose& pose) {
-    auto sources = pose.layout;
-    mh3_matrix_table* tables[3]{&sources.positions, &sources.normals, &sources.environment};
-    for (unsigned i = 0; i < 3; ++i)
-        if (tables[i]->bytes.data)
-            tables[i]->bytes.data = pose.bytes.data() + pose.offset[i];
-    return sources;
+void CapturePose(ModelItem& item, const uint32_t addresses[3]) {
+    item.pose = Pose(addresses, item.owner.model_address);
+#ifdef MH3_DEVELOPMENT
+    item.pose_epoch = item.pose->epoch.load(std::memory_order_relaxed);
+#endif
 }
 // The bound array of `semantic` is the shape's authored source, unwritten
 // since conversion (no producer generation): the converted mesh matches it.
@@ -1192,7 +1180,7 @@ bool BoundOriginal(const ShapeSources& originals, uint32_t semantic) {
     const uint32_t bound = selected->payload_address, original = originals.source[semantic].payload_address;
     return bound == original || Canonical(bound) == Canonical(original);
 }
-void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
+void PrepareModelItem(ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
     item.owner = context.owner;
     const auto& prepared = *context.sources->prepared;
     item.prepared = &prepared;
@@ -1207,11 +1195,9 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
             throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
     }
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);
-    mh3_matrix_sources sources{};
-    if (binding.address[0])
-        sources = ReadNativeModelPose(binding.address, item.owner.model_address);
-    else if (!direct_position)
+    if (!binding.address[0] && !direct_position)
         throw std::runtime_error("Indexed model matrix has no completed pose producer");
+    CapturePose(item, binding.address);
     item.storage = {};
     if (direct_position) {
         mh3_matrix_read34_unchecked({Bytes(direct_position, 48), 1, 48, 1}, 0, &item.storage.direct_position);
@@ -1223,7 +1209,6 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         direct_position ? &item.storage.direct_position : nullptr, direct_position && direct_normal ? &item.storage.direct_normal : nullptr, &item.input);
     if (item.input.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
-    item.pose = CapturePose(capture, binding.address, sources);
     PrepareNativeModelCoordinateSizes(Mode().texgens);
     if (item.input.matrix_id >= 0) {
         // Row selectors depend on the shape's matrix sources, not pose values.
@@ -1251,10 +1236,10 @@ void PrepareModelItem(ModelStore& capture, ModelItem& item, const ShapeContext& 
         Memory::Write8(locations.current_valid, 0);
 }
 // Render thread: replays one recorded item against the Render owner's state.
-void ExecuteModelItem(const ModelStore& capture, const ModelItem& item, mh3_shape_matrix_input input, const mh3_model_texcoord_sizes& coordinate_sizes) {
+void ExecuteModelItem(const ModelItem& item, mh3_shape_matrix_input input, const mh3_model_texcoord_sizes& coordinate_sizes) {
     const auto& prepared = *item.prepared;
     const auto& owner = item.owner;
-    const auto sources = PoseSources(capture.poses[item.pose]);
+    const auto& sources = item.pose->sources;
     if (input.direct_position)
         input.direct_position = &item.storage.direct_position;
     if (input.direct_normal)
@@ -1312,6 +1297,11 @@ void ExecuteModelItem(const ModelStore& capture, const ModelItem& item, mh3_shap
             submit_one(i);
     else
         submit_one(0);
+#ifdef MH3_DEVELOPMENT
+    // After every read of the version: its storage was not reused meanwhile.
+    if (VerifyNativeModelPoses())
+        CheckNativeModelPoseLifetime(*item.pose, item.pose_epoch);
+#endif
 }
 } // namespace
 
@@ -1328,7 +1318,7 @@ void SubmitShape(const ShapeContext& context, uint32_t direct_position, uint32_t
     item.deferred = false;
     {
         MH3_SPLIT_DETAIL_SCOPE(MH3_SPLIT_SHAPE_PREP);
-        PrepareModelItem(capture, item, context, direct_position, direct_normal);
+        PrepareModelItem(item, context, direct_position, direct_normal);
     }
     item.coordinate_sizes = coordinate_sizes;
 #ifdef MH3_DEVELOPMENT
@@ -1345,14 +1335,18 @@ void SubmitNativeModelShape(uint32_t reference, uint32_t direct_position, uint32
         SubmitShape(ResolveShape(reference), direct_position, direct_normal);
 }
 void BeginNativeModelDraw() {
-    auto& capture = Store();
-    capture.poseShared = capture.poseCount;
+    drawPose.version = nullptr;
+    drawPose.active = true;
+}
+void EndNativeModelDraw() {
+    drawPose.version = nullptr;
+    drawPose.active = false;
 }
 void ExecuteNativeModelDraw(uint32_t slot, uint32_t index) {
     const auto& capture = stores.at(slot);
     const auto& item = capture.items.at(index);
     if (!item.deferred) {
-        ExecuteModelItem(capture, item, item.input, item.coordinate_sizes);
+        ExecuteModelItem(item, item.input, item.coordinate_sizes);
         return;
     }
     ModelPrepShapeResult shape;
@@ -1361,7 +1355,7 @@ void ExecuteNativeModelDraw(uint32_t slot, uint32_t index) {
     if (!item.prep.visible)
         return;
     ApplyNativeRenderRaster();
-    ExecuteModelItem(capture, item, shape.input, shape.coordinate_sizes);
+    ExecuteModelItem(item, shape.input, shape.coordinate_sizes);
 }
 
 extern "C" void MH3_ModelMaterialScope(CpuContext* cpu) {
@@ -1516,8 +1510,8 @@ void CaptureInputs(ModelPrepInputs& in, const NativeModelDispatch& d, const mh3_
     }
 }
 // PrepareModelItem's game-thread part: the converted-source check, the pose
-// copy and the direct matrices. The rest runs with the deferred preparation.
-void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
+// version and the direct matrices. The rest runs with the deferred preparation.
+void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_position, uint32_t direct_normal) {
     item.owner = context.owner;
     const auto& prepared = *context.sources->prepared;
     item.prepared = &prepared;
@@ -1534,14 +1528,9 @@ void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& cont
             throw std::runtime_error("Resident model vertex binding requires a converted authored source: " + std::to_string(semantic));
     }
     const auto binding = ReadNativeModelMatrixSources(locations.arrays);
-    // Shapes of one model draw share its pose arrays: read and copy them once.
-    const int64_t shared = binding.address[0] ? SharedPose(capture, binding.address) : -1;
-    mh3_matrix_sources sources{};
-    if (binding.address[0]) {
-        if (shared < 0)
-            sources = ReadNativeModelPose(binding.address, item.owner.model_address);
-    } else if (!direct_position)
+    if (!binding.address[0] && !direct_position)
         throw std::runtime_error("Indexed model matrix has no completed pose producer");
+    CapturePose(item, binding.address);
     item.storage = {};
     item.direct_position = direct_position != 0;
     item.direct_normal = direct_position && direct_normal;
@@ -1552,7 +1541,6 @@ void CaptureShape(ModelStore& capture, ModelItem& item, const ShapeContext& cont
     }
     if (originals.matrix_id < 0 && !prepared.palette_batch_count)
         throw std::runtime_error("Envelope model requires converted skinning palette records");
-    item.pose = shared >= 0 ? uint32_t(shared) : CapturePose(capture, binding.address, sources);
     item.prep.matrix_id = originals.matrix_id;
     item.prep.has_normal = originals.has_normal;
     item.prep.has_binding = binding.address[0] != 0;
@@ -1617,7 +1605,7 @@ void DispatchDeferred(const NativeModelDispatch& d, const Resolved* r) {
                     std::memcpy(item->prep.shape_cache, Bytes(shape.shape + 12, 12).data, 12);
             }
             if (item)
-                CaptureShape(*capture, *item, shape, d.position, d.normal);
+                CaptureShape(*item, shape, d.position, d.normal);
         }
     }
     if (!item)

@@ -7,6 +7,7 @@
 #include "asset_cache.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_prepare_diagnostics.h"
+#include "runtime/native/adapters/model_pose_bridge.h"
 #include "native_frame_statistics.h"
 #include "audio/native_audio.h"
 #include "audio_output_statistics.h"
@@ -500,6 +501,13 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                      static_cast<unsigned long long>(scene.culled), static_cast<unsigned long long>(scene.models), static_cast<unsigned long long>(scene.tested),
                      static_cast<unsigned long long>(scene.other_class), static_cast<unsigned long long>(scene.callback), static_cast<unsigned long long>(scene.no_table),
                      static_cast<unsigned long long>(scene.unbounded), static_cast<unsigned long long>(scene.mismatches), static_cast<unsigned long long>(scene.checked));
+    if (const auto pose = TakeNativePoseStatistics(); pose.captures)
+        std::fprintf(stderr,
+                     "MH3 pose versions: %llu captures, %llu copied (%.1f KiB), %llu same revision, %llu same contents; %u versions, %u bindings; verified %llu, %llu "
+                     "mismatches, %llu lifetime errors\n",
+                     static_cast<unsigned long long>(pose.captures), static_cast<unsigned long long>(pose.copies), double(pose.copied_bytes) / 1024.0,
+                     static_cast<unsigned long long>(pose.same_revision), static_cast<unsigned long long>(pose.same_contents), pose.versions, pose.bindings,
+                     static_cast<unsigned long long>(pose.verified), static_cast<unsigned long long>(pose.mismatches), static_cast<unsigned long long>(pose.lifetime_errors));
     if (const auto cull = TakeNativeModelCullStatistics(); cull.draws)
         std::fprintf(stderr, "MH3 model cull: %llu of %llu mesh draws culled (%.1f%%)\n", static_cast<unsigned long long>(cull.culled),
                      static_cast<unsigned long long>(cull.draws), 100.0 * double(cull.culled) / double(cull.draws));

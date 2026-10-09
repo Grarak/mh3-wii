@@ -4,6 +4,7 @@
 #include <aurora/fast_map.h>
 #include "guest_span.h"
 #include "memory.h"
+#include "native_frame_packet.h"
 #include "native_graphics.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
 #include "runtime/native/adapters/model_state_bridge.h"
@@ -12,11 +13,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
 
 const mh3_res_memory& MH3NativeResourceMemory();
 namespace {
@@ -194,6 +200,213 @@ mh3_matrix_sources ReadNativeModelPose(const uint32_t addresses[3], uint32_t mod
         throw std::runtime_error("Native model matrices have no completed typed pose producer");
     return result;
 }
+
+// ---- Pose versions (model_pose_bridge.h) ----
+namespace {
+// The version a binding (keyed by its position array) was last captured as.
+struct PoseBinding {
+    uint32_t address[3]{};
+    uint64_t generation = 0, used = 0;
+    NativePoseVersion* version = nullptr;
+};
+FastMap<uint32_t, PoseBinding> poseBindings;
+// Version storage by size class (256 << class bytes), recycled. Each class
+// keeps at most PoseFreeLimit free versions: a render thread that falls
+// behind leaves many versions retired at once, and they are deleted after.
+constexpr unsigned PoseClasses = 16;
+constexpr size_t PoseFreeLimit = 64;
+std::vector<NativePoseVersion*> poseFree[PoseClasses];
+// Replaced versions with the sequence of the packet recorded when they were
+// replaced: it and every older packet may still reference them.
+struct RetiredPose {
+    uint64_t sequence;
+    NativePoseVersion* version;
+};
+std::deque<RetiredPose> poseRetired;
+uint64_t poseSwept = 0;
+uint32_t poseVersions = 0;
+constinit const NativePoseVersion emptyPose{};
+#ifdef MH3_DEVELOPMENT
+NativePoseStatistics poseStats{};
+uint64_t poseVerified = 0, poseMismatches = 0;
+std::atomic<uint64_t> poseLifetimeErrors{0};
+#define MH3_POSE_STAT(...) __VA_ARGS__
+#else
+#define MH3_POSE_STAT(...)
+#endif
+
+// A version no packet references any more.
+void FreePose(NativePoseVersion* version) {
+    auto& free = poseFree[version->size_class];
+    if (free.size() < PoseFreeLimit) {
+        free.push_back(version);
+        return;
+    }
+    delete[] version->bytes;
+    delete version;
+    --poseVersions;
+}
+NativePoseVersion* AcquirePose(size_t bytes) {
+    for (const uint64_t done = NativeFramePacketsDone(); !poseRetired.empty() && poseRetired.front().sequence <= done; poseRetired.pop_front())
+        FreePose(poseRetired.front().version);
+    unsigned size_class = 0;
+    while (size_class < PoseClasses && (size_t(256) << size_class) < bytes)
+        ++size_class;
+    if (size_class == PoseClasses)
+        throw std::runtime_error("Native pose arrays exceed the largest version size");
+    if (auto& free = poseFree[size_class]; !free.empty()) {
+        auto* version = free.back();
+        free.pop_back();
+#ifdef MH3_DEVELOPMENT
+        version->epoch.fetch_add(1, std::memory_order_relaxed);
+#endif
+        return version;
+    }
+    auto* version = new NativePoseVersion{};
+    version->bytes = new uint8_t[size_t(256) << size_class];
+    version->size_class = uint8_t(size_class);
+    ++poseVersions;
+    return version;
+}
+void RetirePose(NativePoseVersion* version) {
+    if (!version)
+        return;
+    if (NativeRenderThreadRunning())
+        poseRetired.push_back({NativeFramePacketSequence(), version});
+    else
+        FreePose(version);
+}
+// Bindings not captured for a while (models gone or out of view) give their
+// versions back.
+void SweepPoses(uint64_t sequence) {
+    constexpr uint64_t Idle = 120;
+    if (sequence - poseSwept < Idle)
+        return;
+    poseSwept = sequence;
+    for (auto it = poseBindings.begin(); it != poseBindings.end();) {
+        if (sequence - it->second.used >= Idle) {
+            RetirePose(it->second.version);
+            it = poseBindings.erase(it);
+        } else
+            ++it;
+    }
+}
+const mh3_matrix_table& PoseTable(const mh3_matrix_sources& sources, unsigned i) {
+    return i == 0 ? sources.positions : i == 1 ? sources.normals : sources.environment;
+}
+bool SamePoseLayout(const mh3_matrix_sources& a, const mh3_matrix_sources& b) {
+    for (unsigned i = 0; i < 3; ++i) {
+        const auto &x = PoseTable(a, i), &y = PoseTable(b, i);
+        if (!x.bytes.data != !y.bytes.data || x.bytes.size != y.bytes.size || x.count != y.count || x.stride != y.stride || x.big_endian != y.big_endian)
+            return false;
+    }
+    return true;
+}
+// Word compare, 16 bytes a step (memcmp is a byte loop on the Vita); stops
+// at the first difference, which a moved camera puts in the first matrix.
+bool SamePoseBytes(const uint8_t* a, const uint8_t* b, size_t bytes) {
+    size_t i = 0;
+    for (; i + 16 <= bytes; i += 16) {
+        uint32_t x[4], y[4];
+        std::memcpy(x, a + i, 16);
+        std::memcpy(y, b + i, 16);
+        if ((x[0] ^ y[0]) | (x[1] ^ y[1]) | (x[2] ^ y[2]) | (x[3] ^ y[3]))
+            return false;
+    }
+    for (; i < bytes; ++i)
+        if (a[i] != b[i])
+            return false;
+    return true;
+}
+// The version holds what the live arrays hold now (layouts already equal).
+bool SamePoseContents(const NativePoseVersion& version, const mh3_matrix_sources& live) {
+    for (unsigned i = 0; i < 3; ++i) {
+        const auto &have = PoseTable(version.sources, i), &now = PoseTable(live, i);
+        if (now.bytes.data && !SamePoseBytes(have.bytes.data, now.bytes.data, now.bytes.size))
+            return false;
+    }
+    return true;
+}
+NativePoseVersion* CopyPose(const mh3_matrix_sources& live) {
+    size_t total = 0;
+    for (unsigned i = 0; i < 3; ++i)
+        total += PoseTable(live, i).bytes.data ? PoseTable(live, i).bytes.size : 0;
+    auto* version = AcquirePose(total);
+    version->sources = live;
+    uint8_t* at = version->bytes;
+    for (auto* table : {&version->sources.positions, &version->sources.normals, &version->sources.environment}) {
+        if (!table->bytes.data)
+            continue;
+        std::memcpy(at, table->bytes.data, table->bytes.size);
+        table->bytes.data = at;
+        at += table->bytes.size;
+    }
+    MH3_POSE_STAT(++poseStats.copies; poseStats.copied_bytes += total;)
+    return version;
+}
+} // namespace
+const NativePoseVersion* VersionNativeModelPose(const uint32_t addresses[3], const mh3_matrix_sources& live) {
+    MH3_POSE_STAT(++poseStats.captures;)
+    if (!addresses[0])
+        return &emptyPose;
+    const uint64_t sequence = NativeFramePacketSequence();
+    SweepPoses(sequence);
+    auto& binding = poseBindings[addresses[0]];
+    binding.used = sequence;
+    if (binding.version && binding.address[1] == addresses[1] && binding.address[2] == addresses[2]) {
+        // No producer completed on these arrays since the version was taken.
+        if (binding.generation == live.generation) {
+            MH3_POSE_STAT(++poseStats.same_revision;)
+#ifdef MH3_DEVELOPMENT
+            if (VerifyNativeModelPoses())
+                VerifyNativeModelPose(*binding.version, live);
+#endif
+            return binding.version;
+        }
+        // CalcView rewrites every view each frame; an unmoved camera over an
+        // unmoved model writes the same matrices again.
+        if (SamePoseLayout(binding.version->sources, live) && SamePoseContents(*binding.version, live)) {
+            MH3_POSE_STAT(++poseStats.same_contents;)
+            binding.generation = live.generation;
+            return binding.version;
+        }
+    }
+    auto* version = CopyPose(live);
+    RetirePose(binding.version);
+    std::memcpy(binding.address, addresses, sizeof binding.address);
+    binding.generation = live.generation;
+    binding.version = version;
+    return version;
+}
+#ifdef MH3_DEVELOPMENT
+bool VerifyNativeModelPoses() {
+    static const bool enabled = VerifyOptions().Has("pose");
+    return enabled;
+}
+void VerifyNativeModelPose(const NativePoseVersion& version, const mh3_matrix_sources& live) {
+    ++poseVerified;
+    if (SamePoseLayout(version.sources, live) && SamePoseContents(version, live))
+        return;
+    if (poseMismatches++ < 20)
+        std::fprintf(stderr, "MH3 verify pose: a reused version differs from the live arrays (%u matrices, revision %llu)\n", unsigned(live.positions.count),
+                     static_cast<unsigned long long>(live.generation));
+}
+void CheckNativeModelPoseLifetime(const NativePoseVersion& version, uint32_t epoch) {
+    if (version.epoch.load(std::memory_order_relaxed) == epoch)
+        return;
+    if (poseLifetimeErrors.fetch_add(1, std::memory_order_relaxed) < 20)
+        std::fprintf(stderr, "MH3 verify pose: a version was reused before an item that references it rendered\n");
+}
+NativePoseStatistics TakeNativePoseStatistics() {
+    auto result = std::exchange(poseStats, {});
+    result.verified = poseVerified;
+    result.mismatches = poseMismatches;
+    result.lifetime_errors = poseLifetimeErrors.load(std::memory_order_relaxed);
+    result.versions = poseVersions;
+    result.bindings = uint32_t(poseBindings.size());
+    return result;
+}
+#endif
 void PublishNativeModelDualTexture(bool enabled) {
     mh3_model_matrix_dual(&selectors, enabled ? 1 : 0);
     PublishSelectors();

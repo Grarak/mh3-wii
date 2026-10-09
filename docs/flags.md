@@ -88,6 +88,14 @@ The items and their defaults are in [Razor](vita-razor.md);
 | `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw) |
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
 
+### `MH3_VERIFY`: reused state against a fresh copy
+
+`MH3_VERIFY=pose` ([game-thread copies](game-thread-copies.md))
+
+| Item | Effect |
+| --- | --- |
+| `pose` | every model draw that reuses a pose version compares it with the live view arrays; the render thread checks that each item's version was not reused before it rendered. The `MH3 pose versions` stats line counts the checks and the mismatches |
+
 ## Build-option tools
 
 These need a CMake option, which rebuilds the generated code.
