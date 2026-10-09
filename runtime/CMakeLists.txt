@@ -53,6 +53,10 @@ target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_res
 target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
 target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
   native/mh3_model_submission.c)
+target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_updates.c
+  native/mh3_model_gpu_inputs.c)
+set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
+  PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
