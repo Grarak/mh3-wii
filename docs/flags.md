@@ -82,13 +82,14 @@ The items and their defaults are in [Razor](vita-razor.md);
 
 ### `MH3_PROFILE`: frame profile, split timers, serial frames
 
-`MH3_PROFILE=[frames=N][,split][,sync]`
+`MH3_PROFILE=[frames=N][,split][,sync][,skip=KIND[+KIND...]]`
 
 | Item | Effect |
 | --- | --- |
 | `frames=N` | the legacy frame profile (`MH3 profile:` line) every N frames; only the GLES self-check reaches it now, so game runs print nothing |
 | `split` | per-draw split timers in the `MH3 model split` line (two clock reads per draw) |
 | `sync` | the game thread waits for each frame packet to render (serial frames) |
+| `skip=KIND[+KIND...]` | the render thread drops these draw records: `model`, `material` (material geometry: effects, particles), `geometry` (other pre-transformed geometry); for attributing GPU time with Razor |
 
 ### `MH3_VERIFY`: reused state against a fresh copy
 

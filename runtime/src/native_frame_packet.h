@@ -70,6 +70,9 @@ struct NativeRenderThreadStatistics {
     uint64_t packets = 0, draw_packets = 0;
     uint64_t packet_wall_ns = 0, draw_packet_wall_ns = 0;
     uint64_t packet_wait_ns = 0, packet_waits = 0;
+    // Of the waits: publication-to-replay time (wake latency), how many
+    // packets it was measured for, and how many took over 1 ms.
+    uint64_t wake_ns = 0, wakes = 0, late_wakes = 0;
     uint64_t sampled_at_ns = 0;
     mh3::statistics::OwnerCpuSample cpu{};
     bool counters_available = false;

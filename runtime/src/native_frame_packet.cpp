@@ -24,13 +24,13 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#ifdef MH3_DEVELOPMENT
 #include <chrono>
-#endif
 #ifdef __vita__
+#include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #elif defined(__linux__) && defined(MH3_DEVELOPMENT)
 #include <pthread.h>
@@ -91,6 +91,9 @@ struct Packet {
     Pool<NativeColorSnapshot> colors;
     std::unique_ptr<uint8_t[]> vertices{new uint8_t[VertexArenaBytes]}, indices{new uint8_t[IndexArenaBytes]};
     size_t vertexCursor = 0, indexCursor = 0;
+#ifdef MH3_DEVELOPMENT
+    uint64_t publishedNs = 0; // RenderMonotonicNs at publication
+#endif
     void Reset(uint64_t next, bool admitted) {
         sequence = next;
         render = admitted;
@@ -132,6 +135,9 @@ struct RenderCounters {
     std::atomic<uint64_t> packets{0}, drawPackets{0}, wallNs{0}, drawWallNs{0};
     // Time blocked with no packet to replay, and how many acquisitions waited.
     std::atomic<uint64_t> waitNs{0}, waits{0};
+    // Of those waits, the time from the packet's publication to its replay
+    // start (the wake latency), and how many took over a millisecond.
+    std::atomic<uint64_t> wakeNs{0}, wakes{0}, lateWakes{0};
     std::atomic<int32_t> thread{-1};
 #ifdef __linux__
     std::atomic<clockid_t> cpuClock{-1};
@@ -475,6 +481,32 @@ bool GpuGeometry(const Geometry& source, Geometry& out, int (*allocate)(uint32_t
     return true;
 }
 #endif
+#ifdef MH3_DEVELOPMENT
+// MH3_PROFILE=skip=KIND[+KIND...]: the render thread drops these draw records
+// (model, material: material geometry such as effects, geometry: the other
+// pre-transformed geometry), to attribute GPU time to them.
+uint32_t SkippedKinds() {
+    static const uint32_t mask = [] {
+        uint32_t kinds = 0;
+        const char* value = ProfileOptions().Value("skip");
+        for (std::string_view rest = value ? value : ""; !rest.empty();) {
+            const size_t plus = rest.find('+');
+            const std::string_view kind = rest.substr(0, plus);
+            if (kind == "model")
+                kinds |= 1u << unsigned(Kind::Model);
+            else if (kind == "material")
+                kinds |= 1u << unsigned(Kind::MaterialGeometry);
+            else if (kind == "geometry")
+                kinds |= 1u << unsigned(Kind::Geometry);
+            else
+                std::fprintf(stderr, "MH3: MH3_PROFILE: skip=%.*s is not model, material or geometry\n", int(kind.size()), kind.data());
+            rest = plus == std::string_view::npos ? std::string_view{} : rest.substr(plus + 1);
+        }
+        return kinds;
+    }();
+    return mask;
+}
+#endif
 void Draw(const Packet& p) {
     const auto& color = aurora::gpu::g_frameBuffer;
     const auto& depth = aurora::gpu::g_depthBuffer;
@@ -520,6 +552,10 @@ void Draw(const Packet& p) {
         default:
             break;
         }
+#ifdef MH3_DEVELOPMENT
+        if (SkippedKinds() >> unsigned(record.kind) & 1)
+            continue;
+#endif
         Restore(p, record.state, applied);
         switch (record.kind) {
         case Kind::Model:
@@ -572,6 +608,32 @@ void Execute(const Packet& p) {
     RunTasks(afterTasks, p.sequence);
     MH3_RENDER_STAGE(RenderStage::Waiting);
 }
+// Microseconds on a cheap clock (the Vita's steady_clock is a system call).
+uint64_t PacketWaitClockUs() noexcept {
+#ifdef __vita__
+    return sceKernelGetProcessTimeWide();
+#else
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+}
+// Waits until a packet after `ticket` is published (or the thread stops,
+// which also publishes). Packets come in bursts: poll for a millisecond
+// first, then block. On the Vita, std::atomic::wait sits on a pthread
+// condition variable that can lose wakeups (there is no futex), so it sleeps
+// in short steps there instead.
+void WaitForPacket(uint32_t ticket) {
+    constexpr uint64_t SpinUs = 1000;
+    const uint64_t spinEnd = PacketWaitClockUs() + SpinUs;
+    while (published.load(std::memory_order_acquire) == ticket) {
+        if (PacketWaitClockUs() < spinEnd)
+            continue;
+#ifdef __vita__
+        sceKernelDelayThread(100);
+#else
+        published.wait(ticket, std::memory_order_acquire);
+#endif
+    }
+}
 void RenderLoop() {
     aurora::gl::acquire_context();
     try {
@@ -582,7 +644,7 @@ void RenderLoop() {
             throw std::runtime_error("Render thread core 1 affinity failed");
 #endif
 #ifdef MH3_DEVELOPMENT
-        uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0, waitNs = 0, waits = 0, idleStart = 0;
+        uint64_t replayed = 0, drawPackets = 0, wallNs = 0, drawWallNs = 0, waitNs = 0, waits = 0, idleStart = 0, wakeNs = 0, wakes = 0, lateWakes = 0;
 #ifdef __vita__
         renderCounters.thread.store(sceKernelGetThreadId(), std::memory_order_release);
 #elif defined(__linux__)
@@ -602,7 +664,7 @@ void RenderLoop() {
                 if (!idleStart)
                     idleStart = RenderMonotonicNs();
 #endif
-                published.wait(ticket, std::memory_order_acquire);
+                WaitForPacket(ticket);
                 continue;
             }
             if (status != MH3_FRAME_STATE_OK)
@@ -618,6 +680,12 @@ void RenderLoop() {
             if (idleStart) {
                 waitNs += replayStart - idleStart;
                 ++waits;
+                if (p.publishedNs > idleStart) {
+                    const uint64_t wake = replayStart - p.publishedNs;
+                    wakeNs += wake;
+                    ++wakes;
+                    lateWakes += wake > 1000000;
+                }
                 idleStart = 0;
             }
 #endif
@@ -639,6 +707,9 @@ void RenderLoop() {
             renderCounters.drawWallNs.store(drawWallNs, std::memory_order_relaxed);
             renderCounters.waitNs.store(waitNs, std::memory_order_relaxed);
             renderCounters.waits.store(waits, std::memory_order_relaxed);
+            renderCounters.wakeNs.store(wakeNs, std::memory_order_relaxed);
+            renderCounters.wakes.store(wakes, std::memory_order_relaxed);
+            renderCounters.lateWakes.store(lateWakes, std::memory_order_relaxed);
             renderCounters.revision.fetch_add(1, std::memory_order_release);
 #endif
             completed.store(p.sequence, std::memory_order_release);
@@ -853,6 +924,9 @@ NativeRenderThreadStatistics ReadNativeRenderThreadStatistics() noexcept {
         result.draw_packet_wall_ns = renderCounters.drawWallNs.load(std::memory_order_relaxed);
         result.packet_wait_ns = renderCounters.waitNs.load(std::memory_order_relaxed);
         result.packet_waits = renderCounters.waits.load(std::memory_order_relaxed);
+        result.wake_ns = renderCounters.wakeNs.load(std::memory_order_relaxed);
+        result.wakes = renderCounters.wakes.load(std::memory_order_relaxed);
+        result.late_wakes = renderCounters.lateWakes.load(std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_acquire);
         if (before == renderCounters.revision.load(std::memory_order_relaxed)) {
             result.counters_available = thread >= 0;
@@ -916,6 +990,9 @@ void PublishNativeFramePacket(std::string capture) {
     p.capture = std::move(capture);
     const bool wait = synchronous || !p.capture.empty();
     uint32_t replaced = 0;
+#ifdef MH3_DEVELOPMENT
+    p.publishedNs = RenderMonotonicNs();
+#endif
     if (mh3_frame_state_publish(&producer, p.sequence, &replaced) != MH3_FRAME_STATE_OK)
         throw std::runtime_error("Frame packet exchange publish failed");
     published.fetch_add(1, std::memory_order_release);
