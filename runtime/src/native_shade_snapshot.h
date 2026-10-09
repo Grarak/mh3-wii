@@ -69,6 +69,8 @@ void CaptureNativeMaterialSnapshot(NativeMaterialSnapshot& out);
 void CaptureNativeLightingSnapshot(NativeLightingSnapshot& out);
 void CaptureNativePostSnapshot(NativePostSnapshot& out);
 void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out);
+// True when the Game texture state is the snapshot's (no copy).
+bool NativeTextureSnapshotCurrent(const NativeTextureSnapshot& snapshot);
 void CaptureNativeColorSnapshot(NativeColorSnapshot& out);
 // Render thread: restore into the logical state and apply it to the backend.
 void RestoreNativeDrawSnapshot(const NativeDrawSnapshot& snapshot);

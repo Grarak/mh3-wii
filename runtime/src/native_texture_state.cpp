@@ -125,6 +125,19 @@ bool EqualNativeTextureBindings(NativeOwner a, NativeOwner b) {
     }
     return true;
 }
+bool NativeTextureSnapshotCurrent(const NativeTextureSnapshot& snapshot) {
+    const auto& [palettes, textures] = T();
+    uint8_t valid = 0;
+    for (unsigned unit = 0; unit < textures.size(); ++unit)
+        valid |= uint8_t(textures[unit].valid) << unit;
+    if (valid != snapshot.valid)
+        return false;
+    // As captured: every unit's record, valid or not, and the palettes.
+    for (unsigned unit = 0; unit < textures.size(); ++unit)
+        if (!BytesEqual(&textures[unit].value, &snapshot.textures[unit], sizeof textures[unit].value))
+            return false;
+    return BytesEqual(palettes.data(), snapshot.palettes.data(), sizeof palettes);
+}
 void CaptureNativeTextureSnapshot(NativeTextureSnapshot& out) {
     const auto& [palettes, textures] = T();
     out.valid = 0;

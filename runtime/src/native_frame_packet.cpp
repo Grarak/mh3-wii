@@ -247,7 +247,11 @@ uint32_t snapshotCounts[3][NATIVE_STATE_COMPONENTS];
 // Material geometry submissions, and those appended to the previous draw.
 uint32_t geometrySubmitted, geometryMerged;
 #endif
-template <class T, void (*Capture)(T&)>
+// Current (optional): whether the live state is a snapshot's, without
+// copying it. A changed component whose state is one of the last few stored
+// snapshots (a particle flipbook alternating its textures) references that
+// one instead of storing a copy.
+template <class T, void (*Capture)(T&), bool (*Current)(const T&) = nullptr>
 uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
 #ifdef MH3_DEVELOPMENT
     ++snapshotCounts[0][component];
@@ -258,6 +262,23 @@ uint32_t Component(Pool<T>& pool, NativeStateComponent component) {
 #ifdef MH3_DEVELOPMENT
     ++snapshotCounts[1][component];
 #endif
+    if constexpr (Current != nullptr) {
+        // Not after a deferred model item changed the render thread's copy:
+        // equal contents no longer mean an equal render state.
+        if (pool.valid && !pool.diverged) {
+            const uint32_t candidates[] = {pool.current, pool.count - 1, pool.count - 2, pool.count - 3};
+            for (uint32_t i = 0; i < 4; ++i) {
+                const uint32_t index = candidates[i];
+                if (index >= pool.count || (i && index == pool.current))
+                    continue;
+                if (Current(pool.items[index])) {
+                    pool.revision = revision;
+                    pool.current = index;
+                    return index;
+                }
+            }
+        }
+    }
     if (pool.count == pool.items.size())
         pool.items.emplace_back();
     auto& next = pool.items[pool.count];
@@ -287,7 +308,7 @@ StateIndices CaptureState(bool usesPost = true) {
         state[NATIVE_STATE_POST] = Component<NativePostSnapshot, CaptureNativePostSnapshot>(p.posts, NATIVE_STATE_POST);
     else
         state[NATIVE_STATE_POST] = p.posts.current;
-    state[NATIVE_STATE_TEXTURES] = Component<NativeTextureSnapshot, CaptureNativeTextureSnapshot>(p.textures, NATIVE_STATE_TEXTURES);
+    state[NATIVE_STATE_TEXTURES] = Component<NativeTextureSnapshot, CaptureNativeTextureSnapshot, NativeTextureSnapshotCurrent>(p.textures, NATIVE_STATE_TEXTURES);
     state[NATIVE_STATE_COLORS] = Component<NativeColorSnapshot, CaptureNativeColorSnapshot>(p.colors, NATIVE_STATE_COLORS);
     return state;
 }
