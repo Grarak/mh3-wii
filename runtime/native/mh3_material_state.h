@@ -81,6 +81,16 @@ void mh3_material_state_overlay_unchecked(mh3_native_material_state *destination
  * indirect matrices (no top fields, no pixel record). */
 void mh3_material_overlay_channels_unchecked(mh3_native_material_state *destination, const mh3_pack_channel source[2]);
 void mh3_material_overlay_indirect_matrices_unchecked(mh3_native_material_state *destination, const mh3_pack_indirect_matrix source[3]);
+/* Exact mutation results for trusted publications. Compare only fields written
+ * by this merge and newly established known bits, including uniform values and
+ * inactive authored slots. Unknown bytes/padding are never compared. Inputs
+ * must be disjoint or exact aliases; the full merge's partial overlap contract
+ * remains in the original void API above. These are separate from a shader's
+ * consumed structural change result. No state candidate is built in NDEBUG. */
+int mh3_material_state_overlay_mutation_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, uint32_t top_known);
+int mh3_material_overlay_channels_mutation_unchecked(mh3_native_material_state *destination, const mh3_pack_channel source[2]);
+int mh3_material_overlay_indirect_matrices_mutation_unchecked(mh3_native_material_state *destination, const mh3_pack_indirect_matrix source[3]);
+int mh3_material_overlay_top_mutation_unchecked(mh3_native_material_state *destination, uint32_t top_known, uint32_t texgens, uint32_t channels, uint32_t tevs, uint32_t indirect, uint32_t cull);
 /* Null requirements checks known value domains only. ABSENT identifies missing
  * consumed fields; UNSUPPORTED identifies an unpromised backend capability. */
 mh3_res_status mh3_material_state_validate(const mh3_native_material_state *state, const mh3_material_requirements *requirements, mh3_material_diagnostic *diagnostic);

@@ -25,11 +25,13 @@ static mh3_matrix34 identity(void) {
     const mh3_matrix34 m = {{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}}};
     return m;
 }
+/* Preserve IEEE finite admission without VitaSDK's per-float __fpclassifyf
+ * call. No consumed/unused field rule changes. */
 static int finite_matrix(const mh3_matrix34 *m) {
     size_t r, c;
     for (r = 0; r < 3; r++)
         for (c = 0; c < 4; c++)
-            if (!isfinite(m->v[r][c]))
+            if (!__builtin_isfinite(m->v[r][c]))
                 return 0;
     return 1;
 }

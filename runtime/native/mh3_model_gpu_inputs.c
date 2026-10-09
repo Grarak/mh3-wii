@@ -32,6 +32,13 @@ static int finite_matrix(const mh3_matrix34 *matrix) {
                 return 0;
     return 1;
 }
+static int finite_normal(const mh3_matrix33 *matrix) {
+    for (unsigned r = 0; r < 3; r++)
+        for (unsigned c = 0; c < 3; c++)
+            if (!__builtin_isfinite(matrix->v[r][c]))
+                return 0;
+    return 1;
+}
 static int attribute(const mh3_pack_layout *layout, unsigned semantic) {
     for (unsigned i = 0; i < layout->count; i++)
         if (layout->attributes[i].semantic == semantic)
@@ -229,10 +236,15 @@ mh3_res_status mh3_model_gpu_prepare_draw(const mh3_resolved_mesh_submit *mesh, 
                 textures_out[slot] = mesh->palette->texture[slot];
             }
             if (normal_required && (batch->normal_required & (1u << slot))) {
+                // Validate the nine CPU-owned source coefficients. The final
+                // GPU matrix's three padding values are already exact +0.
+                // Keep the copy before the error return, preserving partial
+                // failure bytes without reading uncached GPU palette memory.
+                const int finite = finite_normal(&mesh->palette->normal[slot]);
                 for (unsigned r = 0; r < 3; r++)
                     for (unsigned c = 0; c < 3; c++)
                         normals_out[slot].v[r][c] = mesh->palette->normal[slot].v[r][c];
-                if (!finite_matrix(&normals_out[slot]))
+                if (!finite)
                     return MH3_RES_INVALID;
             }
         }

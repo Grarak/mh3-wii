@@ -295,65 +295,112 @@ mh3_res_status mh3_material_state_require_step(mh3_material_requirement_proof *p
     proof->capabilities_known = 1;
     return MH3_RES_OK;
 }
-static void merge_bytes(void *destination, const void *source, uint64_t known, size_t count, size_t stride) {
+static void note_mutation(int *mutation, const void *to, const void *from, size_t bytes) {
+    if (mutation && !*mutation && memcmp(to, from, bytes))
+        *mutation = 1;
+}
+#define MERGE_KNOWN(to, from) do { \
+    if (mutation && ((from) & ~(to))) *mutation = 1; \
+    (to) |= (from); \
+} while (0)
+static void merge_bytes(void *destination, const void *source, uint64_t known, size_t count, size_t stride, int *mutation) {
     if (!known)
         return;
     if (known == (BIT(count) - 1)) {
+        note_mutation(mutation, destination, source, count * stride);
         memcpy(destination, source, count * stride);
         return;
     }
     while (known) {
         const unsigned field = (unsigned)__builtin_ctzll(known);
         assert(field < count);
-        memcpy((uint8_t *)destination + field * stride, (const uint8_t *)source + field * stride, stride);
+        void *to = (uint8_t *)destination + field * stride;
+        const void *from = (const uint8_t *)source + field * stride;
+        note_mutation(mutation, to, from, stride);
+        memcpy(to, from, stride);
         known &= known - 1;
     }
 }
-static void overlay_channels(mh3_pack_channel next[2], const mh3_pack_channel source[2]) {
+static void overlay_channels(mh3_pack_channel next[2], const mh3_pack_channel source[2], int *mutation) {
+    _Static_assert(sizeof(mh3_pack_channel_control) == 6, "channel control has no padding");
     for (unsigned index = 0; index < 2; ++index) {
         const mh3_pack_channel *from = &source[index];
         mh3_pack_channel *to = &next[index];
-        if (from->flags & MH3_CHANNEL_MATERIAL_COLOR)
-            memcpy(to->material_color, from->material_color, 3);
-        if (from->flags & MH3_CHANNEL_MATERIAL_ALPHA)
-            to->material_color[3] = from->material_color[3];
-        if (from->flags & MH3_CHANNEL_AMBIENT_COLOR)
-            memcpy(to->ambient_color, from->ambient_color, 3);
-        if (from->flags & MH3_CHANNEL_AMBIENT_ALPHA)
-            to->ambient_color[3] = from->ambient_color[3];
+        MERGE_KNOWN(to->flags, from->flags);
+#define COPY_CHANNEL(flag, member, bytes) do { \
+    if (from->flags & (flag)) { \
+        note_mutation(mutation, to->member, from->member, (bytes)); \
+        memcpy(to->member, from->member, (bytes)); \
+    } \
+} while (0)
+        COPY_CHANNEL(MH3_CHANNEL_MATERIAL_COLOR, material_color, 3);
+        COPY_CHANNEL(MH3_CHANNEL_AMBIENT_COLOR, ambient_color, 3);
+#undef COPY_CHANNEL
+#define COPY_SCALAR(flag, member) do { \
+    if (from->flags & (flag)) { \
+        if (mutation && !*mutation && to->member != from->member) *mutation = 1; \
+        to->member = from->member; \
+    } \
+} while (0)
+        COPY_SCALAR(MH3_CHANNEL_MATERIAL_ALPHA, material_color[3]);
+        COPY_SCALAR(MH3_CHANNEL_AMBIENT_ALPHA, ambient_color[3]);
         if (from->flags & MH3_CHANNEL_CONTROL_COLOR) {
+            note_mutation(mutation, &to->color, &from->color, sizeof to->color);
             to->color = from->color;
-            to->raw_color_control = from->raw_color_control;
+            COPY_SCALAR(MH3_CHANNEL_CONTROL_COLOR, raw_color_control);
         }
         if (from->flags & MH3_CHANNEL_CONTROL_ALPHA) {
+            note_mutation(mutation, &to->alpha, &from->alpha, sizeof to->alpha);
             to->alpha = from->alpha;
-            to->raw_alpha_control = from->raw_alpha_control;
+            COPY_SCALAR(MH3_CHANNEL_CONTROL_ALPHA, raw_alpha_control);
         }
-        to->flags |= from->flags;
+#undef COPY_SCALAR
     }
 }
-static void overlay_indirect_matrices(mh3_pack_indirect_matrix next[3], const mh3_pack_indirect_matrix source[3]) {
+static void overlay_indirect_matrices(mh3_pack_indirect_matrix next[3], const mh3_pack_indirect_matrix source[3], int *mutation) {
     for (unsigned index = 0; index < 3; ++index) {
-        merge_bytes(next[index].coefficients, source[index].coefficients, source[index].known & 63u, 6, 2);
-        if (source[index].known & 64)
+        MERGE_KNOWN(next[index].known, source[index].known);
+        merge_bytes(next[index].coefficients, source[index].coefficients, source[index].known & 63u, 6, 2, mutation);
+        if (source[index].known & 64) {
+            if (mutation && !*mutation && next[index].scale_exponent != source[index].scale_exponent)
+                *mutation = 1;
             next[index].scale_exponent = source[index].scale_exponent;
-        next[index].known |= source[index].known;
+        }
     }
 }
 void mh3_material_overlay_channels_unchecked(mh3_native_material_state *destination, const mh3_pack_channel source[2]) {
     assert(destination && source);
-    overlay_channels(destination->channel, source);
+    overlay_channels(destination->channel, source, NULL);
 }
 void mh3_material_overlay_indirect_matrices_unchecked(mh3_native_material_state *destination, const mh3_pack_indirect_matrix source[3]) {
     assert(destination && source);
-    overlay_indirect_matrices(destination->indirect_matrix, source);
+    overlay_indirect_matrices(destination->indirect_matrix, source, NULL);
 }
-/* Preserve the authored sparse field writes and inheritance. Admission and
- * DEBUG contracts belong to the caller; the merge itself has no validation. */
-static void overlay_fields_unchecked(mh3_native_material_state *next, const mh3_native_material_state *source, uint32_t top_known) {
-#define COPY_TOP(flag, field)                                                                                                                                                                          \
-    if (top_known & (flag))                                                                                                                                                                            \
-    next->field = source->field
+int mh3_material_overlay_channels_mutation_unchecked(mh3_native_material_state *destination, const mh3_pack_channel source[2]) {
+    assert(destination && source);
+    if (destination->channel == source)
+        return 0;
+    int mutation = 0;
+    overlay_channels(destination->channel, source, &mutation);
+    return mutation;
+}
+int mh3_material_overlay_indirect_matrices_mutation_unchecked(mh3_native_material_state *destination, const mh3_pack_indirect_matrix source[3]) {
+    assert(destination && source);
+    if (destination->indirect_matrix == source)
+        return 0;
+    int mutation = 0;
+    overlay_indirect_matrices(destination->indirect_matrix, source, &mutation);
+    return mutation;
+}
+/* Preserve authored sparse writes and inheritance; mutation observes only the
+ * bytes and known bits written here. Existing void/checked APIs request none. */
+static void overlay_fields_unchecked(mh3_native_material_state *next, const mh3_native_material_state *source, uint32_t top_known, int *mutation) {
+#define COPY_TOP(flag, field) do { \
+    if (top_known & (flag)) { \
+        if (mutation && !*mutation && next->field != source->field) *mutation = 1; \
+        next->field = source->field; \
+    } \
+} while (0)
     COPY_TOP(MH3_MATERIAL_TOP_TEXGEN_COUNT, texgen_count);
     COPY_TOP(MH3_MATERIAL_TOP_CHANNEL_COUNT, channel_count);
     COPY_TOP(MH3_MATERIAL_TOP_TEV_COUNT, tev_count);
@@ -365,31 +412,52 @@ static void overlay_fields_unchecked(mh3_native_material_state *next, const mh3_
     COPY_TOP(MH3_MATERIAL_TOP_PIXEL_CLASSIFICATION, pixel.classification);
 #undef COPY_TOP
     for (unsigned index = 0; index < 16; ++index) {
-        merge_bytes(&next->tev[index].color, &source->tev[index].color, source->tev[index].known, 34, 1);
-        next->tev[index].known |= source->tev[index].known;
+        MERGE_KNOWN(next->tev[index].known, source->tev[index].known);
+        merge_bytes(&next->tev[index].color, &source->tev[index].color, source->tev[index].known, 34, 1, mutation);
     }
     for (unsigned index = 0; index < 8; ++index) {
-        merge_bytes(next->texgen[index].values, source->texgen[index].values, source->texgen[index].known, 10, 1);
-        next->texgen[index].known |= source->texgen[index].known;
+        MERGE_KNOWN(next->texgen[index].known, source->texgen[index].known);
+        merge_bytes(next->texgen[index].values, source->texgen[index].values, source->texgen[index].known, 10, 1, mutation);
     }
-    overlay_channels(next->channel, source->channel);
+    overlay_channels(next->channel, source->channel, mutation);
     for (unsigned index = 0; index < 4; ++index) {
-        merge_bytes(next->color[index].rgba, source->color[index].rgba, source->color[index].known, 4, 2);
-        next->color[index].known |= source->color[index].known;
-        merge_bytes(next->konst[index].rgba, source->konst[index].rgba, source->konst[index].known, 4, 2);
-        next->konst[index].known |= source->konst[index].known;
-        merge_bytes(next->swaps[index].rgba, source->swaps[index].rgba, source->swaps[index].known, 4, 1);
-        next->swaps[index].known |= source->swaps[index].known;
-        merge_bytes(&next->indirect[index].coordinate, &source->indirect[index].coordinate, source->indirect[index].known, 4, 1);
-        next->indirect[index].known |= source->indirect[index].known;
+        MERGE_KNOWN(next->color[index].known, source->color[index].known);
+        merge_bytes(next->color[index].rgba, source->color[index].rgba, source->color[index].known, 4, 2, mutation);
+        MERGE_KNOWN(next->konst[index].known, source->konst[index].known);
+        merge_bytes(next->konst[index].rgba, source->konst[index].rgba, source->konst[index].known, 4, 2, mutation);
+        MERGE_KNOWN(next->swaps[index].known, source->swaps[index].known);
+        merge_bytes(next->swaps[index].rgba, source->swaps[index].rgba, source->swaps[index].known, 4, 1, mutation);
+        MERGE_KNOWN(next->indirect[index].known, source->indirect[index].known);
+        merge_bytes(&next->indirect[index].coordinate, &source->indirect[index].coordinate, source->indirect[index].known, 4, 1, mutation);
     }
-    overlay_indirect_matrices(next->indirect_matrix, source->indirect_matrix);
-    merge_bytes(next->pixel.values, source->pixel.values, source->pixel.known, 22, 4);
-    next->pixel.known |= source->pixel.known;
+    overlay_indirect_matrices(next->indirect_matrix, source->indirect_matrix, mutation);
+    MERGE_KNOWN(next->pixel.known, source->pixel.known);
+    merge_bytes(next->pixel.values, source->pixel.values, source->pixel.known, 22, 4, mutation);
     if (source->clip_mode_known) {
+        if (mutation && !*mutation && (!next->clip_mode_known || next->clip_disabled != source->clip_disabled))
+            *mutation = 1;
         next->clip_mode_known = 1;
         next->clip_disabled = source->clip_disabled;
     }
+}
+#undef MERGE_KNOWN
+int mh3_material_overlay_top_mutation_unchecked(mh3_native_material_state *destination, uint32_t top_known,
+    uint32_t texgens, uint32_t channels, uint32_t tevs, uint32_t indirect, uint32_t cull) {
+    assert(destination);
+    int mutation = 0;
+#define TOP(flag, member, value) do { \
+    if (top_known & (flag)) { \
+        mutation |= destination->member != (value); \
+        destination->member = (value); \
+    } \
+} while (0)
+    TOP(MH3_MATERIAL_TOP_TEXGEN_COUNT, texgen_count, texgens);
+    TOP(MH3_MATERIAL_TOP_CHANNEL_COUNT, channel_count, channels);
+    TOP(MH3_MATERIAL_TOP_TEV_COUNT, tev_count, tevs);
+    TOP(MH3_MATERIAL_TOP_INDIRECT_COUNT, indirect_count, indirect);
+    TOP(MH3_MATERIAL_TOP_CULL, cull_mode, cull);
+#undef TOP
+    return mutation;
 }
 /* Public checked APIs keep admission and atomic rollback for arbitrary input.
  * Internal producers share the field effects, not these boundary checks. */
@@ -411,7 +479,7 @@ static mh3_res_status overlay_fields(mh3_native_material_state *next, const mh3_
             return MH3_RES_INVALID;
     if (source->pixel.known & ~MH3_MATERIAL_PIXEL_MASK || source->clip_mode_known > 1)
         return MH3_RES_INVALID;
-    overlay_fields_unchecked(next, source, top_known);
+    overlay_fields_unchecked(next, source, top_known, NULL);
     return mh3_material_state_validate(next, NULL, NULL);
 }
 static int state_overlaps(const mh3_native_material_state *a, const mh3_native_material_state *b) {
@@ -450,7 +518,21 @@ void mh3_material_state_overlay_unchecked(mh3_native_material_state *destination
     assert(status == MH3_RES_OK);
 #endif
     if (destination != source)
-        overlay_fields_unchecked(destination, source, top_known);
+        overlay_fields_unchecked(destination, source, top_known, NULL);
+}
+int mh3_material_state_overlay_mutation_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, uint32_t top_known) {
+    assert(destination && source);
+    assert(destination == source || !state_overlaps(destination, source));
+#ifndef NDEBUG
+    mh3_native_material_state debug_candidate;
+    const mh3_res_status status = mh3_material_state_overlay_candidate(&debug_candidate, destination, source, top_known);
+    assert(status == MH3_RES_OK);
+#endif
+    if (destination == source)
+        return 0;
+    int mutation = 0;
+    overlay_fields_unchecked(destination, source, top_known, &mutation);
+    return mutation;
 }
 mh3_res_status mh3_material_pixel_raster_unchecked(const mh3_pack_pixel_inputs *pixel, mh3_raster_state *raster) {
     if (!pixel || !raster)

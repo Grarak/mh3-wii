@@ -27,6 +27,11 @@ extern "C" {
  * before invoking this mutating function. */
 int mh3_material_group_publish_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count,
                                          const mh3_material_requirements *consumed);
+/* Same exact field effects and contracts, returning whether any written value
+ * or known bit changed. Includes uniforms and inactive authored slots; excludes
+ * unselected fields and padding. Count0 preserves the no-source-read contract.
+ * This result can govern snapshot revisions, unlike the shader result above. */
+int mh3_material_group_publish_mutation_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count);
 
 /* Only the first19 pixel fields belong to the resource pixel group. Merge them
  * into a small preview for the existing raster/capability preflight; current's

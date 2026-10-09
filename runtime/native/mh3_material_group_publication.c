@@ -130,7 +130,7 @@ static void group_contract(const mh3_native_material_state *destination, const m
 
 /* Only consumed, authored values are compared. Copies retain the oracle's
  * dense-field shortcut and sparse field widths, without record padding. */
-static int merge_u8(uint8_t *to, const uint8_t *from, uint64_t known, unsigned count, uint64_t consumed) {
+static int merge_u8(uint8_t *to, const uint8_t *from, uint64_t known, unsigned count, uint64_t consumed, int *mutation) {
     int changed = 0;
     uint64_t compared = known & consumed;
     while (compared) {
@@ -141,28 +141,41 @@ static int merge_u8(uint8_t *to, const uint8_t *from, uint64_t known, unsigned c
         }
         compared &= compared - 1;
     }
-    if (known == BIT(count) - 1)
+    if (known == BIT(count) - 1) {
+        if (mutation && !*mutation && memcmp(to, from, count))
+            *mutation = 1;
         memcpy(to, from, count);
-    else
+    } else
         while (known) {
             const unsigned f = (unsigned)__builtin_ctzll(known);
+            if (mutation && !*mutation && to[f] != from[f])
+                *mutation = 1;
             to[f] = from[f];
             known &= known - 1;
         }
     return changed;
 }
-static void merge_i16(int16_t *to, const int16_t *from, uint32_t known, unsigned count) {
-    if (known == (1u << count) - 1)
+static void merge_i16(int16_t *to, const int16_t *from, uint32_t known, unsigned count, int *mutation) {
+    if (known == (1u << count) - 1) {
+        if (mutation && !*mutation && memcmp(to, from, count * sizeof *to))
+            *mutation = 1;
         memcpy(to, from, count * sizeof *to);
-    else
+    } else
         while (known) {
             const unsigned f = (unsigned)__builtin_ctz(known);
+            if (mutation && !*mutation && to[f] != from[f])
+                *mutation = 1;
             to[f] = from[f];
             known &= known - 1;
         }
 }
-static int merge_pixel(mh3_pack_pixel_inputs *to, const mh3_pack_pixel_inputs *from, uint64_t consumed) {
+#define MERGE_KNOWN(to, from) do { \
+    if (mutation && ((from) & ~(to))) *mutation = 1; \
+    (to) |= (from); \
+} while (0)
+static int merge_pixel(mh3_pack_pixel_inputs *to, const mh3_pack_pixel_inputs *from, uint64_t consumed, int *mutation) {
     const uint64_t known = from->known & PIXEL_FIELDS;
+    MERGE_KNOWN(to->known, known);
     uint64_t compared = known & consumed;
     int changed = 0;
     while (compared) {
@@ -173,24 +186,27 @@ static int merge_pixel(mh3_pack_pixel_inputs *to, const mh3_pack_pixel_inputs *f
         }
         compared &= compared - 1;
     }
-    if (known == PIXEL_FIELDS)
+    if (known == PIXEL_FIELDS) {
+        if (mutation && !*mutation && memcmp(to->values, from->values, 19 * sizeof *to->values))
+            *mutation = 1;
         memcpy(to->values, from->values, 19 * sizeof *to->values);
-    else {
+    } else {
         uint64_t pending = known;
         while (pending) {
             const unsigned f = (unsigned)__builtin_ctzll(pending);
+            if (mutation && !*mutation && to->values[f] != from->values[f])
+                *mutation = 1;
             to->values[f] = from->values[f];
             pending &= pending - 1;
         }
     }
-    to->known |= known;
     return changed;
 }
 /* Keep the uncommon output==source temporary out of ordinary preview frames. */
 __attribute__((noinline)) static void preview_source_alias(const mh3_pack_pixel_inputs *current, const mh3_pack_pixel_inputs *source, mh3_pack_pixel_inputs *out) {
     mh3_pack_pixel_inputs preview;
     memcpy(&preview, current, sizeof preview);
-    merge_pixel(&preview, source, 0);
+    merge_pixel(&preview, source, 0, NULL);
     memcpy(out, &preview, sizeof preview);
 }
 void mh3_material_group_pixel_preview_unchecked(const mh3_pack_pixel_inputs *current, const mh3_pack_pixel_inputs *source, mh3_pack_pixel_inputs *out) {
@@ -210,10 +226,10 @@ void mh3_material_group_pixel_preview_unchecked(const mh3_pack_pixel_inputs *cur
     }
     if (out != current)
         memcpy(out, current, sizeof *out);
-    merge_pixel(out, source, 0);
+    merge_pixel(out, source, 0, NULL);
 }
-int mh3_material_group_publish_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count,
-                                         const mh3_material_requirements *consumed) {
+static int publish(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count,
+                   const mh3_material_requirements *consumed, int *mutation) {
     assert(destination && block >= 0 && block < MH3_MODEL_MATERIAL_BLOCK_COUNT);
     if (!count && (block == MH3_MODEL_MATERIAL_INDIRECT || block == MH3_MODEL_MATERIAL_TEXGEN))
         return 0;
@@ -225,52 +241,55 @@ int mh3_material_group_publish_unchecked(mh3_native_material_state *destination,
     int changed = 0;
     switch (block) {
     case MH3_MODEL_MATERIAL_PIXEL:
-        return merge_pixel(&destination->pixel, &source->pixel, consumed ? consumed->pixel : 0);
+        return merge_pixel(&destination->pixel, &source->pixel, consumed ? consumed->pixel : 0, mutation);
     case MH3_MODEL_MATERIAL_COLORS:
         for (unsigned i = 0; i < 4; ++i) {
-            merge_i16(destination->color[i].rgba, source->color[i].rgba, source->color[i].known, 4);
-            destination->color[i].known |= source->color[i].known;
-            merge_i16(destination->konst[i].rgba, source->konst[i].rgba, source->konst[i].known, 4);
-            destination->konst[i].known |= source->konst[i].known;
+            MERGE_KNOWN(destination->color[i].known, source->color[i].known);
+            merge_i16(destination->color[i].rgba, source->color[i].rgba, source->color[i].known, 4, mutation);
+            MERGE_KNOWN(destination->konst[i].known, source->konst[i].known);
+            merge_i16(destination->konst[i].rgba, source->konst[i].rgba, source->konst[i].known, 4, mutation);
         }
         break;
     case MH3_MODEL_MATERIAL_INDIRECT:
         for (unsigned i = 0; i < 3; ++i) {
             const mh3_pack_indirect_matrix *from = &source->indirect_matrix[i];
             mh3_pack_indirect_matrix *to = &destination->indirect_matrix[i];
-            merge_i16(to->coefficients, from->coefficients, from->known & 63u, 6);
-            if (from->known & 64u)
+            MERGE_KNOWN(to->known, from->known);
+            merge_i16(to->coefficients, from->coefficients, from->known & 63u, 6, mutation);
+            if (from->known & 64u) {
+                if (mutation && !*mutation && to->scale_exponent != from->scale_exponent)
+                    *mutation = 1;
                 to->scale_exponent = from->scale_exponent;
-            to->known |= from->known;
+            }
         }
         for (unsigned i = 0; i < 4; ++i) {
             const uint32_t known = source->indirect[i].known & 12u;
+            MERGE_KNOWN(destination->indirect[i].known, known);
             changed |= merge_u8((uint8_t *)&destination->indirect[i] + offsetof(mh3_pack_indirect_stage, coordinate),
-                                (const uint8_t *)&source->indirect[i] + offsetof(mh3_pack_indirect_stage, coordinate), known, 4, consumed && !changed ? consumed->indirect[i] : 0);
-            destination->indirect[i].known |= known;
+                                (const uint8_t *)&source->indirect[i] + offsetof(mh3_pack_indirect_stage, coordinate), known, 4, consumed && !changed ? consumed->indirect[i] : 0, mutation);
         }
         break;
     case MH3_MODEL_MATERIAL_TEXGEN:
         for (unsigned i = 0; i < 8; ++i) {
             const uint32_t known = source->texgen[i].known & TEXGEN_FIELDS;
-            changed |= merge_u8(destination->texgen[i].values, source->texgen[i].values, known, 10, consumed && !changed ? consumed->texgen[i] : 0);
-            destination->texgen[i].known |= known;
+            MERGE_KNOWN(destination->texgen[i].known, known);
+            changed |= merge_u8(destination->texgen[i].values, source->texgen[i].values, known, 10, consumed && !changed ? consumed->texgen[i] : 0, mutation);
         }
         break;
     case MH3_MODEL_MATERIAL_PIPELINE:
         for (unsigned i = 0; i < 16; ++i) {
             const uint64_t known = source->tev[i].known;
+            MERGE_KNOWN(destination->tev[i].known, known);
             changed |= merge_u8((uint8_t *)&destination->tev[i] + offsetof(mh3_pack_tev_stage, color), (const uint8_t *)&source->tev[i] + offsetof(mh3_pack_tev_stage, color), known, 34,
-                                consumed && !changed ? consumed->tev[i] : 0);
-            destination->tev[i].known |= known;
+                                consumed && !changed ? consumed->tev[i] : 0, mutation);
         }
         for (unsigned i = 0; i < 4; ++i) {
             const uint32_t swap = source->swaps[i].known, indirect = source->indirect[i].known & 3u;
-            changed |= merge_u8(destination->swaps[i].rgba, source->swaps[i].rgba, swap, 4, consumed && !changed ? consumed->swaps[i] : 0);
-            destination->swaps[i].known |= swap;
+            MERGE_KNOWN(destination->swaps[i].known, swap);
+            changed |= merge_u8(destination->swaps[i].rgba, source->swaps[i].rgba, swap, 4, consumed && !changed ? consumed->swaps[i] : 0, mutation);
+            MERGE_KNOWN(destination->indirect[i].known, indirect);
             changed |= merge_u8((uint8_t *)&destination->indirect[i] + offsetof(mh3_pack_indirect_stage, coordinate),
-                                (const uint8_t *)&source->indirect[i] + offsetof(mh3_pack_indirect_stage, coordinate), indirect, 4, consumed && !changed ? consumed->indirect[i] : 0);
-            destination->indirect[i].known |= indirect;
+                                (const uint8_t *)&source->indirect[i] + offsetof(mh3_pack_indirect_stage, coordinate), indirect, 4, consumed && !changed ? consumed->indirect[i] : 0, mutation);
         }
         break;
     default:
@@ -278,4 +297,15 @@ int mh3_material_group_publish_unchecked(mh3_native_material_state *destination,
         break;
     }
     return changed;
+}
+
+#undef MERGE_KNOWN
+int mh3_material_group_publish_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count,
+    const mh3_material_requirements *consumed) {
+    return publish(destination, source, block, count, consumed, NULL);
+}
+int mh3_material_group_publish_mutation_unchecked(mh3_native_material_state *destination, const mh3_native_material_state *source, mh3_model_material_block block, uint32_t count) {
+    int mutation = 0;
+    (void)publish(destination, source, block, count, NULL, &mutation);
+    return mutation;
 }

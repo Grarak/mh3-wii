@@ -157,13 +157,14 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     const uint32_t key = uint32_t(variant.vertex) | uint32_t(variant.lighting) << 1 | uint32_t(variant.lights) << 3 | uint32_t(variant.model) << 7 | uint32_t(variant.textures) << 8 |
                          uint32_t(variant.overlay) << 10 | uint32_t(variant.alpha_test) << 11 | uint32_t(variant.fog) << 12 | uint32_t(variant.texgen[0]) << 13 | uint32_t(variant.texgen[1]) << 15 |
-                         uint32_t(variant.texgen[2]) << 17 | uint32_t(variant.linear_fog) << 19 | uint32_t(variant.pure_modulate) << 20;
+                         uint32_t(variant.texgen[2]) << 17 | uint32_t(variant.linear_fog) << 19 | uint32_t(variant.pure_modulate) << 20 | uint32_t(variant.target_alpha_one) << 21;
     auto& program = shade.programs[key];
     if (!program) {
         auto sources = NativeShaderSource(variant);
         aurora::gl::ProgramDesc desc;
         desc.label = "shade " + NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant);
         desc.origin = "runtime/src/native_shader_source.cpp";
+        desc.preservesTargetAlphaOne = variant.target_alpha_one;
 #ifdef AURORA_GXM
         desc.vertex = std::move(sources.cg_vertex);
         desc.fragment = std::move(sources.cg_fragment);
@@ -281,6 +282,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.lights = lighting.lights;
     variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : NativeShaderModel::Basic;
     variant.pure_modulate = shading.pure_modulate != 0;
+    variant.target_alpha_one = aurora::gl::shaded_target_alpha_one();
     variant.textures = shading.textures;
     variant.overlay = shading.overlay != 0;
     variant.alpha_test = shading.alpha_test != 0;
@@ -404,13 +406,8 @@ const mh3_native_material_state& GetNativeMaterialState() {
     return material;
 }
 void SetNativeMaterial(const mh3_native_material_state& source) {
-    // Effects and UI reapply the state they read per quad/primitive (~60% of
-    // calls in Alatreon). The raster is imported into the material, so equal
-    // bytes change nothing and the next packet record reuses its snapshot.
-    Owner();
-    ObserveRasterPublications();
-    if (&source != &material && !std::memcmp(&source, &material, sizeof material))
-        return;
+    // The merge observes only fields this producer writes. Equal publications
+    // preserve the revision without comparing unknown storage or padding.
     OverlayNativeMaterial(source, MH3_MATERIAL_TOP_ALL);
 }
 void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh3_model_material_block kind, uint32_t count) {
@@ -435,8 +432,8 @@ void OverlayNativeModelMaterialGroup(const mh3_native_material_state& source, mh
             SetNativeRaster(raster);
         }
     }
-    (void)mh3_material_group_publish_unchecked(&material, &source, kind, count, nullptr);
-    Changed(NATIVE_STATE_MATERIAL);
+    if (mh3_material_group_publish_mutation_unchecked(&material, &source, kind, count))
+        Changed(NATIVE_STATE_MATERIAL);
 }
 void SetNativeModelMatrixSelectors(const mh3_model_matrix_selectors& selectors) {
     Owner();
@@ -478,8 +475,8 @@ void OverlayNativeMaterial(const mh3_native_material_state& source, uint32_t top
         Export scoped;
         SetNativeRaster(raster);
     }
-    mh3_material_state_overlay_unchecked(&material, &source, top_known);
-    Changed(NATIVE_STATE_MATERIAL);
+    if (mh3_material_state_overlay_mutation_unchecked(&material, &source, top_known))
+        Changed(NATIVE_STATE_MATERIAL);
 }
 namespace {
 // A patch without a pixel record keeps the material's pixel-derived raster
@@ -500,31 +497,22 @@ void OverlayNativeMaterialTop(uint32_t top_known, uint32_t texgens, uint32_t cha
     Owner();
     ObserveRasterPublications();
     PublishPixelRaster((top_known & MH3_MATERIAL_TOP_CULL) ? cull : material.cull_mode);
-    if (top_known & MH3_MATERIAL_TOP_TEXGEN_COUNT)
-        material.texgen_count = texgens;
-    if (top_known & MH3_MATERIAL_TOP_CHANNEL_COUNT)
-        material.channel_count = channels;
-    if (top_known & MH3_MATERIAL_TOP_TEV_COUNT)
-        material.tev_count = tevs;
-    if (top_known & MH3_MATERIAL_TOP_INDIRECT_COUNT)
-        material.indirect_count = indirect;
-    if (top_known & MH3_MATERIAL_TOP_CULL)
-        material.cull_mode = cull;
-    Changed(NATIVE_STATE_MATERIAL);
+    if (mh3_material_overlay_top_mutation_unchecked(&material, top_known, texgens, channels, tevs, indirect, cull))
+        Changed(NATIVE_STATE_MATERIAL);
 }
 void OverlayNativeMaterialChannels(const mh3_pack_channel channels[2]) {
     Owner();
     ObserveRasterPublications();
     PublishPixelRaster(material.cull_mode);
-    mh3_material_overlay_channels_unchecked(&material, channels);
-    Changed(NATIVE_STATE_MATERIAL);
+    if (mh3_material_overlay_channels_mutation_unchecked(&material, channels))
+        Changed(NATIVE_STATE_MATERIAL);
 }
 void OverlayNativeMaterialIndirectMatrices(const mh3_pack_indirect_matrix matrices[3]) {
     Owner();
     ObserveRasterPublications();
     PublishPixelRaster(material.cull_mode);
-    mh3_material_overlay_indirect_matrices_unchecked(&material, matrices);
-    Changed(NATIVE_STATE_MATERIAL);
+    if (mh3_material_overlay_indirect_matrices_mutation_unchecked(&material, matrices))
+        Changed(NATIVE_STATE_MATERIAL);
 }
 void SetNativeFog(const mh3_native_fog& source) {
     Owner();
