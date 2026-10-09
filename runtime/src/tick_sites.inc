@@ -175,6 +175,8 @@
 {0x803B8780u, TickSite::Countup},           // (803B8718): +0x14
 {0x803B9B48u, TickSite::Countdown},          // ambient creature (803B9AE8): countdown (+0x1B8), clamped at 0
 {0x803B9B74u, TickSite::Countup},            // ambient creature: steps (+0x10)
+{0x803BB824u, TickSite::Advance, -1024},     // ambient creature glow state (803BB7F8): phase (+0x1A4), -1024 per step
+{0x803BB838u, TickSite::Rate},               // ambient creature glow: pulse (+0x1B0) += rate (u16 +0x1B4) a step
 {0x803BBA14u, TickSite::Countdown},         // ambient creature (803BB984): countdown (s16 +0xE), clamped at 0
 {0x803BBAD0u, TickSite::Countdown},          // ambient creature (803BB984): idle wait (s16 +0xC), fires at 0
 {0x803BBB00u, TickSite::CountupEvery, 32},   // ambient creature: steps (s16 +0x220), a sound every 32

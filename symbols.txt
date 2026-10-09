@@ -948,3 +948,4 @@
 8013547c EnemyAddVelocity
 80135558 EnemyAddTurnedVelocity
 80135064 EnemyGlide
+803822d8 CreatureFade
