@@ -519,6 +519,9 @@ int RunTranslateRecursive(string[] argsTail)
         Console.WriteLine($"[translator] Native guest-effect contracts: {nativeGuestEffects.Contracts.Count:N0} total, " +
                           $"{nativeGuestEffects.PreciseContracts.Count:N0} precise, " +
                           $"{nativeGuestEffects.ConservativeContracts.Count:N0} full-context.");
+        Console.WriteLine("[translator] Natives with a complete-context fence: " + string.Join(" ",
+            nativeGuestEffects.Contracts.Where(static c => c.Value.HasFullSynchronizationFence)
+                .Select(static c => $"{c.Key:X8}").Order()));
         var residentTranslationExclusions = baseTranslationExclusions.Value;
         Console.WriteLine(
             $"[translator] Leaf inlining: {leafInliningBlockedTargets.Value.Count:N0} address(es) are not " +

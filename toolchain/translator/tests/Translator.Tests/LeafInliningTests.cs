@@ -740,7 +740,7 @@ public class LeafInliningTests
 
         LeafFunctionInliner.TryCreateCandidate(
             0x80000100u,
-            Single(new IrCall(string.Empty, "OSSystemCall", Array.Empty<IrValue>()), new IrReturn(null)),
+            Single(new IrCall(string.Empty, "PPC_UnknownOpaqueHelper", Array.Empty<IrValue>()), new IrReturn(null)),
             Array.Empty<Translator.Core.Disassembly.PpcInstruction>(),
             policy,
             out var fence);

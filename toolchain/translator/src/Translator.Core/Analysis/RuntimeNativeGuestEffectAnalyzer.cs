@@ -22,6 +22,14 @@ public static class RuntimeNativeGuestEffectAnalyzer
     private static readonly Regex StubRegex = GeneratedMarkers.NativeOverrideSignaturePattern();
     private static readonly Regex RegistrationRegex = GeneratedMarkers.NativeFunctionRegistrationPattern();
     private static readonly Regex FatalRegex = GeneratedMarkers.FatalStubPattern();
+    private static readonly Regex FullContextRegex = new(
+        @"^\s*MH3_NATIVE_FULL_CONTEXT\s*\(\s*0x(?<address>[0-9A-Fa-f]{8})\s*\)",
+        RegexOptions.CultureInvariant | RegexOptions.Multiline);
+
+    // The EABI boundary of GuestAbiContractAnalyzer.IndirectCallContract,
+    // plus LR as an input (a native may look at its return address).
+    private static readonly GuestAbiContract NativeEabiContract =
+        GuestAbiContractAnalyzer.IndirectCallContract with { ReadsLrBeforeWrite = true };
 
     public static RuntimeNativeGuestEffectSet AnalyzeDirectory(string directory)
         => AnalyzeSources(NativeSourceParsing.ReadDirectory(directory));
@@ -74,6 +82,27 @@ public static class RuntimeNativeGuestEffectAnalyzer
 
             foreach (Match match in FatalRegex.Matches(source))
                 Add(ParseAddress(match.Groups["address"].Value), CompleteContextContract(), false);
+        }
+
+        // A native whose body the analysis cannot bound still behaves as the
+        // compiled function it replaces: it may run guest code (which follows
+        // the PowerPC EABI) and restores or leaves r1, r2, r13-r31, f14-f31
+        // and CR2-4 as they were. So it gets the EABI boundary instead of a
+        // complete-context fence, unless it can suspend or switch threads or
+        // is marked MH3_NATIVE_FULL_CONTEXT(0x...) (it reads or changes the
+        // caller's non-volatile registers, e.g. a context switch). It stays
+        // off the precise list, so it keeps the guarded native dispatch.
+        var fullContext = new HashSet<uint>();
+        foreach (var sourceFile in sources)
+            foreach (Match match in FullContextRegex.Matches(sourceFile.Content))
+                fullContext.Add(ParseAddress(match.Groups["address"].Value));
+        foreach (var address in contracts.Keys.ToArray())
+        {
+            var contract = contracts[address];
+            if (!contract.HasFullSynchronizationFence || fullContext.Contains(address) ||
+                (contract.BoundaryFlags & (GuestCallBoundaryFlags.CanSuspend | GuestCallBoundaryFlags.CanSwitchThreads)) != 0)
+                continue;
+            contracts[address] = NativeEabiContract;
         }
 
         return new RuntimeNativeGuestEffectSet(contracts, precise, conservative);

@@ -38,9 +38,6 @@ public static class GuestHelperEffectCatalog
     private static readonly GuestHelperEffect ConditionalStore =
         new(CrReadMask: byte.MaxValue, CrWriteMask: 1, ReadsXer: true);
     private static readonly GuestHelperEffect CompleteBoundary = CreateComplete(GuestCallBoundaryFlags.None);
-    private static readonly GuestHelperEffect SystemCallBoundary = CreateComplete(
-        GuestCallBoundaryFlags.CanSuspend | GuestCallBoundaryFlags.CanSwitchThreads |
-        GuestCallBoundaryFlags.InvokesGuestCode);
 
     /// <summary>Helpers whose effect is derived from a constant argument.</summary>
     private enum ArgumentDependentHelper
@@ -78,7 +75,7 @@ public static class GuestHelperEffectCatalog
 
     private static readonly string[] PureHelpers =
     {
-        "memset_zero_32", "PPC_Cntlzw", "PPC_Eciwx", "PPC_Ecowx", "PPC_Lwarx",
+        "memset_zero_32", "PPC_Cntlzw", "PPC_Eciwx", "PPC_Ecowx", "PPC_Lwarx", "PPC_PsMr",
         "PPC_LoadHalfwordByteReverse", "PPC_LoadWordByteReverse",
         "PPC_StoreHalfwordByteReverse", "PPC_StoreWordByteReverse", "PPC_Stfiwx",
         "PPC_Fadds", "PPC_Fdivs", "PPC_Fmadd", "PPC_Fmadds", "PPC_Fmsub", "PPC_Fmsubs",
@@ -129,7 +126,9 @@ public static class GuestHelperEffectCatalog
         foreach (var helper in XerReadWriteHelpers) entries.Add(helper, CarryUpdate);
         foreach (var helper in FpscrAndGqrHelpers) entries.Add(helper, NoEffect);
         entries.Add("PPC_GetCarry", CarryRead);
-        entries.Add("OSSystemCall", SystemCallBoundary);
+        // `sc` (the SDK's cache and sync routines end with one): the runtime's
+        // OSSystemCall is `return 0`, it touches no guest state.
+        entries.Add("OSSystemCall", NoEffect);
         entries.Add("PPC_Lswx", UnboundedStringLoad);
         entries.Add("PPC_Stswx", UnboundedStringStore);
         entries.Add("PPC_Stwcx", ConditionalStore);

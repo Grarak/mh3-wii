@@ -295,6 +295,16 @@ struct KnownTypedNativeCpuCall {
 
 #include "native_cpu_calls.inc"
 
+// A native the translator cannot prove precise gets the PowerPC EABI boundary:
+// it reads r0-r13/f0-f13 (arguments, and r1/r2/r13 for any guest code it
+// runs) and may change the volatile registers, but leaves r1, r2, r13-r31,
+// f14-f31 and CR2-4 as the caller had them, as the compiled function it
+// replaces would. MH3_NATIVE_FULL_CONTEXT(0x...), at file scope beside the
+// registration, opts a native out (it reads or changes the caller's
+// non-volatile registers, e.g. a context switch): its callers then sync the
+// whole context around the call.
+#define MH3_NATIVE_FULL_CONTEXT(address) static_assert((address) != 0u, "full-context native address")
+
 // Natives whose translator contract is precise (only constant-index argument
 // and result registers in their registered body): translated callers sync
 // exactly the registers the contract names, so InvokeDirectCpu calls these

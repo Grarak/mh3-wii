@@ -60,13 +60,14 @@ public sealed class RuntimeNativeGuestEffectAnalyzerTests
     }
 
     [Fact]
-    public void TypedStubReachingForAmbientContextIsAFullFence()
+    public void TypedStubReachingForAmbientContextGetsTheEabiBoundary()
     {
         // A typed stub's contract comes from its host signature alone. This one
         // is shaped exactly like 0x801AAD7C (__OSGetSystemTime): declared to
         // return a single uint32_t, but it publishes a 64-bit result by storing
         // r3 and r4 through the ambient context. Deriving "writes r3" from the
-        // signature would let a narrowed call boundary skip reloading r4.
+        // signature would let a narrowed call boundary skip reloading r4; the
+        // EABI boundary it gets instead reloads every volatile register.
         using var fixture = new SourceFixture("""
             extern "C" uint32_t GetSystemTime(uint32_t low, uint32_t high) {
                 const uint64_t now = ReadSystemTime();
@@ -81,9 +82,22 @@ public sealed class RuntimeNativeGuestEffectAnalyzerTests
 
         var effects = RuntimeNativeGuestEffectAnalyzer.AnalyzeDirectory(fixture.Directory);
         var contract = effects.Contracts[0x801AAD7Cu];
-        Assert.True(contract.HasFullSynchronizationFence);
-        Assert.Equal(uint.MaxValue, contract.GprPossibleWriteMask);
+        Assert.False(contract.HasFullSynchronizationFence);
+        Assert.Equal(0x00001FF9u, contract.GprPossibleWriteMask);
         Assert.Contains(0x801AAD7Cu, effects.ConservativeContracts);
+    }
+
+    [Fact]
+    public void FullContextMarkerKeepsTheFence()
+    {
+        using var fixture = new SourceFixture("""
+            extern "C" void MH3_SwitchContext(CpuContext* ctx) { LoadGuestContext(ctx); }
+            REGISTER_NATIVE_FUNCTION_AS(0x80001000, MH3_SwitchContext, "SwitchContext");
+            MH3_NATIVE_FULL_CONTEXT(0x80001000);
+            """);
+
+        var effects = RuntimeNativeGuestEffectAnalyzer.AnalyzeDirectory(fixture.Directory);
+        Assert.True(effects.Contracts[0x80001000u].HasFullSynchronizationFence);
     }
 
     private sealed class SourceFixture : IDisposable
