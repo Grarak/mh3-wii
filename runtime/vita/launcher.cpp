@@ -12,6 +12,7 @@
 #include "fs_status.h"
 #include "widescreen.h"
 #include "upscaling.h"
+#include "frame_limit.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
 #include <aurora/thread_role.hpp>
@@ -739,8 +740,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     // The game reads it once, at RenderInit, after the hand-off.
     bool widescreen = WidescreenSetting().value_or(true);
 
-    // The game's graphics startup applies it, after the hand-off.
+    // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
+    bool frameLimit = FrameLimitSetting();
     SaveSlot save{};
     std::vector<SaveSlot> saves;
     std::vector<QuestCatalog::Quest> quests;
@@ -818,15 +820,18 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     "Create custom quest",
                     "Cheats",
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
-                    std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)")};
+                    std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
+                    std::string("Game thread limit: ") + (frameLimit ? "ON" : "OFF")};
             const std::string cheats = ActiveCheats();
             const std::string details[] = {"Continue through the game's title and character selection." + cheats,
                                            "Start a quest directly with an existing hunter." + cheats,
                                            "Make a hunt or capture quest from one of the game's quests.",
                                            "Gameplay toggles for this launch." + cheats,
                                            widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display.",
-                                           upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work."};
-            detail = details[std::min<size_t>(selected, 5)];
+                                           upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
+                                           frameLimit ? "The game waits for each frame to be drawn before the next: every frame is shown."
+                                                      : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder."};
+            detail = details[std::min<size_t>(selected, 6)];
             footer = "X Select   D-pad Move";
             break;
         }
@@ -1180,10 +1185,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     widescreen = !widescreen;
                     SetWidescreenSetting(widescreen);
                     Log("widescreen %s", widescreen ? "on" : "off");
-                } else {
+                } else if (selected == 5) {
                     upscaling = !upscaling;
                     SetUpscalingSetting(upscaling);
                     Log("upscaling %s", upscaling ? "on" : "off");
+                } else {
+                    frameLimit = !frameLimit;
+                    SetFrameLimitSetting(frameLimit);
+                    Log("game thread limit %s", frameLimit ? "on" : "off");
                 }
 
                 break;

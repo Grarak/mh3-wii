@@ -10,6 +10,7 @@
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "model_render_prep.h"
 #include "spin_signal.h"
+#include "frame_limit.h"
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
 #include "port_check.h"
@@ -159,6 +160,9 @@ std::atomic<uint64_t> completed{0};
 // taken: the sequence of the newest packet the render thread took (pacing);
 // lastPublished: the newest packet published (game thread writes it).
 std::atomic<uint64_t> taken{0}, lastPublished{0};
+
+// Advanced after each take (and a failure): the game thread limiter waits on it.
+SpinSignal takenSignal;
 #ifdef MH3_DEVELOPMENT
 struct RenderCounters {
     std::atomic<uint32_t> revision{0};
@@ -298,9 +302,11 @@ void SampleRenderParts() {
 #endif
 bool synchronous = false;
 
-// The game thread limiter (MH3_PROFILE=unpaced turns it off): at most
-// queueDepth published packets wait for the render thread (one, or two with
-// MH3_PROFILE=queue=2); see PaceNativeFramePacket.
+// The game thread limiter (the launcher's setting, FrameLimitSetting;
+// MH3_PROFILE=unpaced turns it off): at most queueDepth published packets
+// wait for the render thread (one, or two with MH3_PROFILE=queue=2); see
+// PaceNativeFramePacket. Set at the render thread's start.
+bool frameLimit = true;
 bool paced = true;
 uint32_t queueDepth = 1;
 std::mutex taskLock;
@@ -973,6 +979,7 @@ void RenderPackets() {
         // thread reuses a skipped packet's slot once a newer one is taken.
         const uint64_t next = paced || synchronous ? current + 1 : newest;
         taken.store(next, std::memory_order_release);
+        takenSignal.Advance();
         const auto& p = packets[next % kNativeFramePacketSlots];
 
         if (p.sequence != next)
@@ -1039,9 +1046,11 @@ void RenderLoop() {
         std::fprintf(stderr, "MH3 render thread: %s\n", error.what());
         failure = std::current_exception();
         failed.store(true, std::memory_order_release);
+        takenSignal.Advance();
     } catch (...) {
         failure = std::current_exception();
         failed.store(true, std::memory_order_release);
+        takenSignal.Advance();
     }
 #else
     RenderPackets();
@@ -1081,6 +1090,7 @@ EM_BOOL RenderAnimationFrame(double, void*) {
         if (newest > current) {
             const uint64_t next = paced || synchronous ? current + 1 : newest;
             taken.store(next, std::memory_order_release);
+            takenSignal.Advance();
             const auto& p = packets[next % kNativeFramePacketSlots];
 
             if (p.sequence != next)
@@ -1103,9 +1113,11 @@ EM_BOOL RenderAnimationFrame(double, void*) {
         std::fprintf(stderr, "MH3 render loop: %s\n", error.what());
         failure = std::current_exception();
         failed.store(true, std::memory_order_release);
+        takenSignal.Advance();
     } catch (...) {
         failure = std::current_exception();
         failed.store(true, std::memory_order_release);
+        takenSignal.Advance();
     }
 #endif
     FinishWebRenderLoop();
@@ -1268,6 +1280,14 @@ uint64_t NativeFramePacketSequence() {
     return sequence;
 }
 
+bool FrameLimitSetting() {
+    return frameLimit;
+}
+
+void SetFrameLimitSetting(bool limit) {
+    frameLimit = limit;
+}
+
 uint64_t NativeFramePacketsDone() {
     // The render thread takes packets in sequence order: once it finished
     // one, every older packet has rendered or was skipped and is never read.
@@ -1283,6 +1303,8 @@ void StartNativeRenderThread() {
 
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
+
+    paced = frameLimit;
 #ifdef MH3_DEVELOPMENT
     renderCounters.thread.store(-1, std::memory_order_relaxed);
     renderCounters.revision.store(0, std::memory_order_relaxed);
@@ -1295,7 +1317,7 @@ void StartNativeRenderThread() {
 #endif
     // MH3_PROFILE=sync: wait for every packet to render (serial frames).
     synchronous = ProfileOptions().Has("sync");
-    paced = !ProfileOptions().Has("unpaced");
+    paced = paced && !ProfileOptions().Has("unpaced");
     queueDepth = uint32_t(std::clamp<uint64_t>(ProfileOptions().Number("queue", 1), 1, kNativeFramePacketSlots - 2));
     renderSplit = ProfileOptions().Has("render");
 
@@ -1456,16 +1478,22 @@ void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged) {
 // frames are shown (variable steps follow it, so the frames sample game time
 // evenly). Each packet of depth adds a render frame of latency while the
 // render thread sets the rate; one is the default. Without the
-// limiter (MH3_PROFILE=unpaced) the game thread waits only for a free slot,
-// which the render thread frees by taking the newest packet, skipping the
-// older ones: their draw work is lost and the frames shown judder. Short
-// sleeps: the Vita has no reliable untimed wait (see WaitForPacket).
+// limiter (the launcher's game thread limit off, or MH3_PROFILE=unpaced) the
+// game thread waits only for a free slot, which the render thread frees by
+// taking the newest packet, skipping the older ones: their draw work is lost
+// and the frames shown judder. The wait spins briefly, then parks on
+// takenSignal, which the render thread advances at each take. The park is
+// bounded and the loop re-checks, so a slot freed by a completion alone is
+// seen within the bound, and a stall reports itself.
 void PaceNativeFramePacket() {
     if (synchronous || !running.load(std::memory_order_relaxed))
         return;
 
     const uint64_t next = sequence + 1;
     const auto ready = [next] { return paced ? taken.load(std::memory_order_acquire) + queueDepth >= next : SlotFree(next); };
+
+    // Loaded before the check: a take after the check moves the signal on.
+    uint32_t seen = takenSignal.Load();
 
     if (ready())
         return;
@@ -1474,11 +1502,7 @@ void PaceNativeFramePacket() {
     uint64_t report = start + 2'000'000'000;
 #endif
     while (!ready() && !failed.load(std::memory_order_acquire)) {
-#ifdef __vita__
-        sceKernelDelayThread(100);
-#else
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
-#endif
+        seen = takenSignal.AwaitChangeFor(seen, 50, 100000);
 #ifdef MH3_DEVELOPMENT
         // The statistics come from this thread, so a stall reports itself.
         if (const uint64_t now = RenderMonotonicNs(); now >= report) {

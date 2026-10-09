@@ -179,8 +179,9 @@ or the devkit harness's CTRLP pad drives the menus too. With this call the
 handheld's L/R report as L1/R1.
 
 The main menu contains `Start game`, `Quests`, `Create custom quest`,
-`Cheats`, `Widescreen` and `Upscaling`. `Widescreen` toggles the game's 16:9 mode for this
-launch (on by default; `MH3_WIDESCREEN=0` starts it off) through
+`Cheats`, `Widescreen`, `Upscaling` and `Game thread limit`. `Widescreen`
+toggles the game's 16:9 mode for this launch (on by default;
+`MH3_WIDESCREEN=0` starts it off) through
 `SetWidescreenSetting`; the game reads it once, at `RenderInit`, after the
 hand-off. Off, the game runs in 4:3 on a pillarboxed 777×544 target
 ([vita-widescreen.md](vita-widescreen.md)). The Quests submenu contains `Offline quests`, `Online quests`,
@@ -201,6 +202,16 @@ itself always draws at 960×544; the game's graphics startup
 (`InitializeNativeGraphics`, after the hand-off) applies the setting as the
 target's scale (`VISetFrameBufferScale`: 0 for the display's size, 1 for 448
 rows). The development `MH3_RENDER_SCALE` overrides it.
+
+`Game thread limit` (on by default; `SetFrameLimitSetting`,
+`runtime/include/frame_limit.h`) reads `Game thread limit: ON` or `OFF`. On,
+the game thread records a frame only once the render thread took the one
+before it, parked until the render thread signals that take, so every frame
+it makes is shown ([packet ring](frame-packet-ring.md#the-game-thread-limiter)).
+Off, the game thread runs ahead, the render thread draws the newest frame
+and skips the others, and motion can judder. The game's render thread start,
+after the hand-off, applies it; the development `MH3_PROFILE=unpaced` turns
+it off too.
 
 `Start game` goes through the game's own intro movie and title. Only the
 Classic Controller's A (the Vita's Circle) skips the intro: Plus (Start) does
@@ -562,13 +573,15 @@ runs short. Results (VM, llvmpipe, October 2026):
 | `tour-custom-quest.tsv` | Cheats toggled, the editor changed map (Flooded Forest to Sandy Plains) and monster (Barroth to Diablos), saved, edited and saved again (`0-1027-1.mh3quest`), launched: the quest loads into Sandy Plains with the HUD. |
 | `widescreen-toggle-start.tsv` | Row text OFF (4:3), then ON (16:9); the intro and the title in 16:9 on the whole display. Plus during the intro: no skip; A: skip. |
 | Upscaling off (and Widescreen off), then quest 10057 | `upscaling off` logged; `EFB render target 791x448` (640x448 with Widescreen off) after the hand-off, against 960x544 (777x544) with Upscaling on; frame dumps at those sizes; the window shows the 16:9 picture over its whole client area, filtered, and the 4:3 one between bars. |
+| Game thread limit off, then quest 10057 | `game thread limit off` logged; the game thread runs ahead of the render thread: 99 logical frames/s against 33 drawn ([packet ring](frame-packet-ring.md#the-wait)). |
 
 ## Devkit checklist
 
 Not run yet on hardware: the custom quest tour (editor, IME keyboard, save,
 saved quest launch, cheats), the missing-disc message, the launcher reading
-CTRLP, re-enabling Widescreen, Upscaling off, and a release build of the launcher. Run each
-through `scripts/dev/devkit-heartbeat.sh` (main session only), in a new
+CTRLP, re-enabling Widescreen, Upscaling off, the game thread limit's
+semaphore wait and the limit off, and a release build of the launcher. Run
+each through `scripts/dev/devkit-heartbeat.sh` (main session only), in a new
 directory `build/vita-devkit/RUN` staged like this:
 
 ```
