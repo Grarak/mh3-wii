@@ -287,29 +287,50 @@ void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
         at = end + 1;
         if (item.size() < 3 || item[0] != kind || item[1] != ':') continue;
         const uint32_t fn = uint32_t(std::strtoul(item.c_str() + 2, nullptr, 16));
+        if (kind == 'P') {
+            // Samples (MH3_PORT_FUZZ_SAMPLES, default 64) of the action state
+            // (each in turn), the step counter and countdown, the args r4 = r5
+            // (0-3) and the inputs: the command bit words (+0xE0..+0xFF), the
+            // pad (+0xC8, +0xCC) and the flag bytes +6, +7.
+            static const uint32_t samples = [] {
+                const char* v = std::getenv("MH3_PORT_FUZZ_SAMPLES");
+                return v ? uint32_t(std::strtoul(v, nullptr, 0)) : 64u;
+            }();
+            constexpr uint32_t kTimers[] = {0, 1, 2, 40, 400};
+            constexpr uint32_t kBits[] = {0, ~0u, 0x55555555, 0xAAAAAAAA};
+            for (uint32_t i = 0; i < samples; ++i) {
+                uint32_t r = fn ^ (i * 0x9E3779B9u);
+                r ^= r >> 15;
+                r *= 0x2C1B3C6Du;
+                r ^= r >> 12;
+                const uint32_t state = i % 8, timer = kTimers[r % 5], bits = kBits[(r >> 8) % 4], arg = (r >> 16) % 4;
+                Memory::Write8(work + 5, uint8_t(state));
+                Memory::Write32(work + 0x20, state * 25);
+                Memory::Write32(work + 0x28, timer);
+                for (uint32_t k = 0xE0; k < 0x100; k += 4) Memory::Write32(work + k, bits);
+                Memory::Write16(work + 0xC8, uint16_t(bits));
+                Memory::Write16(work + 0xCC, uint16_t(bits >> 1));
+                Memory::Write8(work + 6, uint8_t(bits & 1));
+                Memory::Write8(work + 7, uint8_t(bits >> 31));
+                game(fn, {work, arg, arg});
+                start.Restore();
+                GameStep::Restore(clock);
+                *ctx = entry;
+                ++runs;
+            }
+            std::printf("MH3 port fuzz: %08x done\n", fn);
+            std::fflush(stdout);
+            continue;
+        }
         for (uint32_t arg = 0; arg < 2; ++arg) {
-            if (kind == 'P') {
-                for (uint32_t state = 0; state < 8; ++state)
-                    for (uint32_t timer : {1u, 2u, 40u, 400u}) {
-                        Memory::Write8(work + 5, uint8_t(state));
-                        Memory::Write32(work + 0x20, state * 25);
-                        Memory::Write32(work + 0x28, timer);
-                        game(fn, {work, arg, arg});
-                        start.Restore();
-                        GameStep::Restore(clock);
-                        *ctx = entry;
-                        ++runs;
-                    }
-            } else {
-                const uint32_t counter = Memory::Read32(kStepCounter);
-                for (uint32_t phase = 0; phase < 64; phase += 3) {
-                    Memory::Write32(kStepCounter, (counter & ~63u) + 64 + phase);
-                    game(fn, {work, arg, arg});
-                    start.Restore();
-                    GameStep::Restore(clock);
-                    *ctx = entry;
-                    ++runs;
-                }
+            const uint32_t counter = Memory::Read32(kStepCounter);
+            for (uint32_t phase = 0; phase < 64; phase += 3) {
+                Memory::Write32(kStepCounter, (counter & ~63u) + 64 + phase);
+                game(fn, {work, arg, arg});
+                start.Restore();
+                GameStep::Restore(clock);
+                *ctx = entry;
+                ++runs;
             }
         }
     }

@@ -17,15 +17,10 @@
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
-{0x80246C64u, TickSite::Countup},           // player action step counter (PLW+0x28) in action handlers
 {0x8024ACD0u, TickSite::CountdownPastZero},
 {0x8024C224u, TickSite::Countdown, 1},
 {0x8024C314u, TickSite::Countdown},
-{0x80250070u, TickSite::Countdown},
-{0x80250114u, TickSite::Countdown},
 {0x802501DCu, TickSite::CountdownPastZero},
-{0x80251590u, TickSite::Countdown},
-{0x8025182Cu, TickSite::Countdown},
 {0x80253200u, TickSite::Countdown},
 {0x80254A4Cu, TickSite::Countup},
 {0x80254F3Cu, TickSite::Countup},
@@ -33,7 +28,6 @@
 {0x80258E9Cu, TickSite::CountdownPastZero},
 {0x802598F0u, TickSite::Countup},
 {0x80259ABCu, TickSite::Countup},
-{0x8025AC3Cu, TickSite::CountdownPastZero},
 {0x8025B380u, TickSite::Countup},
 {0x8025CEF8u, TickSite::Countup},
 {0x8025D0BCu, TickSite::Countup},
@@ -41,7 +35,6 @@
 {0x802823CCu, TickSite::CountdownPastZero},
 {0x802857D8u, TickSite::Countup},
 {0x80286B70u, TickSite::Countup},
-{0x80288808u, TickSite::CountdownPastZero},
 {0x802B638Cu, TickSite::EaseDivisor},       // field camera (802B5CBC): height eases, target (f31) and eye (f30)
 {0x802B644Cu, TickSite::EaseDivisor},
 {0x802B6450u, TickSite::EaseDivisor},

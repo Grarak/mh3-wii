@@ -51,6 +51,19 @@
 //   0x80247704  climbing up a ledge (motion 17); after 30 steps it may end
 //   0x80249944  standing: idle motion 100, 118, 121 or 360
 //   0x80253CA0  motion 105 draining stamina (4 a step) for 25 steps
+//   0x80246BE0  motion 1, after 30 steps 66 (63), then 67 (65); the tired
+//               idle 303
+//   0x802516C0  (plw, alt) using an item: motion 314 (365) for 60 steps,
+//               then action 170 (173) while the item lasts
+//   0x80251470  (plw, fresh, alt) the item's repeat: motion 314 (365), after
+//               30 steps command 76 goes on to 171 (174); 60 steps, command 7
+//               ends it
+//   0x802886AC  (plw, next, alt) weapon motion 1001 (1050), for the steps
+//               0x805CB9B0 gives +0x26C, then the action table's next
+//   0x8025AA9C  (plw, mode) motion 241 waiting on 0x8012D4FC (up to 300
+//               steps) or 0x8012D4CC, then action 7
+//   0x8024FF6C  (plw, kind) motion 7 then 8 (or 8, or 118); after 20 steps
+//               commands 7 and 1 end it
 //   0x8025DC40, 0x8025DA9C  (plw, alt) another console's player standing or
 //               resting; freed after 300 steps
 //
@@ -150,6 +163,7 @@ enum : uint32_t {
     ClimateActive = 0x80276864, // PlClimateActive (plw, 0) -> 1 in heat or cold without protection
     InWater = 0x80278878,     // Pl_suimen_ck (plw) -> 1 at the water's surface
     AnyInput = 0x8026F8EC,    // (plw) -> 1 when the local player moves the stick or presses a button
+    SetAction = 0x80275754,   // (plw, u8, u16 action, u16)
     EndActionReset = 0x8027629C, // (plw, u8 flag9, s32 blend, s32 flags): +0x442 = 0, +0x30A = 255, then as EndAction
 };
 constexpr uint32_t kCharFlag246 = 0xF6; // MHchar u8 (0x8026A350)
@@ -1036,8 +1050,8 @@ void ChargeHold(CpuContext* ctx) {
                 Memory::Write8(plw + kFlag7, 1);
                 game.Call<0x8011ADBC>({plw, 0});
             }
-            // Command 17 or 13 (the button let go) ends the charge (+6).
-            if (Bit(plw + kCommands, 17) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
+            // Command 17 clear (the button let go) or 13 ends the charge (+6).
+            if (!Bit(plw + kCommands, 17) || Bit(plw + kCommands, 13)) Memory::Write8(plw + kFlag6, 1);
             if (Memory::Read8(plw + kFlag6) == 0) {
                 Memory::WriteFloat32(plw + kMotionRate, 0.5f);
                 ChargeStep(p);
@@ -1134,8 +1148,9 @@ void Stand(CpuContext* ctx) {
 }
 
 // 0x80253CA0: motion 105, the lean held within 60 degrees, draining
-// stamina (4 a step) for 25 steps; when it ends action 8 near something,
-// else 9 on command bit 37 (or for another console's player), else 7.
+// stamina (4 a step) for 25 steps; when it ends action 8 when 0x8026F96C
+// finds none, else 9 on command bit 37 (or for another console's player),
+// else 7.
 void Motion105(CpuContext* ctx) {
     GuestFrame frame(ctx, 16);
     GuestCall game{ctx};
@@ -1164,9 +1179,302 @@ void Motion105(CpuContext* ctx) {
         }
         if (!p.Ended()) break;
         if (game.Call<MasterCheck>({plw}) == 0) p.Next(1, 9, 128);
-        else if ((game.Call<Nearby>({plw, 0}) & 0xFF) >= 1) p.Next(1, 8, 0);
+        else if ((game.Call<Nearby>({plw, 0}) & 0xFF) < 1) p.Next(1, 8, 0);
         else if (Bit(plw + kCommandBits, 37)) p.Next(1, 9, 128);
         else p.Next(1, 7, 128);
+        break;
+    }
+}
+
+// 0x80246BE0: motion 1 (0x8027714C with 0x805BE408, or 0x80277204 when +24
+// is set), and 30 steps in motion 66 (63 when +20 is set). As each ends the
+// motions go on: 21 to 5, 63 to 65, 66 to 67; otherwise the tired idle 303
+// when +0x37A is 150 or less (not with +24 set).
+void Motion63Or66(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0x8000, 0, 0);
+        if (Memory::Read8(plw + kFlag24) == 0) game.Call<0x8027714C>({plw, 0x805BE408, 0});
+        else game.Call<0x80277204>({plw, 0});
+        p.Timer(0);
+        [[fallthrough]];
+    case 1:
+        p.CountUp();
+        if (p.Timer() > 30 && p.Motion() == 1) p.Set(Memory::Read8(plw + kFlag20) ? 63 : 66, 6, 0);
+        if (p.Master() && game.Call<0x8026FEA8>({plw}) == 1 && Memory::Read8(plw + kFlag24) == 1)
+            game.Call<0x8027A5E0>({plw, 1001, 0});
+        switch (p.Motion()) {
+        case 21:
+            if (p.Ended()) p.Set(5, 4, 144);
+            break;
+        case 63:
+            if (p.Ended()) p.Set(65, 2, 0);
+            break;
+        case 66:
+            if (p.Ended()) p.Set(67, 2, 0);
+            break;
+        default:
+            if (Memory::Read8(plw + kFlag24) != 1 && int16_t(Memory::Read16(plw + kStaminaMax)) <= 150)
+                p.SetX(303, 4, 0);
+            break;
+        }
+        break;
+    }
+}
+
+// 0x802516C0 (plw, alt): using the item at +774: motion 314 (365 when alt),
+// 60 steps, then on to action 170 (173) while 0x80273218 still has the item,
+// or the end. Items 380 and 583 tell the object at *0x80797020 (its call at
+// +120, with 3 or 5), 384 goes to 0x802ADEF0.
+void UseItem(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, alt = frame.Arg(4);
+    game.Call<SetState1408>({plw, 2});
+    switch (p.State()) {
+    case 0: {
+        p.NextState();
+        if (alt == 0) {
+            p.Flags(0, 0, 0);
+            p.Set(314, 0, 66);
+        } else {
+            p.Flags(3, 0, 0);
+            p.Set(365, 0, 66);
+        }
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(60);
+        if (p.Master() && int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) <= 0) break;
+        if (game.Call<InEventDemo>({1}) == 0 && Memory::Read16(plw + kItem774) != 384)
+            game.Call<0x80272E94>({plw, Memory::Read16(plw + kItem774), uint32_t(-1)});
+        game.Call<0x802BE5CC>({plw, 0});
+        const uint32_t item = Memory::Read16(plw + kItem774);
+        if (item == 380 || item == 583) {
+            const uint32_t obj = Memory::Read32(0x80797020);
+            game(Memory::Read32(obj + 120), {plw, item == 380 ? 3u : 5u, obj});
+        } else if (item == 384) {
+            game.Call<0x802ADEF0>({plw});
+        }
+        break;
+    }
+    case 1: {
+        // The original fires only as the countdown reaches 0 (not below).
+        const int32_t before = p.Timer();
+        if (!p.CountDown() || before <= 0) break;
+        if (int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) < 1 ||
+            Memory::Read16(plw + kItem774) == 384)
+            p.End(Memory::Read8(plw + kFlag9), 6);
+        else
+            p.Next(0, alt ? 173 : 170, 44);
+        break;
+    }
+    }
+}
+
+// 0x80251470 (plw, fresh, alt): holding the item for another use: motion 314
+// (365 when alt), fresh with sound 13 or carried on from the last use (blend
+// -4, +0x5E8/+0x583 cleared, +0x38 the facing). After 30 steps (+6) the local
+// player's command 76 goes on to action 171 (174) while the item lasts; after
+// 60 (+0x28) command 7 ends it, as an event demo at once.
+void UseItemRepeat(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, fresh = frame.Arg(4), alt = frame.Arg(5);
+    const uint32_t motion = alt == 0 ? 314 : 365;
+    game.Call<SetState1408>({plw, 2});
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        Memory::Write8(plw + kFlag24, 0);
+        p.Flags(alt == 0 ? 0 : 3, 0, 0);
+        if (fresh == 0) {
+            p.Set(motion, -4, 0);
+            Memory::Write16(plw + 0x5E8, 0);
+            Memory::Write8(plw + 0x583, 0);
+            Memory::Write16(plw + 0x38, uint16_t(Memory::Read32(plw + kAngle)));
+        } else {
+            if (p.Master()) game.Call<0x800DDD1C>({13, plw + kPosition}); // map_se_req
+            p.Set(motion, 0, 66);
+        }
+        game.Call<MotionAfterSet>({plw});
+        p.Timer(60);
+        Memory::Write8(plw + kFlag6, 30);
+        break;
+    case 1: {
+        p.CountDownToZero();
+        const uint32_t hold = Memory::Read8(plw + kFlag6);
+        Memory::Write8(plw + kFlag6, uint8_t(hold - std::min(hold, GameStep::Ticks())));
+        if (!p.Master()) break;
+        if (game.Call<InEventDemo>({1}) == 1) {
+            p.End(Memory::Read8(plw + kFlag9), 6);
+            break;
+        }
+        if (Memory::Read8(plw + kFlag6) == 0) {
+            game.Call<0x8027A5E0>({plw, motion, 2});
+            if (game.Call<0x8026A6A8>({plw, 76}) == 1 &&
+                int32_t(game.Call<0x80273218>({plw, Memory::Read16(plw + kItem774)})) >= 1) {
+                p.Next(0, alt == 0 ? 171 : 174, 108);
+                break;
+            }
+        }
+        if (p.Timer() == 0 && game.Call<0x8026A6A8>({plw, 7}) == 1) p.End(Memory::Read8(plw + kFlag9), 6);
+        break;
+    }
+    }
+}
+
+// 0x802886AC (plw, next, alt): weapon motion 1001 (1050 when alt, with
+// 0x80279F20's 1030/1031 or 1080/1081) for as many steps as 0x805CB9B0 gives
+// the weapon kind at +0x26C (40, 41, other), 0x8031D2F8 on for its first 5
+// steps (+6). Then the local player goes on to entry `next` of the u16
+// actions at 0x80794654 (0x8079465C).
+void Weapon1001(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, next = frame.Arg(4), alt = frame.Arg(5);
+    switch (p.State()) {
+    case 0: {
+        p.NextState();
+        Memory::Write8(plw + 0x36A, 6);
+        if (alt == 0) {
+            p.Flags(0, 1, 0);
+            p.Set(1001, 4, 0);
+            game.Call<0x80279F20>({plw, 1030, 1031});
+        } else {
+            p.Flags(3, 1, 0);
+            p.Set(1050, 4, 0);
+            game.Call<0x80279F20>({plw, 1080, 1081});
+        }
+        game.Call<0x8031D2F8>({plw, 1});
+        const uint32_t kind = Memory::Read8(plw + 0x26C);
+        p.Timer(int32_t(Memory::Read32(0x805CB9B0 + 4 * (kind == 40 ? 1 : kind == 41 ? 2 : 0))));
+        Memory::Write8(plw + kFlag6, 5);
+        Memory::Write32(plw + kAngle2, Memory::Read32(plw + kAngle));
+        Memory::Write32(plw + 0x54, Memory::Read32(plw + 0xAC));
+        break;
+    }
+    case 1: {
+        if (const uint32_t n = Memory::Read8(plw + kFlag6)) {
+            Memory::Write8(plw + kFlag6, uint8_t(n - std::min(n, GameStep::Ticks())));
+            if (Memory::Read8(plw + kFlag6) == 0) game.Call<0x8031D2F8>({plw, 0});
+        }
+        if (!game.Call<MasterCheck>({plw})) break;
+        if (p.CountDown()) {
+            const uint32_t action = Memory::Read16((alt == 0 ? 0x80794654 : 0x8079465C) + 2 * next);
+            game.Call<SetAction>({plw, 4, action, alt == 0 ? 5u : 133u});
+        } else {
+            game.Call<0x8027A5E0>({plw, alt == 0 ? 1001u : 1050u, 0});
+        }
+        break;
+    }
+    }
+}
+
+// 0x8025AA9C (plw, mode): motion 241. The local player's mode 0 waits up to
+// 300 steps for 0x8012D4FC to find one: its kind (+3: 1, 2, 4, 7) picks 15,
+// 17, 14 or 22 (else 15), plus 0-3 at random, for 0x8025A844, then action 7
+// (2); running out, or the finder's flag, is action 7 (3). Mode 1 (with
+// 0x8027714C's 0x805C5880) steps 0x8025A860 until +0x3A4 or 0x8012D4CC clears.
+void Motion241(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, mode = frame.Arg(4), found = frame[8];
+    game.Call<SetState918>({plw, 2});
+    game.Call<SetState1408>({plw, 2});
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.SetX(241, 2, 0);
+        game.Call<MotionAfterSet>({plw});
+        p.Flags(0, 0, 1);
+        game.Call<0x8027D554>({plw});
+        Memory::Write8(plw + kFlag24, 0);
+        if (mode == 0) p.Timer(300);
+        Memory::Write8(plw + kFlag6, 30);
+        Memory::Write8(plw + kFlag7, 3);
+        if (mode == 1) game.Call<0x8027714C>({plw, 0x805C5880, 0});
+        break;
+    case 1: {
+        if (!p.Master()) break;
+        const uint32_t n = Memory::Read8(plw + kFlag6);
+        Memory::Write8(plw + kFlag6, uint8_t(n - std::min(n, GameStep::Ticks())));
+        if (mode == 0) {
+            if (const uint32_t hit = game.Call<0x8012D4FC>({0, plw, found})) {
+                const uint32_t kind = Memory::Read8(hit + 3);
+                const uint32_t base = kind == 2 ? 17 : kind == 4 ? 14 : kind == 7 ? 22 : 15;
+                game.Call<0x8025A844>({plw, (base + (game.Call<Rand>({1}) & 3)) & 0xFF});
+                p.Next(7, 2, 0);
+                break;
+            }
+            // The original fires once the countdown was out before the step.
+            p.Timer(p.Timer() - int32_t(GameStep::Ticks()));
+            if (p.Timer() < 0 || Memory::Read8(found) == 1) p.Next(7, 3, 0);
+        } else if (mode == 1) {
+            game.Call<0x8025A860>({plw});
+            if (Memory::Read8(plw + 0x3A4) == 0 || game.Call<0x8012D4CC>({1, plw, found}) == 0) p.Next(7, 3, 0);
+        }
+        break;
+    }
+    }
+}
+
+// 0x8024FF6C (plw, kind): motion 7 into 8 (kind 0), or 8 (1) or 118 (2) at
+// once, each held with 0x8027A5E0. The local player's commands 7 and 1 (or an
+// event demo) end it once 20 steps are out.
+void Motion7Or8(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(1, 0, 0);
+        Memory::Write8(plw + 0x5E6, 1);
+        Memory::Write8(plw + 0x5E5, 4);
+        Memory::Write8(plw + kFlag24, 0);
+        p.Timer(20);
+        if (kind == 0) {
+            p.Set(7, 2, 0);
+        } else if (kind == 1) {
+            p.NextState();
+            p.Set(8, 2, 0);
+        } else if (kind == 2) {
+            p.NextState();
+            p.Set(118, 2, 0);
+            p.Flags(3, 0, 0);
+        }
+        break;
+    case 1:
+        p.CountDownToZero();
+        if (p.Ended()) {
+            p.NextState();
+            p.Set(8, 6, 0);
+            game.Call<0x8027A5E0>({plw, 8, 1});
+        } else {
+            game.Call<0x8027A5E0>({plw, 7, 1});
+        }
+        break;
+    case 2:
+        if (!game.Call<MasterCheck>({plw})) break;
+        game.Call<0x8027A5E0>({plw, kind == 2 ? 118u : 8u, 1});
+        if (p.Timer() > 0) {
+            p.CountDownToZero();
+            break;
+        }
+        if (game.Call<0x8026A6A8>({plw, 7}) == 1 || game.Call<0x8026A6A8>({plw, 1}) == 1 ||
+            game.Call<InEventDemo>({1}) == 1) {
+            game.Call<0x8027A1E0>({plw});
+            p.End(kind == 2 ? 3 : 1, 4);
+        }
         break;
     }
 }
@@ -1292,3 +1600,31 @@ REGISTER_NATIVE_FUNCTION_AS(0x80249944, MH3_FieldActionStand, "FieldActionStand"
 extern "C" void func_80253CA0(CpuContext* ctx);
 extern "C" void MH3_FieldActionMotion105(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion105", func_80253CA0, Motion105); }
 REGISTER_NATIVE_FUNCTION_AS(0x80253CA0, MH3_FieldActionMotion105, "FieldActionMotion105");
+
+extern "C" void func_80246BE0(CpuContext* ctx);
+extern "C" void MH3_FieldActionMotion63Or66(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionMotion63Or66", func_80246BE0, Motion63Or66);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80246BE0, MH3_FieldActionMotion63Or66, "FieldActionMotion63Or66");
+
+extern "C" void func_802516C0(CpuContext* ctx);
+extern "C" void MH3_FieldActionUseItem(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionUseItem", func_802516C0, UseItem); }
+REGISTER_NATIVE_FUNCTION_AS(0x802516C0, MH3_FieldActionUseItem, "FieldActionUseItem");
+
+extern "C" void func_80251470(CpuContext* ctx);
+extern "C" void MH3_FieldActionUseItemRepeat(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionUseItemRepeat", func_80251470, UseItemRepeat);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80251470, MH3_FieldActionUseItemRepeat, "FieldActionUseItemRepeat");
+
+extern "C" void func_802886AC(CpuContext* ctx);
+extern "C" void MH3_FieldActionWeapon1001(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionWeapon1001", func_802886AC, Weapon1001); }
+REGISTER_NATIVE_FUNCTION_AS(0x802886AC, MH3_FieldActionWeapon1001, "FieldActionWeapon1001");
+
+extern "C" void func_8025AA9C(CpuContext* ctx);
+extern "C" void MH3_FieldActionMotion241(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion241", func_8025AA9C, Motion241); }
+REGISTER_NATIVE_FUNCTION_AS(0x8025AA9C, MH3_FieldActionMotion241, "FieldActionMotion241");
+
+extern "C" void func_8024FF6C(CpuContext* ctx);
+extern "C" void MH3_FieldActionMotion7Or8(CpuContext* ctx) { PortCheck::Call(ctx, "FieldActionMotion7Or8", func_8024FF6C, Motion7Or8); }
+REGISTER_NATIVE_FUNCTION_AS(0x8024FF6C, MH3_FieldActionMotion7Or8, "FieldActionMotion7Or8");

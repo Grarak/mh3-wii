@@ -911,3 +911,9 @@
 8035bfc8 EnemyRetargetEvery32
 801311b4 EnemySight
 80264334 PlConditionStep
+80246be0 FieldActionMotion63Or66
+802516c0 FieldActionUseItem
+80251470 FieldActionUseItemRepeat
+802886ac FieldActionWeapon1001
+8025aa9c FieldActionMotion241
+8024ff6c FieldActionMotion7Or8
