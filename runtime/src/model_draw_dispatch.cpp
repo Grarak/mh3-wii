@@ -55,7 +55,12 @@ struct Census {
         return text;
     }
 } census;
-#define MH3_CENSUS(...) __VA_ARGS__
+// Census keys are built only while the census runs.
+#define MH3_CENSUS(...)                                                                                                                                                                                \
+    do {                                                                                                                                                                                               \
+        if (census.every)                                                                                                                                                                              \
+            __VA_ARGS__;                                                                                                                                                                               \
+    } while (0)
 #else
 #define MH3_CENSUS(...)
 #endif
