@@ -1793,7 +1793,11 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
       r.presentProgram.set_vertex_uniform("region", region, 4);
       r.presentProgram.set_vertex_uniform("depth", &depth, 1);
       r.texture(source->gl()).note_gpu_use();
-      const auto sampled = sampling_view(r.texture(source->gl()), LinearClamp);
+      // A copy at the source's own size samples texel centres, where linear
+      // filtering is the texel itself: point sampling reads one texel, not
+      // four (the pass is texture-bound).
+      const bool exact = uint32_t(width) == source->width && uint32_t(height) == source->height;
+      const auto sampled = sampling_view(r.texture(source->gl()), exact ? NearestClamp : LinearClamp);
       check(sceGxmSetFragmentTexture(r.device.context(), 0, &sampled), "bind presentation source");
       r.utility_draw(6);
       const RasterState presentRaster{};
