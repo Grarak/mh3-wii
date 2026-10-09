@@ -159,12 +159,6 @@ uint8_t Weapon(uint32_t plw) {
     return Memory::Read8(plw + kWeapon);
 }
 
-// An activator with "Always" (0) among its choices.
-bool Activated(Id id) {
-    const auto buttons = uint16_t(Value(id));
-    return buttons == 0 || HeldAll(buttons);
-}
-
 void TurnWithCamera(uint32_t plw) {
     Memory::Write16(plw + kFacing, Memory::Read16(plw + kCameraYaw));
 }

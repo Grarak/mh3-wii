@@ -69,8 +69,33 @@ constexpr Option kPlayTimes[]{
     {"9999:59", 35999999},
 };
 
+// The game's languages (system_w+9), as the US code's menu named them.
+constexpr Option kLanguages[]{
+    {"English", 1}, {"French", 2}, {"German", 3}, {"Italian", 4}, {"Spanish", 5},
+};
+
+constexpr Option kHunterRanks[]{
+    {"1", 1}, {"2", 2}, {"9", 9}, {"17", 17}, {"30", 30}, {"31", 31}, {"50", 50},
+    {"100", 100}, {"200", 200}, {"500", 500}, {"999", 999},
+};
+
+constexpr Option kMultipliers[]{
+    {"x2", 2}, {"x3", 3}, {"x4", 4}, {"x5", 5}, {"x10", 10},
+};
+
+// Monster speed factors in percent (the code's float's upper half: 3F00 0.5,
+// 3F80 normal, 3FC0 faster, 4040 three times).
+constexpr Option kMonsterSpeeds[]{
+    {"x0.25", 25}, {"x0.5", 50}, {"x0.75", 75}, {"x1 (normal)", 100}, {"x1.5", 150}, {"x2", 200}, {"x3", 300},
+};
+
 constexpr Option kShots[]{
     {"2", 2}, {"5", 5}, {"10", 10}, {"20", 20}, {"50", 50}, {"99", 99},
+};
+
+// Add to defense's values (the code's XXXX: 0FA0, 2328 in its notes).
+constexpr Option kDefenseBonuses[]{
+    {"+100", 100}, {"+500", 500}, {"+1000", 1000}, {"+4000", 4000}, {"+9000", 9000},
 };
 
 struct Entry {
@@ -93,13 +118,53 @@ constexpr Entry kEntries[]{
 
     {Id::GalleryClips, {kStuff, "Unlock all gallery clips", "Every movie of the gallery can be watched; saved with the game."}},
     {Id::TurnItUpTo11, {kStuff, "Turn it up to 11", "Music volume past the option's maximum."}},
+    {Id::LanguageChanger, {kStuff, "Language changer", "The game's language (text and menus loaded after the change).", kLanguages}},
     {Id::InstantFlex, {kStuff, "Instant flex", "The quest fails once less than a minute of its time is left."}},
+    {Id::CantSave, {kStuff, "Can't save", "Saving writes back the game as it was loaded (progress is not saved)."}},
+    {Id::HighRankArmorUpgrades, {kStuff, "Armor is upgradeable to high rank even at low rank", "Armor upgrades act as if the hunter rank were 999."}},
+    {Id::NoArenaRecords, {kStuff, "Don't save new arena records", "Arena and challenge quest times are not recorded."}},
+    {Id::AllMonstersOnMap, {kStuff, "Show all monsters on the map", "Every monster counts as marked on the map."}},
+    {Id::NoHrpChange, {kStuff, "No HRP gain/loss", "Hunter rank points and the hunter rank stay as they are."}},
+    {Id::BothArmorTypes, {kStuff, "Equip blade/gunner armor", "Blade and gunner armor can be equipped with either weapon class."}},
+    {Id::ArmorPigment, {kStuff, "Enable armor pigment for all armor", "The pigment of every armor piece can be changed."}},
+    {Id::CantLeaveArea, {kStuff, "Can't leave area (on/off)", "The buttons switch it on and off: while on, the hunter cannot leave the area.", kActivators}},
+    {Id::CantGather, {kStuff, "Can't carve/gather (on/off)", "The buttons switch it on and off: while on, nothing can be carved or gathered.", kActivators}},
+    {Id::FarcasterAtCamp, {kStuff, "Farcaster at camp", "Farcasters work in the camp's area too."}},
+    {Id::PitfallAtCamp, {kStuff, "Pitfall at camp", "Pitfall traps can be set anywhere."}},
+    {Id::ShockAtCamp, {kStuff, "Shock at camp", "Shock traps can be set anywhere."}},
+    {Id::BarrelBombAtCamp, {kStuff, "LBB at camp", "Large barrel bombs can be set in the camp's area."}},
+    {Id::FelvineUnderwater, {kStuff, "Felvine underwater", "Felvine bombs can be used underwater."}},
+    {Id::SmokeUnderwater, {kStuff, "Smoke underwater", "Smoke bombs can be used underwater."}},
+    {Id::SteakUnderwater, {kStuff, "Steak underwater", "Steaks and other meat can be eaten underwater."}},
+    {Id::FarcasterPhase2, {kStuff, "Farcaster in phase 2", "Farcasters work in the second phase of the final fights too."}},
+    {Id::TalismanStartSlot, {kStuff, "Talismans sent to box start at slot", "New talismans go to the first free box slot from this one.", {}, {0, 750, 50}}},
+    {Id::HideRewards, {kStuff, "Hold to hide rewards", "While the buttons are held, the quest result screen stands still (for screenshots).", kActivators}},
+    {Id::ShowRealRaw, {kStuff, "Show real raw", "Weapon attack is shown without the weapon type's factor."}},
+    {Id::ShowRealElement, {kStuff, "Show real element", "Weapon element is shown without the times ten."}},
+    {Id::ShowRealStatus, {kStuff, "Show real status", "Weapon status is shown without the times ten."}},
     {Id::MapOnHud, {kStuff, "Map attached to HUD", "The map option follows the HUD's state (Gecko: map option 0, 1 in HUD state 0x3C04)."}},
+    {Id::TranqAttaq, {kStuff, "Tranq attaq", "Every hit fills the monster's tranquilizer gauge (more than two tranq bombs)."}},
+    {Id::InfiniteRetries, {kStuff, "Inf retries + reward increased instead", "Fainting adds the penalty to the reward instead of taking it, so the quest never fails by faints."}},
+    {Id::Autofail, {kStuff, "Autofail", "The quest fails at once."}},
+    {Id::Autoclear, {kStuff, "Autoclear (main and subs)", "Every started objective counts as met: the quest clears. Not with autofail."}},
+    {Id::AutofailAtWill, {kStuff, "Autofail at will", "The quest fails while the buttons are held.", kActivators}},
+    {Id::AutoclearAtWill, {kStuff, "Autoclear at will", "The objectives count as met while the buttons are held.", kActivators}},
     {Id::CursedWeapons, {kStuff, "Cursed weapons", "While the weapon is drawn, health drains by 1 every 32 steps."}},
+    {Id::NoKnockback, {kStuff, "No knockback", "Hits do not knock the hunter back or down."}},
+    {Id::MonsterHpMultiplier, {kStuff, "Monster HP multipler", "Large and small monsters' maximum health times this.", kMultipliers}},
+    {Id::RageRegen, {kStuff, "Monsters have regen during rage", "While enraged, monsters regain a third of their level in health every 64 steps."}},
+    {Id::InstantRage, {kStuff, "Instant rage mode", "Any rage gain fills the gauge: monsters enrage at once."}},
+    {Id::InfiniteRage, {kStuff, "Infinite rage mode", "Rage never ends."}},
+    {Id::InfiniteMonsterStamina, {kStuff, "Infinite monster stamina", "Monsters' stamina never goes down (they never tire)."}},
+    {Id::MonsterSpeedModifier, {kStuff, "Monster speed modifier", "Monsters' motions play at this speed.", kMonsterSpeeds, {}, 3}},
     {Id::MaxHealMonsters, {kStuff, "Max heal all monsters", "The buttons heal every monster to its full health.", kActivators}},
     {Id::FelvineForever, {kStuff, "Felvine lasts forever on monster", "A monster's felvine countdown never runs out."}},
+    {Id::MonsterCantSeeYou, {kStuff, "Monster can't see you", "Monsters' sight and awareness never update."}},
     {Id::MonsterActionRepeater, {kStuff, "Action repeater for targeted monster", "The buttons restart the action of the monster nearest the hunter.", kActivators}},
 
+    {Id::FreezeUnfreezeMonsters, {kSeth, "Freeze/unfreeze monsters", "The buttons switch it on and off: while on, monsters in play stand still.", kActivators}},
+    {Id::SethWeaponsSharp, {kSeth, "Weapons always sharp (best version)", "The sharpness levels set when a weapon is drawn stay as they are."}},
+    {Id::InfiniteBombsInPouch, {kSeth, "Infinite bombs in pouch", "Items whose count changes on an existing pouch stack keep their count."}},
     {Id::AltInfiniteHealth, {kSeth, "Alternate infinite health", "Damage leaves health as it is, unless a hit would empty it."}},
     {Id::VillageSpeedHack, {kSeth, "Speed hack in village", "Hold ZL in the village to move very fast."}},
     {Id::VillageSnailSpeed, {kSeth, "Snail speed (village only)", "Hold ZL in the village to move very slowly."}},
@@ -109,22 +174,81 @@ constexpr Entry kEntries[]{
     {Id::SethOxygen, {kSeth, "Increase oxygen bar (online code)", "Oxygen gauge of 255 (the online code, on the local hunter)."}},
     {Id::ToggleInfiniteHealth, {kSeth, "Toggle infinite health", "The buttons switch it on and off: while on, health never changes.", kActivators}},
 
+    {Id::BullyUnlimitedTraps, {kBully, "Set unlimited traps", "Traps can be set while another is set."}},
+    {Id::BullyUnlimitedBarrelBombs, {kBully, "Set unlimited barrel bombs", "Any number of large barrel bombs can be set."}},
+    {Id::SpeedCombosEnabled, {kBully, "Speed combos never disabled", "The item menu's speed combo entry is always enabled."}},
+    {Id::CombineEnabled, {kBully, "Combine never disabled", "The item menu's combine entry is always enabled."}},
+    {Id::LongSwordsMaxSharpness, {kBully, "Long swords max sharpness", "The code as written holds the long sword's spirit gauge at 0."}},
+    {Id::NoDefeats, {kBully, "Defeats counter always 0", "Faints are not counted."}},
+    {Id::ThunderAlwaysCharged, {kBully, "Thunder weapons always charged", "The gauge at +0x36C of the hunter stays full."}},
     {Id::BullyInfiniteHealth, {kBully, "Infinite health", "Health never changes; the maximum drops to the current health."}},
+    {Id::BullyInfiniteStamina, {kBully, "Infinite stamina", "Any stamina change sets stamina and its maximum to 605."}},
     {Id::HotDrinkForever, {kBully, "Hot drink lasts forever", "A hot drink no longer runs out outside the cold areas (in them it still does)."}},
     {Id::ColdDrinkForever, {kBully, "Cold drink lasts forever", "A cold drink no longer runs out outside the hot areas (in them it still does)."}},
     {Id::Daredevil, {kBully, "Daredevil mode", "Any change to health empties it."}},
+    {Id::BullyWeaponsSharp, {kBully, "Weapons always sharp", "Any sharpness change sets it to the maximum."}},
+    {Id::BullyInfiniteAmmo, {kBully, "Infinite ammo", "Each shot reloads the bowgun's clip."}},
+    {Id::CrossbowRapidFire, {kBully, "Crossbow rapid fire", "A new action keeps the bowgun's firing state (+0x318)."}},
+    {Id::InfiniteItems, {kBully, "Infinite items", "Using an item (potions, whetstones, food, and so on) does not use it up."}},
+    {Id::JoinAnyQuest, {kBully, "Join/host any quest", "The hunter rank counts as 999 for quests and the status screen."}},
+    {Id::AlwaysShowHrInfo, {kBully, "Always display HR infos on status", "The status screen shows the hunter rank details at HR 0 too."}},
+    {Id::BuyAnyWeaponAtHr0, {kBully, "Purchase any weapon with HR0", "Weapons that need a hunter rank can be bought at HR 0."}},
+    {Id::HunterRankModifier, {kBully, "Hunter ranking modifier", "The hunter rank (and its points) is set to this when the status is read.", kHunterRanks}},
+    {Id::NoQuestBoxJiggle, {kBully, "No quest box jiggle", "The selected quest box stands still (when selecting the level)."}},
+    {Id::ArenaEquipmentTime, {kBully, "Infinite time for choosing your equipment", "The arena's equipment choice has no time limit."}},
+    {Id::NoRequiredMaterials, {kBully, "No need to have required materials", "Every required material counts as 999 in the box."}},
     {Id::NoPlaytimeIncrease, {kBully, "No playtime increase", "The play time clock stops."}},
+    {Id::AllBoxes8Pages, {kBully, "All boxes have 8 pages", "Item pouch, gunner pouch, item box and equipment box show 8 pages."}},
+    {Id::NoNeedForMoney, {kBully, "No need for money", "Anything can be bought or upgraded with too little money (the money then runs out)."}},
+    {Id::AllStarQuests, {kBully, "Unlock all star quests", "Every star quest is unlocked; saved with the game."}},
+    {Id::AllQuestsCompleted, {kBully, "All quests completed", "Every quest counts as cleared; saved with the game."}},
+    {Id::PouchItemsX10, {kBully, "Item pouch items x10", "Items shown in the item lists get a count of 10."}},
+    {Id::BoxItemsX99, {kBully, "All item box items x99", "Item box stacks get a count of 99 when the box is listed."}},
+    {Id::InfiniteResources, {kBully, "Infinite ressources", "Moga Woods resources become 99,999,999 when shown."}},
+    {Id::InfiniteFunds, {kBully, "Infinite funds", "Money becomes 99,999,999 when shown."}},
     {Id::SuperSpeed, {kBully, "Super speed", "The buttons switch it on and off: the hunter's motions play five times as fast.", kActivators}},
     {Id::BullyActionRepeater, {kBully, "Action repeater", "The buttons restart the hunter's current action.", kActivators}},
     {Id::MoonJump, {kBully, "Moon jump", "Hold A+B to rise (not with Free fly)."}},
     {Id::Teleporter, {kBully, "Teleporter", "These buttons with d-pad down save the position, with d-pad up teleport there.", kModifiers}},
     {Id::FreeFly, {kBully, "Free fly", "Hold L with the d-pad to move, A+B to rise; the buttons switch falling off and on.", kActivators}},
 
+    {Id::AlwaysAbleToSleep, {kSkiller, "Always able to sleep", "The bed can always be used."}},
+    {Id::GhostWorld, {kSkiller, "Ghost world", "Monsters are drawn faint, and two of their countdowns stop."}},
     {Id::MorningOnLoad, {kSkiller, "Change to morning (upon loading)", "The village and Moga Woods load in the morning."}},
     {Id::EveningOnLoad, {kSkiller, "Change to evening (upon loading)", "The village and Moga Woods load in the evening."}},
+    {Id::NeverStunned, {kSkiller, "Never stund", "The stun gauge never fills."}},
+    {Id::NoReload, {kSkiller, "No reload", "Shots take no round from the loaded ones."}},
+    {Id::InfiniteGathering, {kSkiller, "Inf gathering", "Gathering spots never run out."}},
+    {Id::InfiniteCarving, {kSkiller, "Inf carving", "Gathering never uses up the spot's second count (no tool breaking)."}},
+    {Id::GatherItem, {kSkiller, "Gathering/carving mod", "Every gather and carve gives this item (by number).", {}, {1, 999}}},
+    {Id::AltOneHitKillsToggle, {kSkiller, "(Alt) 1 hit kills (buttons on/off)", "The buttons switch it on and off: while on, any hit kills a monster.", kActivators}},
+    {Id::AltOneHitKills, {kSkiller, "(Alt) 1 hit kills enemys", "Any hit kills a monster."}},
+    {Id::OneHitKills, {kSkiller, "1 hit kills enemy", "Any change to a monster's health empties it."}},
+    {Id::EnemyOneHp, {kSkiller, "Enemy has 1 HP (good for capture/cutting parts off)", "Any change to a monster's health leaves 1."}},
+    {Id::EnableOneHitKills, {kSkiller, "Enable 1 hit kills (enemy)", "The buttons switch monsters to 1 hit kills.", kActivators}},
+    {Id::EnableOneHp, {kSkiller, "Enable 1 HP (enemy capture/cutting parts mode)", "The buttons switch monsters to 1 HP.", kActivators, {}, 1}},
+    {Id::NormalEnemyHp, {kSkiller, "Normal enemy HP (off code for 1 HP and 1 hit kills)", "The buttons switch the two codes above off.", kActivators, {}, 2}},
+    {Id::SkillerWeaponSharp, {kSkiller, "Weapon always sharp", "Any sharpness change sets it to the maximum."}},
+    {Id::Boxes8Pages, {kSkiller, "Item/equip boxes have 8 pages", "The item and equipment boxes start with 8 pages."}},
+    {Id::MaxResourcesOnConverting, {kSkiller, "Max res on converting", "Any change to the resources sets them to 9,999,999."}},
     {Id::ResourcesZero, {kSkiller, "Res 0", "Resources (Moga Woods) stay at 0."}},
+    {Id::ItemsGet10, {kSkiller, "Gain/use items/ammo get 10", "An item stack you already have becomes 10 when its count changes."}},
+    {Id::ItemsGet10Toggle, {kSkiller, "Gain/use items/ammo get 10 (buttons on/off)", "As above; the buttons switch it on and off.", kActivators}},
+    {Id::SellUseGet10, {kSkiller, "Sell/use item get 10", "A stack you sell from or use becomes 10."}},
+    {Id::BuyNewGet10, {kSkiller, "Buy new item get 10", "A new item stack starts at 10."}},
+    {Id::MoneyChangeMax, {kSkiller, "Gain/use money > max money", "Any change to the money sets it to 9,999,999z."}},
     {Id::MaxMoney, {kSkiller, "Max/inf money", "Money stays at 9,999,999z."}},
+    {Id::ItemsCost1z, {kSkiller, "All items cost 1z in item stores", "Item prices become 0 (1z at the store)."}},
+    {Id::DontLoseMoney, {kSkiller, "Dont lose money buying items", "Money never goes down."}},
     {Id::LongSwordPowerMax, {kSkiller, "On hit long sword power max (charge bar)", "When the long sword's spirit gauge would go down, it fills."}},
+    {Id::SmithyOneItem, {kSkiller, "Smithy forge/upgrade with 1 item", "The smithy needs no materials."}},
+    {Id::SmithyMaterial, {kSkiller, "Set smithy req materials to", "Every smithy material slot asks for this item (reopen the menu).", {}, {1, 999}}},
+    {Id::MaxAttackBase, {kSkiller, "Weapon max attack base (press buttons when on weapon)", "With the buttons held while a weapon's stats show, its attack becomes 32767.", kActivators}},
+    {Id::MaxSharpness, {kSkiller, "Max sharp (press buttons when on weapon)", "With the buttons held while a weapon's sharpness shows, it becomes the highest.", kActivators}},
+    {Id::MaxAffinity, {kSkiller, "Max affinity (press buttons when on weapon)", "With the buttons held while a weapon's affinity shows, it becomes 127.", kActivators}},
+    {Id::BossMod, {kSkiller, "Boss/s mod", "The quest's large monsters are this kind (quest data read after the change).", {}, {1, 63}}},
+    {Id::BossSize, {kSkiller, "Set boss/s size to", "The quest's large monsters' size byte.", {}, {0, 255, 5}}},
+    {Id::BossLevel, {kSkiller, "Set boss/s level to", "The quest's large monsters' level byte.", {}, {0, 255}}},
     {Id::SkillerInfiniteTime, {kSkiller, "Inf time arena/quests (finish mission press __)", "The quest clock stops; the buttons run the time out.", kActivators}},
     {Id::SexChange, {kSkiller, "Sex change", "The character's sex (0 male, 1 female); loads with the character.", {}, {0, 1}}},
     {Id::InfiniteHp, {kSkiller, "Inf HP", "Health and recoverable health stay full."}},
@@ -133,6 +257,13 @@ constexpr Entry kEntries[]{
     {Id::DefenseUpgrade, {kSkiller, "Defense upgrade (255)", "Defense items' boost at its highest."}},
     {Id::DefenseMax, {kSkiller, "Defense max (255)", "Defense 255."}},
     {Id::AttackUpgrade, {kSkiller, "Attack upgrade (255)", "Attack items' boost at its highest."}},
+    {Id::Add1000Attack, {kSkiller, "Add 1000 to attack", "The hunter's attack is 1000."}},
+    {Id::RunSpeedUp, {kSkiller, "Speed up when running", "While the hunter runs, motions set then play at rate 6."}},
+    {Id::MaxFire, {kSkiller, "Max fire", "Fire resistance at its maximum."}},
+    {Id::MaxWater, {kSkiller, "Max water", "Water resistance at its maximum."}},
+    {Id::MaxThunder, {kSkiller, "Max thunder", "Thunder resistance at its maximum."}},
+    {Id::MaxDragon, {kSkiller, "Max dragon", "Dragon resistance at its maximum."}},
+    {Id::MaxIce, {kSkiller, "Max ice", "Ice resistance at its maximum."}},
     {Id::NeverLifeDrain, {kSkiller, "Never life drain", "Health is never drained."}},
     {Id::AddDragon, {kSkiller, "Add 5 to dragon", "Dragon resistance bonus."}},
     {Id::AddThunder, {kSkiller, "Add 5 to thunder", "Thunder resistance bonus."}},
@@ -173,12 +304,14 @@ constexpr Entry kEntries[]{
 
     {Id::ArgonInfiniteTime, {kArgon, "Infinite time arena and quests", "The quest clock stops; the buttons run the time out.", kActivators}},
     {Id::SetPlayTime, {kArgon, "Set playtime", "The play time stays at this value.", kPlayTimes}},
+    {Id::AddToDefense, {kArgon, "Add to defense", "This is added to the hunter's defense.", kDefenseBonuses}},
     {Id::UnlimitedBarrelBombs, {kArgon, "Set unlimited barrel bombs", "Barrel bombs on the field never count against the limit."}},
     {Id::UnlimitedColdDrink, {kArgon, "Unlimited cold drink", "A cold drink's effect never ends."}},
     {Id::UnlimitedHotDrink, {kArgon, "Unlimited hot drink", "A hot drink's effect never ends."}},
     {Id::LoadShots, {kArgon, "Load XX shots", "The bowgun's clip holds this many shots.", kShots, {}, 2}},
     {Id::UnlimitedTraps, {kArgon, "Set unlimited traps", "Traps on the field never count against the limit."}},
 
+    {Id::NoFallZoom, {kDoudley, "Cancel camera zoom-in when falling", "The camera does not zoom in on falls under 300 units."}},
     {Id::FaceForwardStick, {kDoudley, "Always face forward when using R stick", "The hunter turns with the camera while the right stick moves."}},
     {Id::FaceForwardDpad, {kDoudley, "Always face forward when using left/right d-pad", "The hunter turns with the camera while d-pad left or right is held."}},
     {Id::AntiGravity, {kDoudley, "Enable anti-gravity", "The hunter floats; ZL pushes up, ZR pulls down."}},
@@ -186,11 +319,19 @@ constexpr Entry kEntries[]{
     {Id::MidAirDpad, {kDoudley, "Mid air d-pad version", "With Run and dash in mid air: d-pad up runs upwards, down downwards."}},
     {Id::MidAirStick, {kDoudley, "Mid air R stick version", "With Run and dash in mid air: the right stick up runs upwards, down downwards."}},
     {Id::FasterWeaponUsage, {kDoudley, "Faster weapon usage", "Weapon actions play three times as fast."}},
+    {Id::EnhancedFocus, {kDoudley, "Enhanced focus (improved weapon charge for GS, HA, LS, SW)", "Focus always, five times as strong (the great sword's charge almost at once)."}},
+    {Id::NoOvercharging, {kDoudley, "GreatSword no overcharging", "Charges stay at level 3 instead of overcharging."}},
+    {Id::GreatSwordCharge, {kDoudley, "GreatSword inf charge and Lv3 charge always", "Charge times are endless and the great sword's charge is set to level 3."}},
     {Id::SnsInfiniteSlashes, {kDoudley, "Sword and shield inf slashes", "With the buttons held, X slashes again and again.", kActivatorsOrAlways}},
+    {Id::HammerMaxCharge, {kDoudley, "Hammer max charge always", "The hammer's charge is full at once."}},
     {Id::LanceChargeSpeed, {kDoudley, "Lance charge speed increased", "Hold up while a lance charges to charge faster, from then on."}},
     {Id::LanceChargeController, {kDoudley, "Lance charge speed controller", "While charging: stick up goes faster, R faster still, back aims upward."}},
     {Id::Battojutsu, {kDoudley, "Battojutsu mode (long sword quick draw)", "With the buttons held, A draws the long sword into a slash.", kActivatorsOrAlways}},
     {Id::SwitchAxeSwordMode, {kDoudley, "Force switch axe sword mode", "With the buttons held, R morphs into sword mode at once.", kActivatorsOrAlways}},
+    {Id::DoudleyInfiniteAmmo, {kDoudley, "Inf ammo", "Firing the bowgun uses no ammo."}},
+    {Id::EnableAllAmmo, {kDoudley, "Enable all ammo v2", "Every ammo can be loaded (at level 1 and the barrel's and skills' levels)."}},
+    {Id::RapidFireHold, {kDoudley, "Rapidfire all ammo (hold shoot button while firing)", "With A held, shots take no ammo."}},
+    {Id::RapidFire, {kDoudley, "Rapidfire all ammo (always active)", "Shots take no ammo."}},
     {Id::AirAttackGreatSword, {kDoudley, "Air attack (great sword)", "Hold X in the air, then A or A+R to attack."}},
     {Id::AirAttackSwordAndShield, {kDoudley, "Air attack (sword and shield)", "Hold X in the air, then A or A+R to attack."}},
     {Id::AirAttackHammer, {kDoudley, "Air attack (hammer)", "Hold X in the air, then A or A+R to attack."}},
@@ -198,6 +339,8 @@ constexpr Entry kEntries[]{
     {Id::AirAttackLongSword, {kDoudley, "Air attack (long sword)", "Hold X in the air, then A or A+R to attack."}},
     {Id::AirAttackSwitchAxe, {kDoudley, "Air attack (switch axe)", "Hold X in the air, then A or A+R to attack."}},
     {Id::AirAttackBowgun, {kDoudley, "Air attack (bowgun)", "Hold X in the air, then A to shoot."}},
+    {Id::InstantSharpen, {kDoudley, "Instant sharpen", "The whetstone's motion ends at once."}},
+    {Id::InstantSteak, {kDoudley, "Instant well-done steak", "Grilled meat is well done at once."}},
     {Id::ForceGrill, {kDoudley, "Force grill", "With the quest menu open, the buttons start grilling meat.", kActivators}},
     {Id::AllHuntingFleets, {kDoudley, "Enable all hunting fleets", "Every hunting fleet ship is available."}},
     {Id::CaptainCatch, {kDoudley, "Hunting fleet captain always has catch", "The captain's ship always returns with a catch."}},
@@ -225,6 +368,8 @@ constexpr Entry kEntries[]{
     {Id::ForceEvade, {kDoudley, "Force evade (quick recover)", "With the buttons held, B evades out of any action.", kActivatorsOrAlways}},
     {Id::SleepAnywhere, {kDoudley, "Sleep anywhere", "SELECT and B together lie the hunter down to sleep (standing on the ground)."}},
     {Id::BackToCamp, {kDoudley, "Thrown back to camp", "SELECT and R together faint the hunter back to camp."}},
+    {Id::EnhancedMovement, {kDoudley, "Enhanced movement speed (quest/village)", "Actions play twice as fast and walking is faster."}},
+    {Id::UnknockablePlayers, {kDoudley, "Unknockable players", "Hits do not knock hunters back or down."}},
     {Id::InvinciblePlayers, {kDoudley, "Invincible players", "Hunters take no damage."}},
     {Id::ShowMonstersOnMap, {kDoudley, "Show all monsters on the map", "Every monster shows on the map."}},
     {Id::FreezeMonsters, {kDoudley, "Freeze monsters", "The buttons freeze monsters before their next action.", kActivators}},
@@ -335,7 +480,7 @@ namespace {
 bool g_toggled[size_t(Id::Count)];
 
 // The cheats switched by their buttons.
-constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly};
+constexpr Id kToggles[]{Id::ToggleInfiniteHealth, Id::SuperSpeed, Id::FreeFly, Id::ItemsGet10Toggle, Id::FreezeUnfreezeMonsters, Id::AltOneHitKillsToggle, Id::CantGather, Id::CantLeaveArea};
 } // namespace
 
 bool Toggled(Id id) {
@@ -379,6 +524,9 @@ void Step(CpuContext*) {
             g_toggled[size_t(id)] = !g_toggled[size_t(id)];
 
     StepSaveData();
+    StepItems();
+    StepMonsterCodes();
+    StepHunterCodes();
     StepPlayer();
     StepMonsters();
 }
