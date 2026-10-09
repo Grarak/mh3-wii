@@ -696,6 +696,11 @@
 8005d210 StoreAlignedPtr2
 80041ea4 Vec3Copy
 8009e8b8 AnimCurveBlendU8
+80471040 AXSyncPB
+80470ed0 AXDepopVoice
+8046edc0 AXPushFreeStack
+8046eb70 AXGetStackHead
+8046f990 AXGetCommandListCycles
 800c8a34 EffectTexWrapS
 800c89b8 EffectTexWrapT
 800c8900 EffectTexScaleS
