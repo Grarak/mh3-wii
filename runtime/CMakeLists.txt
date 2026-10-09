@@ -56,9 +56,13 @@ target_sources(MH3 PRIVATE src/native_frame.cpp)
 target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
 target_sources(MH3 PRIVATE native/mh3_draw_state.c)
 target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c
+  src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
   src/native_ui.cpp native/mh3_ui.c
   src/native_effect_draw.cpp native/mh3_effect_draw.c
   src/launcher_support.cpp)
+# Clang's precise float pragma is unsupported for the Vita target. Keep the
+# CPU fog/light producer's range/finite checks and operation order intact.
+set_source_files_properties(native/mh3_material_state.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 target_include_directories(MH3 PRIVATE include ..)
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
 # so export ours for symbolized MH3_TRACE_ERRORS stack traces.
@@ -88,7 +92,8 @@ endif()
 add_test(NAME mh3_runtime_self_test COMMAND MH3 --self-test)
 add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 if(TARGET aurora::core)
-  target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp src/character_material.cpp)
+  target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
+    src/native_material.cpp src/character_material.cpp)
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()
@@ -105,6 +110,7 @@ if(TARGET aurora::core)
   set_source_files_properties(src/graphics_host.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_render_state.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   set_source_files_properties(src/native_texture_state.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
+  set_source_files_properties(src/native_material.cpp PROPERTIES INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
   if(NOT VITA)
@@ -114,6 +120,12 @@ if(TARGET aurora::core)
     target_include_directories(mh3_native_geometry_check PRIVATE "${MH3_AURORA_ROOT}/lib" include)
     target_compile_features(mh3_native_geometry_check PRIVATE cxx_std_20)
     target_link_libraries(mh3_native_geometry_check PRIVATE aurora::core aurora::gx aurora::vi)
+    add_executable(mh3_native_material_check EXCLUDE_FROM_ALL
+      ../tests/native/native_material_check.cpp src/native_material.cpp src/native_render_state.cpp
+      native/mh3_material_state.c native/mh3_draw_state.c)
+    target_include_directories(mh3_native_material_check PRIVATE "${MH3_AURORA_ROOT}/lib" include)
+    target_compile_features(mh3_native_material_check PRIVATE cxx_std_20)
+    target_link_libraries(mh3_native_material_check PRIVATE aurora::core aurora::gx aurora::vi)
   endif()
 endif()
 

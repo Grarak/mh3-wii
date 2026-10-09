@@ -1,0 +1,2601 @@
+[
+  {
+    "address": "8003f794",
+    "name": "RenderInit",
+    "targets": [
+      "804b7280 func_804B7280"
+    ],
+    "source": "func_8003F794.cpp"
+  },
+  {
+    "address": "8003fa48",
+    "name": "ApplyWidemode",
+    "targets": [
+      "804b7280 func_804B7280"
+    ],
+    "source": "func_8003FA48.cpp"
+  },
+  {
+    "address": "8003fd28",
+    "name": "hbm_InitGX__Fv",
+    "targets": [
+      "804ba5a0 GXSetColorUpdate"
+    ],
+    "source": "func_8003FD28.cpp"
+  },
+  {
+    "address": "8003fd30",
+    "name": "NativeGraphicsInit",
+    "targets": [
+      "804b3d10 GXInit",
+      "804b67e0 GXDrawDone",
+      "804b73e0 ",
+      "804b7460 ",
+      "804b78f0 ",
+      "804b7970 GXSetCopyFilter",
+      "804b7b60 GXSetDispCopyGamma",
+      "804b7b80 ",
+      "804ba640 ",
+      "804ba670 ",
+      "804bae60 ",
+      "804baeb0 "
+    ],
+    "source": "func_8003FD30.cpp"
+  },
+  {
+    "address": "8003fe88",
+    "name": "NativeCompletionSetup",
+    "targets": [
+      "804b6b30 func_804B6B30"
+    ],
+    "source": "func_8003FE88.cpp"
+  },
+  {
+    "address": "8003fe94",
+    "name": "NativeDisplaySetup",
+    "targets": [
+      "804b75f0 func_804B75F0",
+      "804b7820 func_804B7820"
+    ],
+    "source": "func_8003FE94.cpp"
+  },
+  {
+    "address": "8003ff20",
+    "name": "NativeFrameBegin",
+    "targets": [
+      "804b61a0 ",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9e50 GXSetAlphaCompare",
+      "804bae20 ",
+      "804bae60 "
+    ],
+    "source": "func_8003FF20.cpp"
+  },
+  {
+    "address": "8003fffc",
+    "name": "NativeFrameEnd",
+    "targets": [
+      "804b67e0 GXDrawDone",
+      "804b7970 GXSetCopyFilter",
+      "804b7b80 ",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_8003FFFC.cpp"
+  },
+  {
+    "address": "80040000",
+    "name": "",
+    "targets": [
+      "804b67e0 GXDrawDone",
+      "804b7970 GXSetCopyFilter",
+      "804b7b80 ",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_80040000.cpp"
+  },
+  {
+    "address": "800411ac",
+    "name": "func_800411AC",
+    "targets": [
+      "804b8a10 GXInitTexObjWrapMode",
+      "804b8a30 GXInitTexObjTlut",
+      "804b8a40 GXInitTexObjUserData",
+      "804b8a50 GXGetTexObjUserData"
+    ],
+    "source": "func_800411AC.cpp"
+  },
+  {
+    "address": "80041470",
+    "name": "disp_beta__FP3VecP4Vec28_GXColor",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80041470.cpp"
+  },
+  {
+    "address": "80046e98",
+    "name": "Setup2DProjection",
+    "targets": [
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80046E98.cpp"
+  },
+  {
+    "address": "80047954",
+    "name": "func_80047954",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b9900 GXSetNumIndStages"
+    ],
+    "source": "func_80047954.cpp"
+  },
+  {
+    "address": "80047dd0",
+    "name": "func_80047DD0",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b67e0 GXDrawDone",
+      "804b68b0 ",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7420 ",
+      "804b7490 func_804B7490",
+      "804b7cc0 ",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80047DD0.cpp"
+  },
+  {
+    "address": "8004881c",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_8004881C.cpp"
+  },
+  {
+    "address": "800489c8",
+    "name": "func_800489C8",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7970 GXSetCopyFilter",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800489C8.cpp"
+  },
+  {
+    "address": "80048d3c",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80048D3C.cpp"
+  },
+  {
+    "address": "80049498",
+    "name": "func_80049498",
+    "targets": [
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect"
+    ],
+    "source": "func_80049498.cpp"
+  },
+  {
+    "address": "80049594",
+    "name": "func_80049594",
+    "targets": [
+      "804b67e0 GXDrawDone",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect"
+    ],
+    "source": "func_80049594.cpp"
+  },
+  {
+    "address": "80052770",
+    "name": "func_80052770",
+    "targets": [
+      "804baa90 GXSetProjection"
+    ],
+    "source": "func_80052770.cpp"
+  },
+  {
+    "address": "80052c90",
+    "name": "func_80052C90",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8da0 GXLoadTexObj",
+      "804b8e00 GXInitTlutObj",
+      "804b8e30 GXLoadTlut"
+    ],
+    "source": "func_80052C90.cpp"
+  },
+  {
+    "address": "80052f68",
+    "name": "func_80052F68",
+    "targets": [
+      "804b6400 GXSetNumTexGens",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages"
+    ],
+    "source": "func_80052F68.cpp"
+  },
+  {
+    "address": "80052fb4",
+    "name": "func_80052FB4",
+    "targets": [
+      "804b6400 GXSetNumTexGens",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder"
+    ],
+    "source": "func_80052FB4.cpp"
+  },
+  {
+    "address": "80053028",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80053028.cpp"
+  },
+  {
+    "address": "80053034",
+    "name": "func_80053034",
+    "targets": [
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804ba080 GXSetNumTevStages"
+    ],
+    "source": "func_80053034.cpp"
+  },
+  {
+    "address": "800530d0",
+    "name": "func_800530D0",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt"
+    ],
+    "source": "func_800530D0.cpp"
+  },
+  {
+    "address": "800531c4",
+    "name": "func_800531C4",
+    "targets": [
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9e50 GXSetAlphaCompare",
+      "804bab90 GXLoadPosMtxImm",
+      "804bac10 ",
+      "804bacb0 GXSetCurrentMtx",
+      "804bafb0 "
+    ],
+    "source": "func_800531C4.cpp"
+  },
+  {
+    "address": "800533d4",
+    "name": "func_800533D4",
+    "targets": [
+      "804ba080 GXSetNumTevStages"
+    ],
+    "source": "func_800533D4.cpp"
+  },
+  {
+    "address": "8005342c",
+    "name": "draw_line_2d__FP14_DRAW_POINT_2DP14_DRAW_POINT_2D",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b7120 GXSetLineWidth"
+    ],
+    "source": "func_8005342C.cpp"
+  },
+  {
+    "address": "80053580",
+    "name": "func_80053580",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_80053580.cpp"
+  },
+  {
+    "address": "80053620",
+    "name": "draw_rect_2d_tex__FP17_DRAW_RECT_2D_TEXPQ34nw4r3g3d6ResTexPQ34nw4r3g3d7ResPltt",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_80053620.cpp"
+  },
+  {
+    "address": "800545e4",
+    "name": "func_800545E4",
+    "targets": [
+      "804b6400 GXSetNumTexGens",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b99e0 GXSetTevOp",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804bab90 GXLoadPosMtxImm",
+      "804bac10 ",
+      "804bacb0 GXSetCurrentMtx",
+      "804bacd0 GXLoadTexMtxImm",
+      "804bafb0 "
+    ],
+    "source": "func_800545E4.cpp"
+  },
+  {
+    "address": "8005480c",
+    "name": "drawshape_exec__Fv",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b7120 GXSetLineWidth",
+      "804b7160 "
+    ],
+    "source": "func_8005480C.cpp"
+  },
+  {
+    "address": "80054cd8",
+    "name": "func_80054CD8",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8e00 GXInitTlutObj",
+      "804b8e30 GXLoadTlut"
+    ],
+    "source": "func_80054CD8.cpp"
+  },
+  {
+    "address": "80055fbc",
+    "name": "func_80055FBC",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7420 ",
+      "804b7490 func_804B7490",
+      "804b7970 GXSetCopyFilter",
+      "804b7cc0 ",
+      "804b8500 GXSetNumChans",
+      "804b86a0 GXInitTexObj",
+      "804b8da0 GXLoadTexObj",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9bc0 GXSetTevColor",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80055FBC.cpp"
+  },
+  {
+    "address": "80056660",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80056660.cpp"
+  },
+  {
+    "address": "8005666c",
+    "name": "func_8005666C",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b68b0 ",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b86a0 GXInitTexObj",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9bc0 GXSetTevColor",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8005666C.cpp"
+  },
+  {
+    "address": "80056f88",
+    "name": "func_80056F88",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80056F88.cpp"
+  },
+  {
+    "address": "80057348",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80057348.cpp"
+  },
+  {
+    "address": "80057354",
+    "name": "func_80057354",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b67e0 GXDrawDone",
+      "804b68b0 ",
+      "804b6a10 GXPeekARGB",
+      "804b6a30 ",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7420 ",
+      "804b7490 func_804B7490",
+      "804b7970 GXSetCopyFilter",
+      "804b7cc0 ",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80057354.cpp"
+  },
+  {
+    "address": "80057a08",
+    "name": "func_80057A08",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80057A08.cpp"
+  },
+  {
+    "address": "8005876c",
+    "name": "func_8005876C",
+    "targets": [
+      "804b68b0 ",
+      "804b7420 ",
+      "804b7490 func_804B7490",
+      "804b7970 GXSetCopyFilter",
+      "804b7cc0 "
+    ],
+    "source": "func_8005876C.cpp"
+  },
+  {
+    "address": "80058870",
+    "name": "func_80058870",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80058870.cpp"
+  },
+  {
+    "address": "80058c08",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80058C08.cpp"
+  },
+  {
+    "address": "80058c34",
+    "name": "func_80058C34",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80058C34.cpp"
+  },
+  {
+    "address": "80058f84",
+    "name": "RestoreGrabbedScreen",
+    "targets": [
+      "804b68b0 ",
+      "804b7420 ",
+      "804b7490 func_804B7490",
+      "804b7970 GXSetCopyFilter",
+      "804b7cc0 "
+    ],
+    "source": "func_80058F84.cpp"
+  },
+  {
+    "address": "80059270",
+    "name": "func_80059270",
+    "targets": [
+      "804b9900 GXSetNumIndStages"
+    ],
+    "source": "func_80059270.cpp"
+  },
+  {
+    "address": "8005ac3c",
+    "name": "disp_beta_tex__FP3VecP4Vec28_GXColorP9_GXTexObj",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7970 GXSetCopyFilter",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8005AC3C.cpp"
+  },
+  {
+    "address": "8005af74",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_8005AF74.cpp"
+  },
+  {
+    "address": "8005af80",
+    "name": "dbg_drawgraph_init__Fv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6430 GXSetMisc",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba440 ",
+      "804ba550 GXSetBlendMode",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8005AF80.cpp"
+  },
+  {
+    "address": "8005c174",
+    "name": "flfntFlush__Fv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8005C174.cpp"
+  },
+  {
+    "address": "8005c564",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_8005C564.cpp"
+  },
+  {
+    "address": "80069a2c",
+    "name": "func_80069A2C",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8900 GXInitTexObjLOD",
+      "804b8b10 GXGetTexObjWrapS",
+      "804b8b20 GXGetTexObjWrapT",
+      "804b8b40 ",
+      "804b8e00 GXInitTlutObj"
+    ],
+    "source": "func_80069A2C.cpp"
+  },
+  {
+    "address": "800752bc",
+    "name": "func_800752BC",
+    "targets": [
+      "804ba8b0 "
+    ],
+    "source": "func_800752BC.cpp"
+  },
+  {
+    "address": "80075740",
+    "name": "func_80075740",
+    "targets": [
+      "804bae20 ",
+      "804bae60 "
+    ],
+    "source": "func_80075740.cpp"
+  },
+  {
+    "address": "8007580c",
+    "name": "func_8007580C",
+    "targets": [
+      "804baa90 GXSetProjection"
+    ],
+    "source": "func_8007580C.cpp"
+  },
+  {
+    "address": "800758ac",
+    "name": "func_800758AC",
+    "targets": [
+      "804baeb0 "
+    ],
+    "source": "func_800758AC.cpp"
+  },
+  {
+    "address": "8007592c",
+    "name": "func_8007592C",
+    "targets": [
+      "804baf70 "
+    ],
+    "source": "func_8007592C.cpp"
+  },
+  {
+    "address": "80076a58",
+    "name": "RenderDisplayListDispatch",
+    "targets": [
+      "804b95f0 GXSetIndTexMtx",
+      "804b9c90 GXSetTevKColor"
+    ],
+    "source": "func_80076A58.cpp"
+  },
+  {
+    "address": "8007a30c",
+    "name": "func_8007A30C",
+    "targets": [
+      "804ba2e0 func_804BA2E0"
+    ],
+    "source": "func_8007A30C.cpp"
+  },
+  {
+    "address": "8007a3b8",
+    "name": "func_8007A3B8",
+    "targets": [
+      "804ba0b0 GXSetFog",
+      "804ba440 "
+    ],
+    "source": "func_8007A3B8.cpp"
+  },
+  {
+    "address": "8007a5dc",
+    "name": "LightColor",
+    "targets": [
+      "804b82a0 "
+    ],
+    "source": "func_8007A5DC.cpp"
+  },
+  {
+    "address": "8007a60c",
+    "name": "LightPosition",
+    "targets": [
+      "804b8110 "
+    ],
+    "source": "func_8007A60C.cpp"
+  },
+  {
+    "address": "8007a648",
+    "name": "LightDirection",
+    "targets": [
+      "804b8140 "
+    ],
+    "source": "func_8007A648.cpp"
+  },
+  {
+    "address": "8007a688",
+    "name": "LightSpot",
+    "targets": [
+      "804b7ea0 func_804B7EA0"
+    ],
+    "source": "func_8007A688.cpp"
+  },
+  {
+    "address": "8007a6c8",
+    "name": "LightAngularAttenuation",
+    "targets": [
+      "804b7e80 "
+    ],
+    "source": "func_8007A6C8.cpp"
+  },
+  {
+    "address": "8007a708",
+    "name": "LightDistanceAttenuation",
+    "targets": [
+      "804b8040 "
+    ],
+    "source": "func_8007A708.cpp"
+  },
+  {
+    "address": "8007a748",
+    "name": "LightDistancePolynomial",
+    "targets": [
+      "804b7e90 "
+    ],
+    "source": "func_8007A748.cpp"
+  },
+  {
+    "address": "8007a788",
+    "name": "LightSpecularDirection",
+    "targets": [
+      "804b8140 "
+    ],
+    "source": "func_8007A788.cpp"
+  },
+  {
+    "address": "8007a7cc",
+    "name": "LightShininess",
+    "targets": [
+      "804b7e60 "
+    ],
+    "source": "func_8007A7CC.cpp"
+  },
+  {
+    "address": "8007a82c",
+    "name": "LightGetPosition",
+    "targets": [
+      "804b8120 "
+    ],
+    "source": "func_8007A82C.cpp"
+  },
+  {
+    "address": "8007a848",
+    "name": "LightGetDirection",
+    "targets": [
+      "804b8160 "
+    ],
+    "source": "func_8007A848.cpp"
+  },
+  {
+    "address": "8007a864",
+    "name": "LightGetColor",
+    "targets": [
+      "804b82b0 "
+    ],
+    "source": "func_8007A864.cpp"
+  },
+  {
+    "address": "8007a878",
+    "name": "LightApplyView",
+    "targets": [
+      "804b8110 ",
+      "804b8140 ",
+      "804b8190 func_804B8190"
+    ],
+    "source": "func_8007A878.cpp"
+  },
+  {
+    "address": "8008551c",
+    "name": "func_8008551C",
+    "targets": [
+      "804b82c0 "
+    ],
+    "source": "func_8008551C.cpp"
+  },
+  {
+    "address": "80085758",
+    "name": "func_80085758",
+    "targets": [
+      "804b82c0 "
+    ],
+    "source": "func_80085758.cpp"
+  },
+  {
+    "address": "80085dfc",
+    "name": "func_80085DFC",
+    "targets": [
+      "804ba640 "
+    ],
+    "source": "func_80085DFC.cpp"
+  },
+  {
+    "address": "80085eac",
+    "name": "func_80085EAC",
+    "targets": [
+      "804b8ac0 GXGetTexObjWidth",
+      "804b8ae0 GXGetTexObjHeight",
+      "804b8da0 GXLoadTexObj"
+    ],
+    "source": "func_80085EAC.cpp"
+  },
+  {
+    "address": "800860a8",
+    "name": "func_800860A8",
+    "targets": [
+      "804b8e30 GXLoadTlut"
+    ],
+    "source": "func_800860A8.cpp"
+  },
+  {
+    "address": "800871c0",
+    "name": "TexSrtMtxSetup",
+    "targets": [
+      "804bacd0 GXLoadTexMtxImm"
+    ],
+    "source": "func_800871C0.cpp"
+  },
+  {
+    "address": "80087b34",
+    "name": "SetupAndSubmitDisplayList",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm",
+      "804babe0 ",
+      "804bac10 ",
+      "804bac70 "
+    ],
+    "source": "func_80087B34.cpp"
+  },
+  {
+    "address": "80087e7c",
+    "name": "func_80087E7C",
+    "targets": [
+      "804b6160 "
+    ],
+    "source": "func_80087E7C.cpp"
+  },
+  {
+    "address": "80088200",
+    "name": "func_80088200",
+    "targets": [
+      "804ba0b0 GXSetFog"
+    ],
+    "source": "func_80088200.cpp"
+  },
+  {
+    "address": "80088e88",
+    "name": "func_80088E88",
+    "targets": [
+      "804b6160 "
+    ],
+    "source": "func_80088E88.cpp"
+  },
+  {
+    "address": "80089000",
+    "name": "func_80089000",
+    "targets": [
+      "804b6160 "
+    ],
+    "source": "func_80089000.cpp"
+  },
+  {
+    "address": "80089178",
+    "name": "func_80089178",
+    "targets": [
+      "804b6160 "
+    ],
+    "source": "func_80089178.cpp"
+  },
+  {
+    "address": "8008961c",
+    "name": "func_8008961C",
+    "targets": [
+      "804b6160 "
+    ],
+    "source": "func_8008961C.cpp"
+  },
+  {
+    "address": "80094480",
+    "name": "func_80094480",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_80094480.cpp"
+  },
+  {
+    "address": "8009454c",
+    "name": "func_8009454C",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_8009454C.cpp"
+  },
+  {
+    "address": "80096634",
+    "name": "func_80096634",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_80096634.cpp"
+  },
+  {
+    "address": "80097210",
+    "name": "func_80097210",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_80097210.cpp"
+  },
+  {
+    "address": "800976c0",
+    "name": "func_800976C0",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8900 GXInitTexObjLOD"
+    ],
+    "source": "func_800976C0.cpp"
+  },
+  {
+    "address": "80097990",
+    "name": "func_80097990",
+    "targets": [
+      "804b8e00 GXInitTlutObj"
+    ],
+    "source": "func_80097990.cpp"
+  },
+  {
+    "address": "80099f80",
+    "name": "func_80099F80",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_80099F80.cpp"
+  },
+  {
+    "address": "8009a0dc",
+    "name": "SubmitResolvedDisplayList",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_8009A0DC.cpp"
+  },
+  {
+    "address": "8009a244",
+    "name": "func_8009A244",
+    "targets": [
+      "804ba830 func_804BA830"
+    ],
+    "source": "func_8009A244.cpp"
+  },
+  {
+    "address": "8009b330",
+    "name": "func_8009B330",
+    "targets": [
+      "804bacd0 GXLoadTexMtxImm"
+    ],
+    "source": "func_8009B330.cpp"
+  },
+  {
+    "address": "800b4c08",
+    "name": "func_800B4C08",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800B4C08.cpp"
+  },
+  {
+    "address": "800b61a8",
+    "name": "func_800B61A8",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800B61A8.cpp"
+  },
+  {
+    "address": "800b768c",
+    "name": "func_800B768C",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode"
+    ],
+    "source": "func_800B768C.cpp"
+  },
+  {
+    "address": "800b7728",
+    "name": "func_800B7728",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800B7728.cpp"
+  },
+  {
+    "address": "800b7e14",
+    "name": "DrawInfoViewMtx",
+    "targets": [
+      "804bab50 "
+    ],
+    "source": "func_800B7E14.cpp"
+  },
+  {
+    "address": "800b8030",
+    "name": "func_800B8030",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b71a0 ",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800B8030.cpp"
+  },
+  {
+    "address": "800ba244",
+    "name": "DrawBillboardQuad",
+    "targets": [
+      "800ba750 GXTexCoord1x8",
+      "800ba774 GXPosition3f32Vec",
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BA244.cpp"
+  },
+  {
+    "address": "800ba798",
+    "name": "DrawBillboardQuadRotated",
+    "targets": [
+      "800ba750 GXTexCoord1x8",
+      "800ba774 GXPosition3f32Vec",
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BA798.cpp"
+  },
+  {
+    "address": "800bb7ac",
+    "name": "DrawBillboardSetupGx",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6160 ",
+      "804b71a0 ",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800BB7AC.cpp"
+  },
+  {
+    "address": "800bbe8c",
+    "name": "func_800BBE8C",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BBE8C.cpp"
+  },
+  {
+    "address": "800bc0f8",
+    "name": "func_800BC0F8",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BC0F8.cpp"
+  },
+  {
+    "address": "800bc48c",
+    "name": "func_800BC48C",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800BC48C.cpp"
+  },
+  {
+    "address": "800bd298",
+    "name": "func_800BD298",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800BD298.cpp"
+  },
+  {
+    "address": "800bdbc4",
+    "name": "func_800BDBC4",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6160 ",
+      "804b71a0 ",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800BDBC4.cpp"
+  },
+  {
+    "address": "800be1b8",
+    "name": "func_800BE1B8",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BE1B8.cpp"
+  },
+  {
+    "address": "800be424",
+    "name": "EffectDrawFreeStrategy",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800BE424.cpp"
+  },
+  {
+    "address": "800bed90",
+    "name": "func_800BED90",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6160 ",
+      "804b71a0 ",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800BED90.cpp"
+  },
+  {
+    "address": "800beffc",
+    "name": "func_800BEFFC",
+    "targets": [
+      "804b7120 GXSetLineWidth",
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800BEFFC.cpp"
+  },
+  {
+    "address": "800bf52c",
+    "name": "func_800BF52C",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BF52C.cpp"
+  },
+  {
+    "address": "800bf62c",
+    "name": "func_800BF62C",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b71a0 ",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800BF62C.cpp"
+  },
+  {
+    "address": "800bf87c",
+    "name": "func_800BF87C",
+    "targets": [
+      "804b7160 ",
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800BF87C.cpp"
+  },
+  {
+    "address": "800bfd30",
+    "name": "func_800BFD30",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800BFD30.cpp"
+  },
+  {
+    "address": "800bfde8",
+    "name": "func_800BFDE8",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b71a0 ",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800BFDE8.cpp"
+  },
+  {
+    "address": "800c1084",
+    "name": "func_800C1084",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800C1084.cpp"
+  },
+  {
+    "address": "800c179c",
+    "name": "func_800C179C",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800C179C.cpp"
+  },
+  {
+    "address": "800c1c30",
+    "name": "func_800C1C30",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800C1C30.cpp"
+  },
+  {
+    "address": "800c2148",
+    "name": "func_800C2148",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800C2148.cpp"
+  },
+  {
+    "address": "800c3d5c",
+    "name": "func_800C3D5C",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode"
+    ],
+    "source": "func_800C3D5C.cpp"
+  },
+  {
+    "address": "800c3dec",
+    "name": "func_800C3DEC",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_800C3DEC.cpp"
+  },
+  {
+    "address": "800c4594",
+    "name": "func_800C4594",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b71a0 ",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800C4594.cpp"
+  },
+  {
+    "address": "800c6140",
+    "name": "",
+    "targets": [
+      "804b6400 GXSetNumTexGens"
+    ],
+    "source": "func_800C6140.cpp"
+  },
+  {
+    "address": "800c61bc",
+    "name": "func_800C61BC",
+    "targets": [
+      "804b71e0 GXSetCullMode",
+      "804b7210 ",
+      "804b9580 GXSetTevIndirect",
+      "804b95f0 GXSetIndTexMtx",
+      "804b9730 GXSetIndTexCoordScale",
+      "804b9830 GXSetIndTexOrder",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9cf0 GXSetTevKColorSel",
+      "804b9d40 GXSetTevKAlphaSel",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode",
+      "804ba600 GXSetZMode",
+      "804ba640 ",
+      "804bafb0 "
+    ],
+    "source": "func_800C61BC.cpp"
+  },
+  {
+    "address": "800c6548",
+    "name": "func_800C6548",
+    "targets": [
+      "804b8340 ",
+      "804b8420 GXSetChanMatColor",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl"
+    ],
+    "source": "func_800C6548.cpp"
+  },
+  {
+    "address": "800c694c",
+    "name": "DrawStrategySetupParticle",
+    "targets": [
+      "804b5910 ",
+      "804b5f00 ",
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_800C694C.cpp"
+  },
+  {
+    "address": "800c72d4",
+    "name": "func_800C72D4",
+    "targets": [
+      "804b9e50 GXSetAlphaCompare"
+    ],
+    "source": "func_800C72D4.cpp"
+  },
+  {
+    "address": "800c745c",
+    "name": "DrawStrategySetupTevColors",
+    "targets": [
+      "804b9bc0 GXSetTevColor",
+      "804b9c90 GXSetTevKColor"
+    ],
+    "source": "func_800C745C.cpp"
+  },
+  {
+    "address": "800c7d44",
+    "name": "EffectDrawTextureSetup",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2",
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj",
+      "804b8e00 GXInitTlutObj",
+      "804b8e30 GXLoadTlut",
+      "804bacd0 GXLoadTexMtxImm"
+    ],
+    "source": "func_800C7D44.cpp"
+  },
+  {
+    "address": "800c86d8",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_800C86D8.cpp"
+  },
+  {
+    "address": "800d0174",
+    "name": "func_800D0174",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD"
+    ],
+    "source": "func_800D0174.cpp"
+  },
+  {
+    "address": "800d0324",
+    "name": "func_800D0324",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD"
+    ],
+    "source": "func_800D0324.cpp"
+  },
+  {
+    "address": "800d042c",
+    "name": "func_800D042C",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD"
+    ],
+    "source": "func_800D042C.cpp"
+  },
+  {
+    "address": "800d10b0",
+    "name": "DrawHud",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7970 GXSetCopyFilter",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8da0 GXLoadTexObj",
+      "804b8e30 GXLoadTlut",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800D10B0.cpp"
+  },
+  {
+    "address": "800d2130",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_800D2130.cpp"
+  },
+  {
+    "address": "800d29dc",
+    "name": "func_800D29DC",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b7970 GXSetCopyFilter",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8da0 GXLoadTexObj",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_800D29DC.cpp"
+  },
+  {
+    "address": "800e3e80",
+    "name": "func_800E3E80",
+    "targets": [
+      "804b61a0 "
+    ],
+    "source": "func_800E3E80.cpp"
+  },
+  {
+    "address": "800e45d8",
+    "name": "set_blendmode__FUcUcUc",
+    "targets": [
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_800E45D8.cpp"
+  },
+  {
+    "address": "800e45fc",
+    "name": "data_indirect_seed_800E45FC",
+    "targets": [
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_800E45FC.cpp"
+  },
+  {
+    "address": "800e4664",
+    "name": "data_indirect_seed_800E4664",
+    "targets": [
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_800E4664.cpp"
+  },
+  {
+    "address": "800e46ec",
+    "name": "set_zmode__FbUcb",
+    "targets": [
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_800E46EC.cpp"
+  },
+  {
+    "address": "800e47b8",
+    "name": "func_800E47B8",
+    "targets": [
+      "804baa90 GXSetProjection"
+    ],
+    "source": "func_800E47B8.cpp"
+  },
+  {
+    "address": "801f9d38",
+    "name": "func_801F9D38",
+    "targets": [
+      "804b67e0 GXDrawDone",
+      "804b6a10 GXPeekARGB"
+    ],
+    "source": "func_801F9D38.cpp"
+  },
+  {
+    "address": "801fa32c",
+    "name": "func_801FA32C",
+    "targets": [
+      "804b67e0 GXDrawDone",
+      "804b6a10 GXPeekARGB"
+    ],
+    "source": "func_801FA32C.cpp"
+  },
+  {
+    "address": "80268914",
+    "name": "func_80268914",
+    "targets": [
+      "804b86a0 GXInitTexObj"
+    ],
+    "source": "func_80268914.cpp"
+  },
+  {
+    "address": "804352c8",
+    "name": "func_804352C8",
+    "targets": [
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b99e0 GXSetTevOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_804352C8.cpp"
+  },
+  {
+    "address": "804353e0",
+    "name": "func_804353E0",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b7b60 GXSetDispCopyGamma",
+      "804b8500 GXSetNumChans",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9c20 GXSetTevColorS10",
+      "804b9c90 GXSetTevKColor",
+      "804b9cf0 GXSetTevKColorSel",
+      "804b9d40 GXSetTevKAlphaSel",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode",
+      "804ba670 ",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx",
+      "804bae60 ",
+      "804baeb0 "
+    ],
+    "source": "func_804353E0.cpp"
+  },
+  {
+    "address": "80435888",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80435888.cpp"
+  },
+  {
+    "address": "80435894",
+    "name": "func_80435894",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj"
+    ],
+    "source": "func_80435894.cpp"
+  },
+  {
+    "address": "804360b0",
+    "name": "func_804360B0",
+    "targets": [
+      "804b6a50 func_804B6A50",
+      "804b6b30 func_804B6B30"
+    ],
+    "source": "func_804360B0.cpp"
+  },
+  {
+    "address": "80449800",
+    "name": "func_80449800",
+    "targets": [
+      "804b7b80 ",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_80449800.cpp"
+  },
+  {
+    "address": "804b3950",
+    "name": "func_804B3950",
+    "targets": [
+      "804b8b00 GXGetTexObjFmt",
+      "804b8b30 "
+    ],
+    "source": "func_804B3950.cpp"
+  },
+  {
+    "address": "804b3a70",
+    "name": "func_804B3A70",
+    "targets": [
+      "804b5250 func_804B5250",
+      "804b64b0 func_804B64B0",
+      "804b6a50 func_804B6A50",
+      "804b6b30 func_804B6B30"
+    ],
+    "source": "func_804B3A70.cpp"
+  },
+  {
+    "address": "804cfe20",
+    "name": "OSFatal",
+    "targets": [
+      "804b6620 func_804B6620"
+    ],
+    "source": "func_804CFE20.cpp"
+  },
+  {
+    "address": "80503c38",
+    "name": "func_80503C38",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_80503C38.cpp"
+  },
+  {
+    "address": "805049a4",
+    "name": "func_805049A4",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj"
+    ],
+    "source": "func_805049A4.cpp"
+  },
+  {
+    "address": "80504d70",
+    "name": "func_80504D70",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9bc0 GXSetTevColor",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_80504D70.cpp"
+  },
+  {
+    "address": "8052b654",
+    "name": "func_8052B654",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8052B654.cpp"
+  },
+  {
+    "address": "8052d674",
+    "name": "func_8052D674",
+    "targets": [
+      "804b9e50 GXSetAlphaCompare"
+    ],
+    "source": "func_8052D674.cpp"
+  },
+  {
+    "address": "8052e2b8",
+    "name": "func_8052E2B8",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8052E2B8.cpp"
+  },
+  {
+    "address": "80531010",
+    "name": "func_80531010",
+    "targets": [
+      "804b95f0 GXSetIndTexMtx"
+    ],
+    "source": "func_80531010.cpp"
+  },
+  {
+    "address": "80532bb0",
+    "name": "func_80532BB0",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8420 GXSetChanMatColor",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8a30 GXInitTexObjTlut",
+      "804b8da0 GXLoadTexObj",
+      "804b8e30 GXLoadTlut",
+      "804b9580 GXSetTevIndirect",
+      "804b9730 GXSetIndTexCoordScale",
+      "804b9830 GXSetIndTexOrder",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9c20 GXSetTevColorS10",
+      "804b9c90 GXSetTevKColor",
+      "804b9cf0 GXSetTevKColorSel",
+      "804b9d40 GXSetTevKAlphaSel",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804bacd0 GXLoadTexMtxImm"
+    ],
+    "source": "func_80532BB0.cpp"
+  },
+  {
+    "address": "80533c50",
+    "name": "func_80533C50",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8900 GXInitTexObjLOD",
+      "804b8c20 "
+    ],
+    "source": "func_80533C50.cpp"
+  },
+  {
+    "address": "80533d3c",
+    "name": "",
+    "targets": [
+      "804b8e00 GXInitTlutObj"
+    ],
+    "source": "func_80533D3C.cpp"
+  },
+  {
+    "address": "80533d58",
+    "name": "func_80533D58",
+    "targets": [
+      "804b8a60 ",
+      "804b8b40 "
+    ],
+    "source": "func_80533D58.cpp"
+  },
+  {
+    "address": "80535e6c",
+    "name": "func_80535E6C",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt"
+    ],
+    "source": "func_80535E6C.cpp"
+  },
+  {
+    "address": "80535f50",
+    "name": "func_80535F50",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_80535F50.cpp"
+  },
+  {
+    "address": "8055319c",
+    "name": "func_8055319C",
+    "targets": [
+      "804baeb0 ",
+      "804baf20 "
+    ],
+    "source": "func_8055319C.cpp"
+  },
+  {
+    "address": "8055b950",
+    "name": "func_8055B950",
+    "targets": [
+      "804baa90 GXSetProjection",
+      "804bab50 ",
+      "804bab90 GXLoadPosMtxImm",
+      "804bae60 ",
+      "804bae90 ",
+      "804baeb0 "
+    ],
+    "source": "func_8055B950.cpp"
+  },
+  {
+    "address": "8055bb38",
+    "name": "func_8055BB38",
+    "targets": [
+      "804bae60 ",
+      "804baeb0 "
+    ],
+    "source": "func_8055BB38.cpp"
+  },
+  {
+    "address": "8055cb18",
+    "name": "func_8055CB18",
+    "targets": [
+      "804baa90 GXSetProjection"
+    ],
+    "source": "func_8055CB18.cpp"
+  },
+  {
+    "address": "8055dc5c",
+    "name": "SaveUiVtable_8055DC5C",
+    "targets": [
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_8055DC5C.cpp"
+  },
+  {
+    "address": "80564cec",
+    "name": "func_80564CEC",
+    "targets": [
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_80564CEC.cpp"
+  },
+  {
+    "address": "80565238",
+    "name": "func_80565238",
+    "targets": [
+      "804ba600 GXSetZMode"
+    ],
+    "source": "func_80565238.cpp"
+  },
+  {
+    "address": "8056a648",
+    "name": "func_8056A648",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8056A648.cpp"
+  },
+  {
+    "address": "8056a9bc",
+    "name": "func_8056A9BC",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b7120 GXSetLineWidth",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_8056A9BC.cpp"
+  },
+  {
+    "address": "8056ac5c",
+    "name": "func_8056AC5C",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b7120 GXSetLineWidth",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_8056AC5C.cpp"
+  },
+  {
+    "address": "8081a49c",
+    "name": "hbm_hbm_draw__Fv",
+    "targets": [
+      "804b71e0 GXSetCullMode",
+      "804b7b60 GXSetDispCopyGamma",
+      "804b9900 GXSetNumIndStages",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9e50 GXSetAlphaCompare",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection"
+    ],
+    "source": "func_8081A49C.cpp"
+  },
+  {
+    "address": "8081acd0",
+    "name": "hbm_func_8081ACD0",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b7120 GXSetLineWidth",
+      "804b71e0 GXSetCullMode",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b99e0 GXSetTevOp",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804bab90 GXLoadPosMtxImm"
+    ],
+    "source": "func_8081ACD0.cpp"
+  },
+  {
+    "address": "8081ed60",
+    "name": "hbm_func_8081ED60",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b71e0 GXSetCullMode",
+      "804b7b60 GXSetDispCopyGamma",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804ba5d0 GXSetAlphaUpdate",
+      "804ba600 GXSetZMode",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_8081ED60.cpp"
+  },
+  {
+    "address": "80822e10",
+    "name": "hbm_draw__Q210homebutton10HomeButtonFv",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b9bc0 GXSetTevColor"
+    ],
+    "source": "func_80822E10.cpp"
+  },
+  {
+    "address": "80828410",
+    "name": "hbm_draw__Q310homebutton10HomeButton10BlackFaderFv",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b9bc0 GXSetTevColor"
+    ],
+    "source": "func_80828410.cpp"
+  },
+  {
+    "address": "8082a360",
+    "name": "hbm_SetVertexFormat__Q36nw4hbm3lyt6detailFbUc",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt"
+    ],
+    "source": "func_8082A360.cpp"
+  },
+  {
+    "address": "8082a450",
+    "name": "hbm_DrawQuad__Q36nw4hbm3lyt6detailFRCQ36nw4hbm4math4VEC2RCQ36nw4hbm4math4VEC2RCQ36nw4hbm4math4VEC2RCQ36nw4hbm4math4VEC2PCQ36nw4hbm2ut5Color",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_8082A450.cpp"
+  },
+  {
+    "address": "8082a580",
+    "name": "hbm_DrawQuad__Q36nw4hbm3lyt6detailFRCQ36nw4hbm4math4VEC2RCQ36nw4hbm3lyt4SizeUcPA4_CQ36nw4hbm4math4VEC2PCQ36nw4hbm2ut5Color",
+    "targets": [
+      "804b6ef0 GXBegin"
+    ],
+    "source": "func_8082A580.cpp"
+  },
+  {
+    "address": "8082ac20",
+    "name": "hbm_DrawLine__Q36nw4hbm3lyt6detailFRCQ36nw4hbm4math4VEC2RCQ36nw4hbm3lyt4SizeQ36nw4hbm2ut5Color",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b6ef0 GXBegin",
+      "804b7120 GXSetLineWidth",
+      "804b8420 GXSetChanMatColor",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_8082AC20.cpp"
+  },
+  {
+    "address": "8082adc0",
+    "name": "hbm_InitGXTexObjFromTPL__Q36nw4hbm3lyt6detailFP9_GXTexObjP10TPLPaletteUl",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b88b0 GXInitTexObjCI",
+      "804b8900 GXInitTexObjLOD",
+      "804b8a40 GXInitTexObjUserData"
+    ],
+    "source": "func_8082ADC0.cpp"
+  },
+  {
+    "address": "8082c370",
+    "name": "hbm_func_8082C370",
+    "targets": [
+      "804b95f0 GXSetIndTexMtx"
+    ],
+    "source": "func_8082C370.cpp"
+  },
+  {
+    "address": "8082c720",
+    "name": "hbm___ct__Q36nw4hbm3lyt8MaterialFPCQ46nw4hbm3lyt3res8MaterialRCQ36nw4hbm3lyt11ResBlockSet",
+    "targets": [
+      "804b8a10 GXInitTexObjWrapMode"
+    ],
+    "source": "func_8082C720.cpp"
+  },
+  {
+    "address": "8082eb40",
+    "name": "hbm_GetTexture__Q36nw4hbm3lyt8MaterialCFP9_GXTexObjUc",
+    "targets": [
+      "804b8a40 GXInitTexObjUserData"
+    ],
+    "source": "func_8082EB40.cpp"
+  },
+  {
+    "address": "8082ebc0",
+    "name": "hbm_SetTextureNoWrap__Q36nw4hbm3lyt8MaterialFUcP10TPLPalette",
+    "targets": [
+      "804b8a10 GXInitTexObjWrapMode",
+      "804b8b10 GXGetTexObjWrapS",
+      "804b8b20 GXGetTexObjWrapT"
+    ],
+    "source": "func_8082EBC0.cpp"
+  },
+  {
+    "address": "8082ec50",
+    "name": "hbm_SetTexture__Q36nw4hbm3lyt8MaterialFUcRC9_GXTexObj",
+    "targets": [
+      "804b8a40 GXInitTexObjUserData"
+    ],
+    "source": "func_8082EC50.cpp"
+  },
+  {
+    "address": "8082ecb0",
+    "name": "hbm_SetTextureNoWrap__Q36nw4hbm3lyt8MaterialFUcRC9_GXTexObj",
+    "targets": [
+      "804b8a10 GXInitTexObjWrapMode",
+      "804b8a40 GXInitTexObjUserData",
+      "804b8b10 GXGetTexObjWrapS",
+      "804b8b20 GXGetTexObjWrapT"
+    ],
+    "source": "func_8082ECB0.cpp"
+  },
+  {
+    "address": "8082f0b0",
+    "name": "hbm_SetupGX__Q36nw4hbm3lyt8MaterialFbUc",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8420 GXSetChanMatColor",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8a30 GXInitTexObjTlut",
+      "804b8a50 GXGetTexObjUserData",
+      "804b8b00 GXGetTexObjFmt",
+      "804b8da0 GXLoadTexObj",
+      "804b8e00 GXInitTlutObj",
+      "804b8e30 GXLoadTlut",
+      "804b9580 GXSetTevIndirect",
+      "804b9730 GXSetIndTexCoordScale",
+      "804b9830 GXSetIndTexOrder",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9c20 GXSetTevColorS10",
+      "804b9c90 GXSetTevKColor",
+      "804b9cf0 GXSetTevKColorSel",
+      "804b9d40 GXSetTevKAlphaSel",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba550 GXSetBlendMode",
+      "804bacd0 GXLoadTexMtxImm"
+    ],
+    "source": "func_8082F0B0.cpp"
+  },
+  {
+    "address": "808300b0",
+    "name": "hbm_GetTextureSize__Q36nw4hbm3lyt6detailFPQ36nw4hbm3lyt8MaterialUc",
+    "targets": [
+      "804b8a40 GXInitTexObjUserData",
+      "804b8ac0 GXGetTexObjWidth",
+      "804b8ae0 GXGetTexObjHeight"
+    ],
+    "source": "func_808300B0.cpp"
+  },
+  {
+    "address": "808313b0",
+    "name": "hbm_LoadMtx__Q36nw4hbm3lyt4PaneFRCQ36nw4hbm3lyt8DrawInfo",
+    "targets": [
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_808313B0.cpp"
+  },
+  {
+    "address": "80837290",
+    "name": "hbm_SetupGX__Q36nw4hbm2ut10CharWriterFv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_80837290.cpp"
+  },
+  {
+    "address": "80838970",
+    "name": "hbm_PrintGlyph__Q36nw4hbm2ut10CharWriterFfffRCQ36nw4hbm2ut5Glyph",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj"
+    ],
+    "source": "func_80838970.cpp"
+  },
+  {
+    "address": "80838c00",
+    "name": "hbm_LoadTexture__Q36nw4hbm2ut10CharWriterFRCQ36nw4hbm2ut5Glyph11_GXTexMapID",
+    "targets": [
+      "804b86a0 GXInitTexObj",
+      "804b8900 GXInitTexObjLOD",
+      "804b8da0 GXLoadTexObj"
+    ],
+    "source": "func_80838C00.cpp"
+  },
+  {
+    "address": "80838e70",
+    "name": "hbm_SetupVertexFormat__Q36nw4hbm2ut10CharWriterFv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt"
+    ],
+    "source": "func_80838E70.cpp"
+  },
+  {
+    "address": "80838f00",
+    "name": "hbm_SetupGXDefault__Q36nw4hbm2ut10CharWriterFv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_80838F00.cpp"
+  },
+  {
+    "address": "808390d0",
+    "name": "hbm_SetupGXWithColorMapping__Q36nw4hbm2ut10CharWriterFQ36nw4hbm2ut5ColorQ36nw4hbm2ut5Color",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9bc0 GXSetTevColor",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_808390D0.cpp"
+  },
+  {
+    "address": "808393d0",
+    "name": "hbm_SetupGXForI__Q36nw4hbm2ut10CharWriterFv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b9a80 GXSetTevColorIn",
+      "804b9ac0 GXSetTevAlphaIn",
+      "804b9b00 GXSetTevColorOp",
+      "804b9b60 GXSetTevAlphaOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_808393D0.cpp"
+  },
+  {
+    "address": "80839600",
+    "name": "hbm_SetupGXForRGBA__Q36nw4hbm2ut10CharWriterFv",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b61b0 GXSetTexCoordGen2",
+      "804b6400 GXSetNumTexGens",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b9900 GXSetNumIndStages",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9d90 GXSetTevSwapMode",
+      "804b9dd0 GXSetTevSwapModeTable",
+      "804b9e90 GXSetZTexture",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba0b0 GXSetFog",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_80839600.cpp"
+  },
+  {
+    "address": "80984a8c",
+    "name": "demo_func_80984A8C",
+    "targets": [
+      "804b54c0 GXSetVtxDesc",
+      "804b5ad0 GXClearVtxDesc",
+      "804b5b10 GXSetVtxAttrFmt",
+      "804b6400 GXSetNumTexGens",
+      "804b71e0 GXSetCullMode",
+      "804b7970 GXSetCopyFilter",
+      "804b8500 GXSetNumChans",
+      "804b8530 GXSetChanCtrl",
+      "804b8fa0 GXInvalidateTexAll",
+      "804b9920 GXSetTevDirect",
+      "804b99e0 GXSetTevOp",
+      "804b9e50 GXSetAlphaCompare",
+      "804b9f20 GXSetTevOrder",
+      "804ba080 GXSetNumTevStages",
+      "804ba5a0 GXSetColorUpdate",
+      "804ba600 GXSetZMode",
+      "804baa90 GXSetProjection",
+      "804bab90 GXLoadPosMtxImm",
+      "804bacb0 GXSetCurrentMtx"
+    ],
+    "source": "func_80984A8C.cpp"
+  },
+  {
+    "address": "80984c38",
+    "name": "",
+    "targets": [
+      "804b61b0 GXSetTexCoordGen2"
+    ],
+    "source": "func_80984C38.cpp"
+  },
+  {
+    "address": "80984c44",
+    "name": "demo_func_80984C44",
+    "targets": [
+      "804b6ef0 GXBegin",
+      "804b8da0 GXLoadTexObj",
+      "804ba550 GXSetBlendMode"
+    ],
+    "source": "func_80984C44.cpp"
+  },
+  {
+    "address": "80987e9c",
+    "name": "demo_func_80987E9C",
+    "targets": [
+      "804b67e0 GXDrawDone",
+      "804b6a10 GXPeekARGB"
+    ],
+    "source": "func_80987E9C.cpp"
+  }
+]

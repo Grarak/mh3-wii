@@ -120,6 +120,10 @@ void ShutdownGraphics() {
         MH3_STAT(if (GuestGxStream::commandCount) std::fprintf(stderr, "MH3 GX bridge: %llu commands consumed, %llu array conversions, %llu texture bindings, %llu display copies, %llu draws, %llu texture copies\n",
             static_cast<unsigned long long>(GuestGxStream::commandCount), static_cast<unsigned long long>(guestArrays), static_cast<unsigned long long>(guestTextures), static_cast<unsigned long long>(guestCopies),
             static_cast<unsigned long long>(GuestGxStream::drawCount), static_cast<unsigned long long>(guestTextureCopies)));
+        // Shader patcher storage must outlive the last submitted draw. This
+        // drain is only at shutdown; frame admission/submission never waits.
+        aurora::gl::finish();
+        ClearNativeMaterialPrograms();
         aurora::clear_generated_textures();
         aurora_shutdown(); initialized = false; frameActive = false;
     }

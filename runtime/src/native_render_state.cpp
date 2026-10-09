@@ -13,6 +13,7 @@ struct NormalMatrix { std::array<float,9> values; bool known=false; };
 std::array<NormalMatrix,10> normalMatrices{};
 std::array<int32_t,4> scissor{};
 bool viewportKnown=false,scissorKnown=false,rasterKnown=false;
+NativeRasterObserver rasterObserver=nullptr;
 mh3_draw_state drawState = [] {
     mh3_draw_state s{};
     mh3_draw_identity_position(s.position);
@@ -33,6 +34,9 @@ std::array<float,2> TargetScale() {
 }
 }
 const mh3_draw_state& GetNativeDrawState() { return drawState; }
+void SetNativeRasterObserver(NativeRasterObserver observer) {
+    RequireOwner();rasterObserver=observer;
+}
 void SetNativeProjection(const float matrix[16],bool perspective) {
     RequireOwner();
     std::memcpy(drawState.projection,matrix,sizeof(drawState.projection));
@@ -86,7 +90,7 @@ void SetNativeScissor(int32_t x,int32_t y,int32_t width,int32_t height) {
     aurora::gl::set_scissor_enabled(true);
     aurora::gl::set_scissor(left,top,right-left,bottom-top);
 }
-void SetNativeRaster(const mh3_raster_state& raster) {
+static void SetRaster(const mh3_raster_state& raster,bool publish) {
     RequireOwner();
     if(raster.blend_mode>3 || raster.src_factor>7 || raster.dst_factor>7 ||
        raster.depth_compare>7 || raster.cull_mode>3 || raster.logic_op>15)
@@ -123,8 +127,10 @@ void SetNativeRaster(const mh3_raster_state& raster) {
     }
     drawState.raster=raster;
     rasterKnown=true;
+    if(publish && rasterObserver) rasterObserver(raster);
     if(NativeGraphicsFrameShouldRender()) aurora::gl::apply_raster_state(out);
 }
+void SetNativeRaster(const mh3_raster_state& raster) {SetRaster(raster,true);}
 
 void RestoreNativeRenderState() {
     RequireOwner();
@@ -137,5 +143,5 @@ void RestoreNativeRenderState() {
         SetNativeViewport(v[0],v[1],v[2],v[3],v[4],v[5]);
     }
     if(scissorKnown) SetNativeScissor(scissor[0],scissor[1],scissor[2],scissor[3]);
-    if(rasterKnown) SetNativeRaster(drawState.raster);
+    if(rasterKnown) SetRaster(drawState.raster,false);
 }

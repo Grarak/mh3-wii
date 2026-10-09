@@ -1,11 +1,13 @@
 // Native character material preparation, RMHP08 (0x80047DD0).
 // Source: Ghidra decompilation plus frame150 producer / frame690 consumer trace.
 // The game previously rendered into two EFB rectangles then copied each to
-// RGBA8. Publish direct GPU render targets in FIFO order instead. No EFB copy,
+// RGBA8. Publish direct GPU render targets on the game thread. No EFB copy,
 // GXDrawDone, content hash, CPU composition, or readback is involved.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "gx_host.h"
+#include "native_graphics.h"
+#include "../native/mh3_model_state.h"
 #include "memory.h"
 #include <aurora/generated_texture.hpp>
 #include <aurora/native_assets.h>
@@ -93,10 +95,13 @@ extern "C" void MH3_CharacterMaterials(CpuContext* ctx) {
             // Keep the original non-composition state setup: it disables fog,
             // alpha testing and alpha writes before the later screen clear.
             game(0x8005AF80); // dbg_drawgraph_init
-            PrepareSlot(slot);
-            Memory::Write8(0x8066BE18 + slot, 0);
+            if(NativeGraphicsFrameShouldRender()) {
+                PrepareSlot(slot);
+                Memory::Write8(0x8066BE18 + slot, 0);
+            }
         }
-        game(0x804B8FA0); // GXInvalidateTexAll (state, no GPU fence)
+        // Fresh GPU targets and explicit producer revisions replace the old
+        // texture-cache invalidation. Skipped frames retain their dirty slots.
     }
     // Original final untextured screen quad and inherited state.
     for (uint32_t i = 0; i < 3; ++i) Memory::Write32(frame[0x10 + i * 4], Memory::Read32(0x80798030));
@@ -105,6 +110,8 @@ extern "C" void MH3_CharacterMaterials(CpuContext* ctx) {
     Memory::Write32(frame[0x28], Memory::Read32(0x8065B21C));
     game(0x80041470, {frame[0x10], frame[0x20], frame[0x28]}); // disp_beta
     game(0x800885F4, {0x7ff});
-    game(0x804B9900, {0}); // GXSetNumIndStages
+    auto material=GetNativeMaterialState();
+    material.indirect_count=0;
+    SetNativeMaterial(material);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80047DD0, MH3_CharacterMaterials, "CharacterMaterial::prepare");
