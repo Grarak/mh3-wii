@@ -839,14 +839,14 @@ std::optional<aurora::gl::UniformBlock> ShadeMaterialBlock(const ShadeEntry& ent
     }
 
     // Static coefficients times their picks; the copy picks nothing (one).
-    // Built in the uniform memory itself.
+    // Built here and copied once: the uniform memory is CDRAM on the Vita,
+    // where each byte the CPU writes is slow (784 bytes, not 1,360).
     void* memory = CarveUniforms(sizeof(mh3_shade_gpu_material));
 
     if (!memory)
         return std::nullopt;
 
-    auto& out = *static_cast<mh3_shade_gpu_material*>(memory);
-    out = entry.material;
+    mh3_shade_gpu_material out = entry.material;
 
     for (unsigned k = 0; k < MH3_SHADE_GPU_COEFFICIENTS; ++k)
         mh3_shade_gpu_coefficient(&entry.material, &values, k, out.coefficient[k]);
@@ -856,6 +856,7 @@ std::optional<aurora::gl::UniformBlock> ShadeMaterialBlock(const ShadeEntry& ent
         pick = one;
     }
 
+    std::memcpy(memory, &out, sizeof out);
     std::memcpy(r.palette.palette, values.palette, sizeof r.palette.palette);
     r.entry = &entry;
     r.block = {memory, 0, 0, uint32_t(sizeof(mh3_shade_gpu_material))};
@@ -1769,8 +1770,10 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     if (!vertexBlock)
         return;
 
-    std::memset(vertexBlock, 0, MH3_SHADE_FRAGMENT_OFFSET);
-    const auto lighting = ShadeChannels(shading, *vertexBlock);
+    // The Draw part is built here and copied once: the uniform memory is
+    // CDRAM on the Vita, slow for the CPU to write and slower to read back.
+    mh3_shade_vertex vertex{};
+    const auto lighting = ShadeChannels(shading, vertex);
 
     // Built in the uniform memory.
     auto& quad = *reinterpret_cast<ShadeQuad*>(static_cast<char*>(memory.data) + (gpu ? ShadeGpuPaletteOffset : ShadePaletteOffset(shading.model)));
@@ -1796,8 +1799,10 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     auto variant = ShadeVariant(shading, NativeShaderVertex::Quad, lighting);
 
     if (NativeShaderFoldsFog(variant))
-        vertexBlock->channel[3] |= kFoldFog;
+        vertex.channel[3] |= kFoldFog;
 
+    std::memcpy(vertexBlock, &vertex, sizeof vertex);
+    std::memset(reinterpret_cast<char*>(vertexBlock) + sizeof vertex, 0, MH3_SHADE_FRAGMENT_OFFSET - sizeof vertex);
     std::optional<aurora::gl::ShadedBlocks> blocks;
 
     if (gpu) {

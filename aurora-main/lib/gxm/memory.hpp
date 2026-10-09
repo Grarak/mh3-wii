@@ -60,4 +60,8 @@ private:
 };
 
 using CdramArena = MappedArena;
+
+// AURORA_MEMBENCH: print the CPU's write speed into each memory kind GPU data
+// can live in (CDRAM, uncached main, phycont), with cached main for scale.
+void benchmark_cpu_writes() noexcept;
 } // namespace aurora::gxm
