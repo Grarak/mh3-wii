@@ -525,7 +525,7 @@ if(VITA)
   endif()
 
   target_link_libraries(MH3 PRIVATE kubridge_stub SceAudio_stub ScePower_stub SceAppMgr_stub
-    ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub SceCtrl_stub SceTouch_stub SceCommonDialog_stub)
+    ScePvf_stub SceVshBridge_stub SceIme_stub SceSysmodule_stub SceCtrl_stub SceCommonDialog_stub)
 
   # Weak: --vita-gxm-debug's registry write must never keep the game from loading.
   target_link_libraries(MH3 PRIVATE SceRegistryMgr_stub_weak)

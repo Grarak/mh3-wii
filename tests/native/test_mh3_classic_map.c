@@ -63,40 +63,6 @@ static void buttons(void) {
     CHECK(map(&pad).buttons == MH3_CL_ZL, "PS TV analog L2/R2 threshold");
 }
 
-static void touch(void) {
-    static const struct {
-        float x, y;
-        uint16_t classic;
-    } rear[] = {
-        {0.1f, 0.1f, MH3_CL_ZL}, {0.45f, 0.45f, MH3_CL_ZL}, {0.55f, 0.2f, MH3_CL_ZR}, {0.9f, 0.05f, MH3_CL_ZR},
-        {0.1f, 0.6f, 0},         {0.9f, 0.95f, 0},          {0.5f, 0.75f, 0},
-    };
-
-    for (unsigned i = 0; i < sizeof rear / sizeof rear[0]; ++i) {
-        mh3_vita_pad pad = centred();
-        pad.rear_count = 1;
-        pad.rear[0] = (mh3_touch_point){rear[i].x, rear[i].y};
-        CHECK(map(&pad).buttons == rear[i].classic, "rear touch %.2f,%.2f gave 0x%x", rear[i].x, rear[i].y, map(&pad).buttons);
-    }
-
-    mh3_vita_pad pad = centred();
-    pad.rear_count = 2;
-    pad.rear[0] = (mh3_touch_point){0.2f, 0.3f};
-    pad.rear[1] = (mh3_touch_point){0.8f, 0.3f};
-    CHECK(map(&pad).buttons == (MH3_CL_ZL | MH3_CL_ZR), "both rear quarters");
-    static const struct {
-        float x, y;
-        uint16_t classic;
-    } front[] = {{0.5f, 0.05f, MH3_CL_HOME}, {0.4f, 0.1f, MH3_CL_HOME}, {0.5f, 0.3f, 0}, {0.1f, 0.05f, 0}, {0.9f, 0.05f, 0}, {0.5f, 0.9f, 0}};
-
-    for (unsigned i = 0; i < sizeof front / sizeof front[0]; ++i) {
-        pad = centred();
-        pad.front_count = 1;
-        pad.front[0] = (mh3_touch_point){front[i].x, front[i].y};
-        CHECK(map(&pad).buttons == front[i].classic, "front touch %.2f,%.2f gave 0x%x", front[i].x, front[i].y, map(&pad).buttons);
-    }
-}
-
 static void sticks(void) {
     /* Centre and drift within the dead zone report nothing. */
     for (int dx = -10; dx <= 10; dx += 5)
@@ -110,7 +76,7 @@ static void sticks(void) {
             CHECK(state.lx == 0 && state.ly == 0 && state.rx == 0 && state.ry == 0, "drift %d,%d reported %d,%d", dx, dy, state.lx, state.ly);
         }
     /* Full deflection: the whole report range, y up, as the recorded logs
-     * and the devkit harness expect (|axis| > 400). */
+     * expect (|axis| > 400). */
     mh3_vita_pad pad = centred();
     pad.ly = 0;
     pad.rx = 255;
@@ -226,7 +192,6 @@ static void read_sticks(void) {
 
 int main(void) {
     buttons();
-    touch();
     sticks();
     clamp();
     read_sticks();

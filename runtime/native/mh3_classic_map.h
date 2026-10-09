@@ -84,7 +84,7 @@ void mh3_classic_clamp(int16_t x, int16_t y, int *out_x, int *out_y);
 /* The game's stick length (0x80042FDC): 0 below 30, at most 127. */
 int mh3_classic_game_length(int16_t x, int16_t y);
 
-/* PS Vita pad, as sceCtrlPeekBufferPositive2 and sceTouchPeek report it. */
+/* PS Vita pad, as sceCtrlPeekBufferPositive2 reports it. */
 enum {
     MH3_VITA_SELECT = 0x0001,
     MH3_VITA_L3 = 0x0002,
@@ -102,28 +102,20 @@ enum {
     MH3_VITA_CIRCLE = 0x2000,
     MH3_VITA_CROSS = 0x4000,
     MH3_VITA_SQUARE = 0x8000,
-    MH3_VITA_MAX_TOUCH = 8,
 };
-
-typedef struct {
-    float x, y; /* 0..1 across the panel's active area, y down */
-} mh3_touch_point;
 
 typedef struct {
     uint32_t buttons;
     uint8_t lx, ly, rx, ry; /* 0..255, 128 centre, y down */
     uint8_t lt, rt;         /* PS TV controllers' analog L2/R2 */
-    uint8_t front_count, rear_count;
-    mh3_touch_point front[MH3_VITA_MAX_TOUCH], rear[MH3_VITA_MAX_TOUCH];
 } mh3_vita_pad;
 
 extern const mh3_stick_curve mh3_vita_stick_curve;
 extern const mh3_stick_curve mh3_gamepad_stick_curve;
 
 /* The Vita layout (docs/vita-controls.md): face buttons by position, L/R as
- * the Classic L/R triggers, the upper rear-touch quarters as ZL/ZR, Start/
- * Select as +/-, a touch at the top centre of the screen as HOME. PS TV pads
- * add L2/R2 as ZL/ZR and L3+R3 as HOME. */
+ * the Classic L/R triggers, Start/Select as +/-. PS TV pads add L2/R2 as ZL/ZR
+ * and L3+R3 as HOME; the touch panels are not read. */
 void mh3_vita_pad_to_classic(const mh3_vita_pad *pad, mh3_classic_state *out);
 
 #ifdef __cplusplus

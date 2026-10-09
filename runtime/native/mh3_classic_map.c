@@ -148,15 +148,7 @@ void mh3_vita_pad_to_classic(const mh3_vita_pad *pad, mh3_classic_state *out) {
 
     if ((pad->buttons & (MH3_VITA_L3 | MH3_VITA_R3)) == (MH3_VITA_L3 | MH3_VITA_R3))
         state.buttons |= MH3_CL_HOME;
-    /* Rear panel: the upper quarters, under the index fingers that leave L/R.
-     * The lower half is where a gripping hand rests. */
-    for (unsigned i = 0; i < pad->rear_count && i < MH3_VITA_MAX_TOUCH; ++i)
-        if (pad->rear[i].y < 0.5f)
-            state.buttons |= pad->rear[i].x < 0.5f ? MH3_CL_ZL : MH3_CL_ZR;
-    /* Front panel: HOME on a touch at the top centre of the screen. */
-    for (unsigned i = 0; i < pad->front_count && i < MH3_VITA_MAX_TOUCH; ++i)
-        if (pad->front[i].y < 0.15f && pad->front[i].x > 0.35f && pad->front[i].x < 0.65f)
-            state.buttons |= MH3_CL_HOME;
+
     /* The handheld's L/R are digital: a fully pressed analog trigger. */
     state.trigger_l = (state.buttons & MH3_CL_L) ? 255 : 0;
     state.trigger_r = (state.buttons & MH3_CL_R) ? 255 : 0;

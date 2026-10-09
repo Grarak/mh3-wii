@@ -62,11 +62,11 @@ changing for it.
 | D-pad | D-pad | D-pad | Menu cursor; camera (the game's default) |
 | L (trigger, fully pressed) | L | L1 | Per control style; menu tab |
 | R (trigger, fully pressed) | R | R1 | Per control style; menu tab |
-| ZL | Rear touch, upper-left quarter | L2 | Per control style |
-| ZR | Rear touch, upper-right quarter | R2 | Per control style |
+| ZL | — | L2 | Per control style |
+| ZR | — | R2 | Per control style |
 | + | START | START | Pause menu |
 | − | SELECT | SELECT | Per control style |
-| HOME | Touch the top centre of the screen | L3 + R3 | HOME Menu |
+| HOME | — | L3 + R3 | HOME Menu |
 
 "Per control style": the game's Classic Style 1/2 options decide the field
 actions; the mapping keeps every Classic control where it is on the original
@@ -84,25 +84,17 @@ Why this layout:
   game uses most, and on the original controller the outer triggers that
   the index fingers rest on. A press reports the trigger fully down (the
   digital L/R bit and an analog value of 255).
-- **ZL/ZR on the rear panel's upper quarters.** The original Classic
-  Controller's ZL/ZR are small extra buttons inside the triggers; the Vita has
-  nothing left on its shoulders. The rear panel is under the index and
-  middle fingers already, so a ZL/ZR hold does not take a thumb off a stick or
-  a face button. Only the upper half counts: the lower half is where a
-  gripping hand rests, and touching there does nothing. A modifier would have
-  taken a button the game itself combines (R + attacks), and front-screen
-  corners would take a thumb off the sticks.
-- **HOME as a deliberate touch.** The PS button belongs to the system. HOME
-  opens the Wii HOME Menu (whether it can be driven with the Classic Controller in this port is not yet checked), which is rare, so it
-  sits on a tap at the top centre of the screen (the middle 30 % of the width,
-  the top 15 % of the height), away from the thumbs. A PS TV controller has
-  no touch panels; L3 + R3 together are HOME there.
+- **No touch input** (user, 2026-10-06). The front and rear panels are not
+  read: a hand gripping the rear panel or a thumb resting on the screen never
+  reaches the game. The handheld has no control left for the Classic
+  Controller's ZL/ZR (small extra buttons inside its triggers) or HOME (the
+  PS button belongs to the system); a PS TV controller has them on L2/R2 and
+  L3 + R3. Until 2026-10-06 the rear panel's upper quarters were ZL/ZR and a
+  tap at the top centre of the screen was HOME.
 
 The pad is read with `sceCtrlPeekBufferPositive2` (port 1 first, as SDL's
 Vita driver did, then port 0), so the devkit harness's CTRLP pad still
-drives the game; the touch panels with `sceTouchPeek`, ignored while a system
-dialog (the IME keyboard, a message) is up so its touches do not reach the
-game. One sample serves 4 ms of the game's several reads per frame. Code:
+drives the game. One sample serves 4 ms of the game's several reads per frame. Code:
 `runtime/vita/vita_controller.cpp` (Vita APIs) and
 `runtime/native/mh3_classic_map.c` (the mapping, host-testable).
 
@@ -127,7 +119,7 @@ spreads the window over the travel:
 
 `tests/native/test_mh3_classic_map.c` checks the dead zone, the window,
 monotonic length, direction error under 0.05 rad, full deflection and every
-button and touch region. The game's own responses are not changed here; only
+button. The game's own responses are not changed here; only
 how far the Vita stick has to move to reach a given game length.
 
 On the VM (input playback of the mapped values, quest 10057 area 6), the
@@ -193,14 +185,10 @@ Vita-side reading has run on hardware yet. On the devkit:
    turns the camera by default.
 5. L and R act as the Classic L/R triggers (field actions per control
    style, menu tabs); START opens the pause menu (+), SELECT is −.
-6. Rear touch: the upper-left and upper-right quarters are ZL and ZR; holding
-   the lower half does nothing.
-7. A tap at the top centre of the screen is HOME; check whether the HOME
-   Menu opens and can be closed with the Classic Controller.
-8. Name entry: touches on the IME keyboard do not reach the game (no HOME,
-   ZL or ZR while the dialog is up).
-9. PS TV, if one is at hand: L2/R2 are ZL/ZR, L3 + R3 is HOME.
-10. The vprof profile shows no measurable time in `ReadVitaController`.
+6. Touching the screen or the rear panel does nothing in the game.
+7. PS TV, if one is at hand: L2/R2 are ZL/ZR, L3 + R3 is HOME; check whether
+   the HOME Menu opens and can be closed with the Classic Controller.
+8. The vprof profile shows no measurable time in `ReadVitaController`.
 
 ## Not configurable yet
 
