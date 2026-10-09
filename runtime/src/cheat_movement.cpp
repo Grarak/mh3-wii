@@ -16,6 +16,7 @@
 #include "cheats.h"
 
 #include "abi_bridge.h"
+#include "port_check.h"
 #include "ppc_runtime.h"
 
 #include <cstdint>
@@ -249,14 +250,16 @@ REGISTER_NATIVE_FUNCTION_AS(0x8020A448, MH3_CheatVillageSetAction, "CheatVillage
 
 // 0x80252C78 (plw): a walk (motion 101). Enhanced movement speed (US
 // 0x80252E08 and 0x80252E14, EU 0x80252E6C and 0x80252E78) makes its two
-// speeds (10.5 and 10) 32.
+// speeds (10.5 and 10) 32; the step-scaled port reads them from guest memory.
 extern "C" void func_80252C78(CpuContext* ctx);
+
+void FieldWalk101(CpuContext* ctx); // field_player_actions.cpp: the step-scaled port
 
 extern "C" void MH3_CheatWalk101(CpuContext* ctx) {
     const bool on = On(Id::EnhancedMovement) && OneHunter();
     ConstantSwap first(-15244, 32.0f, on);
     ConstantSwap second(-15496, 32.0f, on);
-    func_80252C78(ctx);
+    PortCheck::Call(ctx, "FieldWalk101", func_80252C78, FieldWalk101);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80252C78, MH3_CheatWalk101, "CheatWalk101");

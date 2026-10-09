@@ -3027,6 +3027,144 @@ void Grabbed(CpuContext* ctx) {
     }
 }
 
+// 0x80252B50 (plw, u16 lowest, u16 highest, rise command, sink command): the
+// swim's pitch (+0xAC, a u16 angle in its word) turned 0x400 a call one way
+// while the rise command is held below the surface (Pl_suimen_ck 0), the
+// other way while the sink command is, else back toward level by 0x300 a
+// call; then held within [lowest, highest] (negative angles at or below
+// lowest, positive at or above highest). Walk 101, run 119 and the stamina
+// drain 120 call it once a step when the hunter swims, so at 120 steps a
+// second it pitched four times as fast and the swim ran away from the
+// player's input; here each turn is the step's share.
+void SwimPitch(CpuContext* ctx) {
+    GuestCall game{ctx};
+    const uint32_t plw = ctx->gpr[3], lowest = ctx->gpr[4] & 0xFFFF, highest = ctx->gpr[5] & 0xFFFF;
+    const uint32_t rise = ctx->gpr[6], sink = ctx->gpr[7];
+    constexpr uint32_t kPitch = 0xAC;
+    const uint32_t pitch = plw + kPitch;
+
+    if (game.Call<0x8026A6A8>({plw, rise}) == 1 && game.Call<InWater>({plw}) == 0)
+        Memory::Write32(pitch, Memory::Read32(pitch) - uint32_t(GameStep::Share(0x400)));
+    else if (game.Call<0x8026A6A8>({plw, sink}) == 1)
+        Memory::Write32(pitch, Memory::Read32(pitch) + uint32_t(GameStep::Share(0x400)));
+    else {
+        const uint32_t angle = Memory::Read32(pitch), level = uint32_t(GameStep::Share(0x300));
+
+        if (int16_t(angle) < 0)
+            Memory::Write32(pitch, angle < 0x10000 - level ? angle + level : 0);
+        else
+            Memory::Write32(pitch, angle < level ? 0 : angle - level);
+    }
+
+    const uint32_t angle = Memory::Read32(pitch);
+
+    if (int16_t(angle) < 0) {
+        if ((angle & 0xFFFF) <= lowest)
+            Memory::Write32(pitch, lowest);
+    } else if (highest <= (angle & 0xFFFF))
+        Memory::Write32(pitch, highest);
+}
+
+// 0x80252C78 (plw, r4 not 0: from a walk): a walk (motion 101, from 0x6D)
+// or, in the water (+24), the swim (motion 0x41D). The local player's ends
+// once the stick is let go and +0x266 is out (action 8, or the field stance
+// in the water), else it follows the camera and the swim pitch (0x8026A450,
+// 0x80252B50). Each step it moves forward along its angles (+0x54): 10 a
+// step walking (10.5 with skill 197; the speeds Enhanced movement swaps,
+// read from their guest constants), 3 or 5 swimming with weapon kinds 5, 6
+// (kind 8 on 0x80331168) and else nothing. The original moved a step's
+// distance each call, so at 120 steps a second the hunter walked and swam
+// four times as fast and the swim ran away from the player's input; here
+// the move is taken over the step's length.
+void Walk101(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, move = frame[8];
+    const bool fromWalk = frame.Arg(4) != 0;
+    constexpr uint32_t kWeaponKind = 2, kSwimRate = 0x354, kWalkSpeed = 0x8079C2D8, kSkillWalkSpeed = 0x8079C3D4, kSwim = 0x41D;
+    game.Call<Vec3Ctor>({move});
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(3, 0, 0);
+        game.Call<SetActFlags>({plw, 0xC0});
+        Memory::Write8(plw + kFlag614, 10);
+
+        if (Memory::Read8(plw + kFlag24) == 0) {
+            game.Call<0x8027714C>({plw, 0x805BEFE4, 0});
+
+            if (!fromWalk) {
+                if (p.Motion() != 0x65)
+                    p.Set(0x6D, 4, 0);
+            } else
+                game.Call<SetMotionAttr>({plw, 0x65, 6, 0, 1});
+        } else {
+            p.Set(kSwim, 4, 0);
+            game.Call<0x80277204>({plw, 0});
+
+            if (Memory::Read8(plw + kWeaponKind) == 5)
+                Memory::Write32(plw + kSwimRate, 0x3F933333); // 1.15
+            else if (Memory::Read8(plw + kWeaponKind) == 6)
+                Memory::Write32(plw + kSwimRate, 0x3FA00000); // 1.25
+        }
+
+        Memory::Write8(plw + 0x314, Memory::Read8(plw + kFlag614));
+        Memory::Write16(plw + kWord1606, 0);
+        Memory::Write16(plw + kWord1608, 0);
+
+        if (game.Call<SkillCheck>({plw, 0xC5}) == 1)
+            Memory::WriteFloat32(plw + kSwimRate, Memory::ReadFloat32(plw + kSwimRate) * 1.05f);
+
+        break;
+    case 1: {
+        float speed;
+
+        if (p.Motion() == kSwim) {
+            const uint8_t kind = Memory::Read8(plw + kWeaponKind);
+            speed = kind == 5 ? 3.0f : kind == 6 ? 5.0f : kind == 8 && game.Call<0x80331168>({plw}) == 1 ? 3.0f : 0.0f;
+        } else
+            speed = Memory::ReadFloat32(game.Call<SkillCheck>({plw, 0xC5}) == 1 ? kSkillWalkSpeed : kWalkSpeed);
+
+        if (p.Motion() == 0x6D && p.Ended())
+            game.Call<SetMotionAttr>({plw, 0x65, 10, 0, 1});
+
+        if (p.Master()) {
+            if ((game.Call<Nearby>({plw, 0}) & 0xFF) < 2) { // PlStickLevel
+                if (int8_t(Memory::Read8(plw + kFlag614)) < 1) {
+                    if (Memory::Read8(plw + kFlag24) == 0)
+                        p.Next(1, 8, 0x80);
+                    else
+                        game.Call<EndAction>({plw, 3, 10, 0});
+                }
+            } else {
+                game.Call<0x8026A450>({plw});
+                game.Call<0x80252B50>({plw, 0xC16D, 0x3E94, 0x2B, 0x2C});
+            }
+        }
+
+        Memory::WriteFloat32(move + 0, 0.0f);
+        Memory::WriteFloat32(move + 4, 0.0f);
+        Memory::WriteFloat32(move + 8, float(speed * GameStep::Scale()));
+        game.Call<RotVecXYZ>({move, plw + 0x54});
+
+        for (uint32_t k = 0; k < 12; k += 4)
+            Memory::WriteFloat32(plw + kPosition + k, Memory::ReadFloat32(plw + kPosition + k) + Memory::ReadFloat32(move + k));
+
+        break;
+    }
+    }
+}
+
+} // namespace
+
+// The Walk101 port for the Enhanced-movement wrapper (cheat_movement.cpp).
+void FieldWalk101(CpuContext* ctx) {
+    Walk101(ctx);
+}
+
+namespace {
 } // namespace
 
 extern "C" void func_802535B8(CpuContext* ctx);
@@ -3328,3 +3466,9 @@ extern "C" void MH3_VelocityStep(CpuContext* ctx) {
     PortCheck::Call(ctx, "VelocityStep", func_8026A57C, VelocityStep);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8026A57C, MH3_VelocityStep, "VelocityStep");
+
+extern "C" void func_80252B50(CpuContext* ctx);
+extern "C" void MH3_SwimPitch(CpuContext* ctx) {
+    PortCheck::Call(ctx, "SwimPitch", func_80252B50, SwimPitch);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80252B50, MH3_SwimPitch, "SwimPitch");

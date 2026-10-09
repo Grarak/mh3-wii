@@ -150,7 +150,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,draw-writes][,particles][,loading]`
+`MH3_TRACE=[input][,draw-pages][,monsters][,monster-steps=N][,monster-spins][,hit-shapes][,actions][,tex-scroll][,srt][,draw-writes][,particles][,loading]`
 
 | Item | Effect |
 | --- | --- |
