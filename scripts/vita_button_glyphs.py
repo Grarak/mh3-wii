@@ -3,8 +3,9 @@
 letters in the game's UI atlases (runtime/src/button_glyphs.cpp) as coverage
 masks in the two disc sizes the atlases use: circle, cross, square and
 triangle anti-aliased (8x supersampled, box-filtered), START and SELECT as
-words in 3x5 pixel letters packed without gaps (the small disc's face is
-15 px wide). Writes runtime/src/button_glyphs.inc; with --preview DIR also a
+words in 3x6 pixel letters packed without gaps (the small disc's face is
+16 px wide). The discs' centres fall between pixels, so every symbol and word
+has even sides. Writes runtime/src/button_glyphs.inc; with --preview DIR also a
 12x PNG of each.
 """
 import argparse
@@ -13,27 +14,27 @@ import os
 from PIL import Image, ImageDraw
 
 SUPER = 8
-# Mask size per disc size (the small disc's face is about 15 px wide, the
-# large one's 19 px) and the box the symbols fill, as the letters do.
+# Mask size per disc size (the small disc's face is 16 px wide, the large
+# one's 20 px) and the box the symbols fill, as the letters do.
 SIZES = {"small": 16, "large": 20}
-SYMBOL = {"small": 12, "large": 15}
+SYMBOL = {"small": 12, "large": 16}
 
-# 3x5 pixel letters; L and C are 2 wide.
+# 3x6 pixel letters; L and C are 2 wide and A 4, so both words are 16 wide.
 LETTERS = {
-    "S": [".##", "#..", ".#.", "..#", "##."],
-    "T": ["###", ".#.", ".#.", ".#.", ".#."],
-    "A": [".#.", "#.#", "###", "#.#", "#.#"],
-    "R": ["##.", "#.#", "##.", "#.#", "#.#"],
-    "E": ["###", "#..", "##.", "#..", "###"],
-    "L": ["#.", "#.", "#.", "#.", "##"],
-    "C": [".#", "#.", "#.", "#.", ".#"],
+    "S": [".##", "#..", "#..", ".#.", "..#", "##."],
+    "T": ["###", ".#.", ".#.", ".#.", ".#.", ".#."],
+    "A": [".##.", "#..#", "#..#", "####", "#..#", "#..#"],
+    "R": ["##.", "#.#", "#.#", "##.", "#.#", "#.#"],
+    "E": ["###", "#..", "##.", "#..", "#..", "###"],
+    "L": ["#.", "#.", "#.", "#.", "#.", "##"],
+    "C": [".#", "#.", "#.", "#.", "#.", ".#"],
 }
 
 
 def word(text, size):
-    rows = ["".join(LETTERS[c][y] for c in text) for y in range(5)]
+    rows = ["".join(LETTERS[c][y] for c in text) for y in range(6)]
     im = Image.new("L", (size, size), 0)
-    x0, y0 = (size - len(rows[0])) // 2, (size - 4) // 2
+    x0, y0 = (size - len(rows[0])) // 2, (size - len(rows)) // 2
 
     for y, row in enumerate(rows):
         for x, v in enumerate(row):

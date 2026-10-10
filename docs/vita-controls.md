@@ -95,7 +95,9 @@ Why this layout:
 The game's prompts and controls pages draw the Classic Controller's buttons
 as round discs with a letter. On every host they show the Vita's buttons
 instead: a as ○, b as ×, y as □, + as START and − as SELECT (the words in
-3x5 pixel letters, which just fill the small discs' 15 px). The Classic Controller's x has no disc in the game's atlases. The
+3x6 pixel letters, which just fill the small discs' 16 px). The discs' centres
+fall between pixels, so every symbol and word has even sides to sit centred.
+The Classic Controller's x has no disc in the game's atlases. The
 Wii Remote's and Nunchuk's buttons (A, B, 1, 2, C, Z), L, R and the gold z
 (ZL/ZR) stay as they are.
 

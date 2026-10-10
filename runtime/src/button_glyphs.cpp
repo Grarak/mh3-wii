@@ -7,7 +7,7 @@
 // the letters' ink, following docs/vita-controls.md:
 //
 //   a -> circle, b -> cross, y -> square (x -> triangle has no disc in
-//   these atlases), + -> START, − -> SELECT (the words in 3x5 pixel
+//   these atlases), + -> START, − -> SELECT (the words in 3x6 pixel
 //   letters).
 //
 // The symbols are coverage masks drawn by scripts/vita_button_glyphs.py
@@ -171,20 +171,29 @@ void Redraw(uint8_t* rgba, uint32_t width, const Disc& disc) {
 
     const auto sum = [](const uint8_t* c) { return c[0] + c[1] + c[2]; };
 
-    for (int k = kRings - 2; k >= 0; --k)
-        if (known[k + 1] && (!known[k] || sum(colour[k]) < 0.9 * sum(colour[k + 1]))) {
+    // The face is flat inside its rim: from the first ring outward that has
+    // its outer neighbour's colour, every ring inside takes that colour.
+    bool flat = false;
+
+    for (int k = kRings - 2; k >= 0; --k) {
+        flat = flat || (known[k] && known[k + 1] && std::equal(colour[k], colour[k] + 3, colour[k + 1]));
+
+        if (known[k + 1] && (flat || !known[k] || sum(colour[k]) < 0.9 * sum(colour[k + 1]))) {
             std::copy_n(colour[k + 1], 3, colour[k]);
             known[k] = true;
         }
+    }
 
-    // Erase the letter, then draw the symbol.
+    // Erase the letter, then draw the symbol. Next to the rim only the
+    // letter's dark pixels go (a y's tail), the rim's shading stays.
     for (int y = disc.y; y < disc.y + disc.size; ++y)
         for (int x = disc.x; x < disc.x + disc.size; ++x) {
             uint8_t* p = at(x, y);
             const double d = std::hypot(x + 0.5 - cx, y + 0.5 - cy);
+            const uint8_t* c = colour[std::min(ring(x, y), kRings - 1)];
 
-            if (Face(p) && d < r - 1.5)
-                std::copy_n(colour[ring(x, y)], 3, p);
+            if (Face(p) && (d < r - 1.5 || (d < r - 0.5 && brightness(p) < 0.85 * sum(c))))
+                std::copy_n(c, 3, p);
         }
 
     const Mask& masks = kMasks[int(disc.symbol)];
