@@ -29,6 +29,16 @@ logic of frame N+1:
    It spins up to 20 ms for its next job instead of parking, because a
    parked thread's wake took 0.1-1.9 ms.
 
+An equipment preview's scene and the two players' split scene are not
+walked at the handoff: the draw thread runs their whole draw over the live
+scene graph, so such a frame waits for the draw before the next logic step
+(an equipment change once left a bucket node without its model). Before the
+layers after the scene, the game thread does what the scene leaves behind:
+the preview camera's reset and the root's global settings (camera 5's
+viewport, projection and scissor). Without them the layers' text kept the
+viewport from before the scene, or none after booting straight into the
+village, and replayed in the preview window.
+
 Translated code addresses guest memory through one fixed base, so the draw
 thread cannot be given its own copy of RAM. Every data flow between the
 next logic step and the draw had to be separated by hand: a development trace

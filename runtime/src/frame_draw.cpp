@@ -21,11 +21,13 @@
 // MH3 layer split line shows the time of each entry function and of the
 // font flush (0x8005CA08).
 #include "abi_bridge.h"
+#include "fatal.h"
 #include "frame_split.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
 
+#include <stdexcept>
 #include <utility>
 #ifdef MH3_DEVELOPMENT
 #include <algorithm>
@@ -131,6 +133,103 @@ void Layers(GuestCall& call, uint32_t first, uint32_t end) {
     call(DrawLayers, {first, end});
 }
 
+// The preview camera (an equipment preview, Ghidra): camera 5 of the local
+// player's set draws the hunter into the preview window and is put back to
+// the full view after it. Only the camera records change; the scene's
+// ScnRoot::SetGlbSettings applies them.
+constexpr uint32_t kSplitCameras = 0x8065B4D6; // u8: the two players' camera sets
+constexpr uint32_t kPlayerIndex = 0x8065AA87;  // s8: MyPlayerIndex
+constexpr uint32_t kViewAspect = 0x8065B4C8;   // f32; per player from 0x8065B504 with split cameras
+constexpr uint32_t kCameraRecords = 0xF8, kCameraRecordBytes = 268; // ScnRoot's CameraData
+enum : uint32_t {
+    kCameraFlags = 0x70,       // u32: 0x80 projection valid, 0x20 perspective, 0xF0 the type bits
+    kCameraProjection = 0xA8,  // u32 type 0 (perspective), f32 fovy, aspect, near, far
+    kCameraViewport = 0xDC,    // f32 x, y, width, height, near, far
+    kCameraScissor = 0xF4,     // u32 x, y, width, height
+};
+
+enum : uint32_t {
+    PreviewRectangle = 0x8021A6C8, // (s16* x, y, width, height): the layout's preview window
+    HudScaleX = 0x802D9FD4,
+    ViewCameraFovy = 0x802BE024,
+};
+
+constexpr uint32_t kHeightScale = 0x8079CAA0; // f32 448/480
+constexpr uint32_t kOne = 0x8079C9AC, kPreviewFovy = 0x8079CA64, kNear = 0x8079C9DC, kFar = 0x8079CAA4;
+
+// 0x8004737C: the local player's camera `index` (8 + index for player 0 and
+// 16 + index for player 1 with split cameras), ScnRoot::GetCamera.
+uint32_t PlayerCamera(uint32_t r13, uint32_t index) {
+    if (Memory::Read8(kSplitCameras))
+        index += int8_t(Memory::Read8(kPlayerIndex)) == 0 ? 8 : 16;
+
+    const uint32_t root = Memory::Read32(r13 + kRoot);
+
+    if (!root)
+        MH3_THROW(std::runtime_error("Preview camera without a scene root"));
+
+    return root + kCameraRecords + index * kCameraRecordBytes;
+}
+
+// 0x800750E0 Camera::SetViewport: the viewport, and the same rectangle as
+// the scissor (0x80075050, __cvt_fp2unsigned).
+void SetCameraViewport(uint32_t camera, const float rectangle[4]) {
+    for (uint32_t i = 0; i < 4; ++i) {
+        Memory::WriteFloat32(camera + kCameraViewport + 4 * i, rectangle[i]);
+        Memory::Write32(camera + kCameraScissor + 4 * i, rectangle[i] > 0 ? uint32_t(rectangle[i]) : 0);
+    }
+}
+
+// 0x80074ED0 Camera::SetPerspective.
+void SetCameraPerspective(uint32_t camera, float fovy, float aspect) {
+    Memory::Write32(camera + kCameraProjection, 0);
+    Memory::WriteFloat32(camera + kCameraProjection + 4, fovy);
+    Memory::WriteFloat32(camera + kCameraProjection + 8, aspect);
+    Memory::WriteFloat32(camera + kCameraProjection + 12, Memory::ReadFloat32(kNear));
+    Memory::WriteFloat32(camera + kCameraProjection + 16, Memory::ReadFloat32(kFar));
+    Memory::Write32(camera + kCameraFlags, (Memory::Read32(camera + kCameraFlags) & ~0xF0u) | 0x20);
+}
+
+// 0x802BBCB4: camera 5 views the preview window (the layout's rectangle in
+// 640x480 layout units, its height to the 448-line screen and its x to the
+// HUD's width) with a 30-degree perspective of the window's own aspect.
+void PreviewCameraSetupPort(CpuContext* cpu) {
+    GuestFrame frame(cpu, 0x20);
+    GuestCall call{cpu};
+    call(PreviewRectangle, {frame[0x8], frame[0xA], frame[0xC], frame[0xE]});
+    int16_t x = int16_t(Memory::Read16(frame[0x8])), y = int16_t(Memory::Read16(frame[0xA]));
+    int16_t width = int16_t(Memory::Read16(frame[0xC])), height = int16_t(Memory::Read16(frame[0xE]));
+    const float aspect = float(width) / float(height);
+    const float heightScale = Memory::ReadFloat32(kHeightScale);
+    y = int16_t(int32_t(float(y) * heightScale));
+    height = int16_t(int32_t(float(height) * heightScale));
+    call(HudScaleX);
+    const float widthScale = float(double(Memory::ReadFloat32(kOne)) / double(call.F1()));
+    x = int16_t(int32_t(float(x) * widthScale));
+    width = int16_t(int32_t(float(width) * widthScale));
+    const uint32_t camera = PlayerCamera(frame.Arg(13), 5);
+    const float rectangle[4] = {float(x), float(y), float(width), float(height)};
+    SetCameraViewport(camera, rectangle);
+    SetCameraPerspective(camera, Memory::ReadFloat32(kPreviewFovy), aspect);
+}
+
+// 0x802BBE88: camera 5 back to camera 4's viewport and the view camera's
+// perspective (its fovy, the view's aspect: 0x80040300).
+void PreviewCameraResetPort(CpuContext* cpu) {
+    GuestFrame frame(cpu, 0x10);
+    GuestCall call{cpu};
+    const uint32_t full = PlayerCamera(frame.Arg(13), 4), camera = PlayerCamera(frame.Arg(13), 5);
+    float rectangle[4];
+
+    for (uint32_t i = 0; i < 4; ++i)
+        rectangle[i] = Memory::ReadFloat32(full + kCameraViewport + 4 * i);
+
+    SetCameraViewport(camera, rectangle);
+    const uint32_t aspect = Memory::Read8(kSplitCameras) ? 0x8065B504 + 4 * uint32_t(int32_t(int8_t(Memory::Read8(kPlayerIndex)))) : kViewAspect;
+    call(ViewCameraFovy);
+    SetCameraPerspective(camera, call.F1(), Memory::ReadFloat32(aspect));
+}
+
 // The split draw (docs/optimizations/threading/pipelined-draw.md): the scene, with the preview
 // camera's setup and reset around it, is left to the draw thread.
 void (*sceneHandoff)() = nullptr;
@@ -162,6 +261,20 @@ void Scene(GuestCall& call, uint32_t r13, bool preview) {
             SceneQueue::Prepare(call.cpu);
 
         sceneHandoff();
+
+        // The draw thread walks a preview's or the two players' scene; the
+        // layers after it start, as in the original, from the state the scene
+        // leaves: the preview camera reset and the root's global settings
+        // (camera 5's full viewport, projection and scissor). Without them
+        // the game side's text kept the state from before the scene, or none
+        // (straight into the village): it drew in the preview window.
+        if (!prepared) {
+            if (preview)
+                call(PreviewCameraReset);
+
+            call(CalcRootView, {Memory::Read32(r13 + kRoot)});
+        }
+
         return;
     }
 
@@ -267,6 +380,18 @@ extern "C" void MH3_DrawFrame(CpuContext* cpu) {
     PortCheck::Call(cpu, "DrawFrame", func_80049308, DrawFrame);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80049308, MH3_DrawFrame, "DrawFrame");
+
+extern "C" void func_802BBCB4(CpuContext* cpu);
+extern "C" void MH3_PreviewCameraSetup(CpuContext* cpu) {
+    PortCheck::Call(cpu, "PreviewCameraSetup", func_802BBCB4, PreviewCameraSetupPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802BBCB4, MH3_PreviewCameraSetup, "PreviewCameraSetup");
+
+extern "C" void func_802BBE88(CpuContext* cpu);
+extern "C" void MH3_PreviewCameraReset(CpuContext* cpu) {
+    PortCheck::Call(cpu, "PreviewCameraReset", func_802BBE88, PreviewCameraResetPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802BBE88, MH3_PreviewCameraReset, "PreviewCameraReset");
 
 extern "C" void func_8004925C(CpuContext* cpu);
 extern "C" void MH3_DrawLayers(CpuContext* cpu) {

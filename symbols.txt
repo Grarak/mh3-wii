@@ -1585,6 +1585,14 @@
 802d9fd4 HudScaleX
 802be158 CameraSetPerspectivePosture
 802bbcb4 PreviewCameraSetup
+802bbe88 PreviewCameraReset
+802be024 ViewCameraFovy
+8021a6c8 PreviewRectangle
+8004737c PlayerCamera
+800750e0 CameraSetViewport
+80075050 CameraSetScissorRect
+800751d4 CameraGetViewport
+80040300 ViewAspect
 80047140 SplitCameraSetup
 80085cd4 G3dStateSetCamera
 # Controller reading (pad_input.cpp): PollControllers' per-channel pad update.
