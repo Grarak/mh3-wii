@@ -39,7 +39,7 @@ struct Move {
 };
 
 constexpr Move kMoves[] = {
-    {0x803C3FD0, kNoArgument, "803C3FD0"},
+    {0x803C3FD0, kNoArgument, "EventDemoDriver"},
     {0x80299F3C, kNoArgument, "80299F3C"},
     {0x80267D64, kNoArgument, "player_control_move"},
     {0x80143C78, kNoArgument, "80143C78"},
