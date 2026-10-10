@@ -11,7 +11,9 @@
 #include "cheats.h"
 
 #include "abi_bridge.h"
+#include "game_step.h"
 #include "guest_call.h"
+#include "port_check.h"
 #include "ppc_runtime.h"
 
 #include <algorithm>
@@ -614,10 +616,22 @@ extern "C" void MH3_CheatChargeLevel(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x802812C0, MH3_CheatChargeLevel, "CheatChargeLevel");
 
-// 0x80284430 (plw): the hammer's charge counts up to 999. Hammer max charge
-// always (US 0x802843D0, EU 0x80284434) sets 999 at once (with the charge
-// set below, in StepHunterCodes).
+// 0x80284430 (plw): the hammer's charge counts up to 999. The original
+// counts 1 a step: here the step's ticks, so a charge takes the same time at
+// any step length (its level is the count over the charge time, 0x802844D8).
+// Hammer max charge always (US 0x802843D0, EU 0x80284434) sets 999 at once
+// (with the charge set below, in StepHunterCodes).
 extern "C" void func_80284430(CpuContext* ctx);
+
+namespace {
+
+void HammerChargeStep(CpuContext* ctx) {
+    const uint32_t charge = ctx->gpr[3] + kCharge;
+    const int32_t count = int16_t(Memory::Read16(charge)) + int32_t(GameStep::Ticks());
+    Memory::Write16(charge, uint16_t(std::min(count, 999)));
+}
+
+} // namespace
 
 extern "C" void MH3_CheatHammerCharge(CpuContext* ctx) {
     if (On(Id::HammerMaxCharge) && !TwoHunters()) {
@@ -625,7 +639,7 @@ extern "C" void MH3_CheatHammerCharge(CpuContext* ctx) {
         return;
     }
 
-    func_80284430(ctx);
+    PortCheck::Call(ctx, "PlHammerChargeStep", func_80284430, HammerChargeStep);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80284430, MH3_CheatHammerCharge, "CheatHammerCharge");
