@@ -264,27 +264,32 @@ extern "C" void MH3_CheatWalk101(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80252C78, MH3_CheatWalk101, "CheatWalk101");
 
-// Enhanced dashing in the field's runs (the constants' only loads there):
+// Enhanced dashing in the field's runs (the constants' only loads there;
+// the step-scaled ports read them from guest memory):
 // 0x80252704 (motion 3): the motion speed 3 (not 1.25, US 0x80252738, EU
 // 0x8025279C) and the step 60 (not 5, US 0x80252880, EU 0x802528E4).
 extern "C" void func_80252704(CpuContext* ctx);
+
+void FieldRun3(CpuContext* ctx);  // field_player_actions.cpp: the step-scaled ports
+void FieldRun38(CpuContext* ctx);
+void FieldRun39(CpuContext* ctx);
 
 extern "C" void MH3_CheatRun3(CpuContext* ctx) {
     const bool on = On(Id::EnhancedDashing) && OneHunter();
     ConstantSwap speed(-15468, 3.0f, on);
     ConstantSwap step(-15256, 60.0f, on);
-    func_80252704(ctx);
+    PortCheck::Call(ctx, "FieldRun3", func_80252704, FieldRun3);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80252704, MH3_CheatRun3, "CheatRun3");
 
-// 0x80253750 (motion 39): the motion speed 10 (not 1.5, US 0x802537E0, EU
+// 0x80253750 (motion 39): the step 10 (not 1.5, US 0x802537E0, EU
 // 0x80253844).
 extern "C" void func_80253750(CpuContext* ctx);
 
 extern "C" void MH3_CheatRun39(CpuContext* ctx) {
     ConstantSwap speed(-15328, 10.0f, On(Id::EnhancedDashing) && OneHunter());
-    func_80253750(ctx);
+    PortCheck::Call(ctx, "FieldRun39", func_80253750, FieldRun39);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80253750, MH3_CheatRun39, "CheatRun39");
@@ -294,7 +299,7 @@ extern "C" void func_802539F8(CpuContext* ctx);
 
 extern "C" void MH3_CheatRun38(CpuContext* ctx) {
     ConstantSwap step(-15256, 32.0f, On(Id::EnhancedDashing) && OneHunter());
-    func_802539F8(ctx);
+    PortCheck::Call(ctx, "FieldRun38", func_802539F8, FieldRun38);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x802539F8, MH3_CheatRun38, "CheatRun38");

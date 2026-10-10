@@ -76,6 +76,8 @@
 //   0x802501B8  waiting in motion 1, then placed beside the spot 0x803BAA14
 //               finds (action 84)
 //   0x80253038  a run (motion 119) draining stamina; after 40 steps action 8
+//   0x80253750, 0x80252704, 0x802539F8  the dashes (motions 39, 3, 38):
+//               draining stamina, 1.5 or 5 a step forward while held
 //   0x80254A28  a jump (motion 15): a ledge catches it, or it lands
 //   0x80254F18  (plw, kind) climbing over or dropping off (motion 11, 12, 13)
 //   0x802813D0  (plw, kind) a charge in motion 1101, then action 31 (32, 33)
@@ -2403,6 +2405,195 @@ void Run119(CpuContext* ctx) {
     }
 }
 
+// The dashes' guest constants: their steps forward, which Enhanced dashing
+// swaps (cheat_movement.cpp), and 0x80277E10's two distances.
+constexpr uint32_t kDashStep5 = 0x8079C3C8, kDashStep1_5 = 0x8079C380, kDashRate = 0x8079C2F4, kWayAhead = 0x8079C3C0, kWayUp = 0x8079C3C4;
+
+// 0x80277E10 found a way ahead (a ledge to climb, unless +0x585): the
+// action ends facing the way it moves (action 0 of mode 2).
+bool DashFindsWay(const Player& p) {
+    const uint32_t plw = p.plw;
+
+    if (p.game.Call<0x80277E10>({plw, 0}, {Memory::ReadFloat32(kWayAhead), Memory::ReadFloat32(kWayUp)}) != 1 || Memory::Read8(plw + 0x585) != 0)
+        return false;
+
+    Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+    p.Next(2, 0, 12);
+    return true;
+}
+
+// The step forward along the facing +0x58, here times the step length.
+void DashMove(const Player& p, uint32_t step, float forward, bool withY) {
+    MoveTurned(p, step, forward);
+
+    for (uint32_t k = 0; k < 12; k += 4)
+        if (withY || k != 4)
+            Memory::WriteFloat32(p.plw + kPosition + k, Memory::ReadFloat32(p.plw + kPosition + k) + Memory::ReadFloat32(step + k));
+}
+
+// 0x80253750 (plw, alt): the dash on R (motion 39), draining stamina (1 a
+// step, stamina.cpp) and moving 1.5 a step forward. The local player's
+// steers by the stick and dashes on while it is tilted and command 0 (R)
+// holds; else out of stamina action 33 (157 when alt), or once +0x266 is
+// out action 3 (25). The original moved 1.5 each call, so at 60 steps a
+// second the dash was faster by the extra steps' 1.5 each.
+void Run39(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    const bool alt = frame.Arg(4) != 0;
+    game.Call<Vec3Ctor>({frame[8]});
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0, 0, 0);
+        game.Call<SetActFlags>({plw, 0x180});
+        game.Call<0x802785C8>({plw, 1});
+        p.Set(39, 0, 0);
+        game.Call<MotionAfterSet>({plw});
+        Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+        Memory::Write8(plw + kFlag614, 10);
+        game.Call<0x8027714C>({plw, alt ? 0x805BF7A4u : 0x805BE408u, 0});
+        Memory::Write8(plw + 0x314, Memory::Read8(plw + kFlag614));
+        break;
+    case 1:
+        game.Call<StaminaChange>({plw, uint32_t(-1)});
+        DashMove(p, frame[8], Memory::ReadFloat32(kDashStep1_5), false);
+
+        if (!p.Master())
+            break;
+
+        if ((game.Call<Nearby>({plw, 0}) & 0xFF) != 0) { // PlStickLevel
+            game.Call<0x8026A40C>({plw});                // PlSteerByStick
+
+            if (DashFindsWay(p) || Bit(plw + kCommandBits, 0))
+                break;
+        }
+
+        if (int16_t(Memory::Read16(plw + kCondition)) < 1)
+            p.Next(0, alt ? 157 : 33, 0);
+        else if (int8_t(Memory::Read8(plw + kFlag614)) < 1)
+            p.Next(1, alt ? 25 : 3, 0);
+
+        break;
+    }
+}
+
+// 0x80252704 (plw, blend): a dash (motion 3, with blend flags 30 when the
+// argument is set, at the motion speed the constant 1.25 gives) draining
+// stamina (1 a step). The local player's: out of stamina (0x802762B8)
+// action 15, on 0x80131AFC action 16; with the stick tilted and command 0
+// it steers and moves 5 a step forward (here times the step length);
+// else it steers by the stick, or once the stick and +0x266 are out action 3.
+void Run3(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    game.Call<Vec3Ctor>({frame[8]});
+    const auto stick = [&] { return game.Call<Nearby>({plw, 0}) & 0xFF; }; // PlStickLevel
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0, 0, 0);
+        game.Call<SetActFlags>({plw, 0x100});
+        p.SetX(3, 4, frame.Arg(4) ? 30 : 0);
+        Memory::Write32(plw + kMotionRate, Memory::Read32(kDashRate));
+        Memory::Write8(plw + kFlag614, 10);
+        game.Call<0x8027714C>({plw, 0x805BE408, 0});
+        Memory::Write8(plw + 0x314, 30);
+        game.Call<0x802785C8>({plw, 1});
+        Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+        break;
+    case 1:
+        game.Call<StaminaChange>({plw, uint32_t(-1)});
+
+        if (!p.Master())
+            break;
+
+        if (game.Call<0x802762B8>({plw, 150}) == 0) {
+            p.Next(1, 15, 0);
+        } else if (game.Call<0x80131AFC>({Memory::Read8(plw + 8)}) == 1) {
+            p.Next(1, 16, 0);
+            game.Call<0x802785C8>({plw, 1});
+        } else if (stick() == 0 || !Bit(plw + kCommandBits, 0)) {
+            if (int8_t(Memory::Read8(plw + kFlag614)) < 1 && stick() == 0)
+                p.Next(1, 3, 0);
+            else if (stick() != 0)
+                game.Call<0x8026A40C>({plw}); // PlSteerByStick
+        } else {
+            game.Call<0x8026A40C>({plw});
+
+            if (!DashFindsWay(p))
+                DashMove(p, frame[8], Memory::ReadFloat32(kDashStep5), true);
+        }
+
+        break;
+    }
+}
+
+// 0x802539F8 (plw, blend): motion 38 (blend 4 when the argument is 1),
+// draining stamina by 0x802539A4 (1 a step with cat skill 20, else 2). The
+// local player's: out of stamina action 15; without 0x80131AFC once +0x266
+// is out action 14; on command 4 with stamina over 149 action 62 (mode 0,
+// 4); with the stick tilted to a run it steers and moves 5 a step forward
+// (here times the step length), else once +0x266 is out action 3.
+void Run38(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    game.Call<Vec3Ctor>({frame[8]});
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0, 0, 0);
+        game.Call<SetActFlags>({plw, 0x180});
+
+        if (kind == 0)
+            p.Set(38, 0, 0);
+        else if (kind == 1)
+            p.Set(38, 4, 0);
+
+        Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+        Memory::Write8(plw + kFlag614, 10);
+        game.Call<0x8027714C>({plw, 0x805BE408, 0});
+        Memory::Write8(plw + 0x314, Memory::Read8(plw + kFlag614));
+        game.Call<0x802785C8>({plw, 1});
+        game.Call<0x802539A4>({plw});
+        break;
+    case 1:
+        if (!p.Master())
+            break;
+
+        game.Call<0x802539A4>({plw});
+
+        if (game.Call<0x802762B8>({plw, 150}) == 0) {
+            p.Next(1, 15, 0);
+        } else if (game.Call<0x80131AFC>({Memory::Read8(plw + 8)}) == 0 && int8_t(Memory::Read8(plw + kFlag614)) < 1) {
+            p.Next(1, 14, 0);
+            game.Call<0x802785C8>({plw, 1});
+        } else if (Bit(plw + kCommandBits, 4) && int16_t(Memory::Read16(plw + kCondition)) > 0x95) {
+            Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2));
+            p.Next(0, 62, 4);
+        } else if ((game.Call<Nearby>({plw, 0}) & 0xFF) < 2) { // PlStickLevel
+            if (int8_t(Memory::Read8(plw + kFlag614)) < 1)
+                p.Next(1, 3, 0);
+        } else {
+            game.Call<0x8026A40C>({plw}); // PlSteerByStick
+
+            if (!DashFindsWay(p))
+                DashMove(p, frame[8], Memory::ReadFloat32(kDashStep5), true);
+        }
+
+        break;
+    }
+}
+
 // 0x80254A28 (plw, kind): a jump (motion 15): kind 0 20 forward and 18 up,
 // kind 1 8 forward and -20 up (falling at -8/11), as the falls. Falling, a
 // ledge 0x80277CF8 finds within 180/30 catches the local player's (action 6,
@@ -3164,6 +3355,19 @@ void Walk101(CpuContext* ctx) {
 // The Walk101 port for the Enhanced-movement wrapper (cheat_movement.cpp).
 void FieldWalk101(CpuContext* ctx) {
     Walk101(ctx);
+}
+
+// The dashes' ports for the Enhanced-dashing wrappers (cheat_movement.cpp).
+void FieldRun3(CpuContext* ctx) {
+    Run3(ctx);
+}
+
+void FieldRun38(CpuContext* ctx) {
+    Run38(ctx);
+}
+
+void FieldRun39(CpuContext* ctx) {
+    Run39(ctx);
 }
 
 namespace {
