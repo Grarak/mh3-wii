@@ -9,11 +9,18 @@
 // at a 1-retrace budget with no movie frame drawn, else 2.
 //
 // Each call decoded one video frame, so the video followed the game's frame
-// rate while its audio streams in real time. The movies run at 29.97 fps, one
-// frame per tick of game time (two retraces): the port decodes the ticks of
-// this step (none on a short step: the current frame is drawn again), and
-// always the first frame after Movie_open clears the drawn flag. At the stock
-// step it decodes one frame per call, as the original.
+// rate while its sound, a stream the movie players start in slot 0 with the
+// movie (movie_bgm_load, PlayStream(0, ...)), plays in real time. Counting
+// the ticks of game time instead (the movies run at 29.97 fps, one frame per
+// tick) still let the picture fall behind whenever the game ran slower than
+// real time. The port decodes up to the frame the stream has played to (its
+// voice's position, the THP header's frame rate), at most 4 a call, and none
+// while the picture is ahead (the current frame is drawn again); without the
+// stream it decodes the ticks of the step. It always decodes the first frame
+// after Movie_open clears the drawn flag.
+//
+// MH3_TRACE=movie logs, once a second of the movie, the frame shown against
+// the stream's time and against the frame the tick count would show.
 //
 // The movie players (0x8021F62C, 0x8028C1CC, 0x8028D7DC, 0x803A16F0 and the
 // demo module's 0x8097EBE4) open a movie (Movie_open 0x80434344), poll
@@ -25,10 +32,14 @@
 #include "movie_draw.h"
 
 #include "abi_bridge.h"
+#include "audio/sound_engine.h"
+#include "dev_options.h"
 #include "game_step.h"
 #include "native_effect_draw.h"
 #include "memory.h"
 #include "port_check.h"
+#include <algorithm>
+#include <cstdio>
 #include <initializer_list>
 
 namespace {
@@ -41,6 +52,7 @@ enum : uint32_t {
     kRetraceStamp = 0x10, // u32 VI retrace count at the last draw
     kDrawResult = 0x14,   // u32 DrawFrame result
     kPendingFlag = 0x18,  // u32 cleared on every draw
+    kFrameRate = 0x6C,    // f32 the THP header's frames per second
     kFrameCount = 0x70,   // u32 the THP header's frame count
     kOpen = 0xB0,         // u32 nonzero while a movie is open
     kFrameDrawn = 0x1A4,  // u8
@@ -61,6 +73,60 @@ enum : uint32_t {
     OSPanic = 0x804CDD30,
 };
 
+constexpr uint32_t kSoundSlot = 0;
+constexpr uint32_t kMaxCatchUp = 4;
+
+// The open movie's clock: the slot's stream at its first frame and the
+// seconds it had played then (a stream left over from before the movie; 0
+// for the movie's own, which starts with it).
+struct MovieClock {
+    uint32_t stream = 0;
+    double origin = 0.0;
+    uint32_t tickFrames = 0; // the frame the tick count would show (trace)
+    double logged = 0.0;
+};
+
+MovieClock movieClock;
+
+void TraceMovie(uint32_t shown, double fps, double seconds) {
+    static const TraceFlag trace("movie");
+
+    if (!trace || seconds < movieClock.logged + 1.0)
+        return;
+
+    movieClock.logged = seconds;
+    std::fprintf(stderr, "MH3 movie: frame %u (%.3f s) sound %.3f s (%+.3f), ticks would show %u (%+.3f s)\n", shown, shown / fps, seconds,
+                 seconds - shown / fps, movieClock.tickFrames, seconds - movieClock.tickFrames / fps);
+}
+
+// The video frames to decode this call.
+uint32_t FramesToDecode() {
+    uint32_t stream = 0;
+    double played = 0.0;
+    const bool sound = SoundEngine::Stream::Played(kSoundSlot, stream, played);
+
+    if (!Memory::Read8(kMovie + kFrameDrawn)) {
+        movieClock = {};
+        movieClock.stream = sound ? stream : 0;
+        movieClock.origin = sound && played >= 0.5 ? played : 0.0;
+        return 1;
+    }
+
+    const uint32_t ticks = GameStep::Ticks();
+    movieClock.tickFrames += ticks;
+    const double fps = Memory::ReadFloat32(kMovie + kFrameRate);
+    const uint32_t count = Memory::Read32(kMovie + kFrameCount);
+
+    if (!sound || !(fps > 0.0) || count == 0)
+        return ticks;
+
+    const double seconds = played - (stream == movieClock.stream ? movieClock.origin : 0.0);
+    const int32_t shown = int32_t(Memory::Read32(kMovie + kDrawResult));
+    const int32_t target = std::min(int32_t(seconds * fps), int32_t(count - 1));
+    TraceMovie(uint32_t(shown), fps, seconds);
+    return target > shown ? uint32_t(std::min(target - shown, int32_t(kMaxCatchUp))) : 0;
+}
+
 } // namespace
 
 static void MovieDrawFrame(CpuContext* ctx) {
@@ -79,7 +145,7 @@ static void MovieDrawFrame(CpuContext* ctx) {
     };
 
     Memory::Write32(kMovie + kRetraceStamp, Memory::Read32(sda + uint32_t(kRetraceCount)));
-    const uint32_t frames = Memory::Read8(kMovie + kFrameDrawn) ? GameStep::Ticks() : 1;
+    const uint32_t frames = FramesToDecode();
 
     for (uint32_t i = 0; i < frames; ++i) {
         if (Memory::Read8(kResetting) == 0) {

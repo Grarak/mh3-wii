@@ -129,7 +129,7 @@ keeps it there), `queue=N` (two packets waiting for the render thread) and
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads]`
+`MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads][,movie]`
 
 The debug port turns each item on and off while the game runs (`trace ITEM on|off`, [debug port](debug-port.md)).
 
@@ -142,6 +142,7 @@ The debug port turns each item on and off while the game runs (`trace ITEM on|of
 | `loading` | each loading screen: every file the loader queues as it is first seen, and every drawn frame an `MH3 loading` line with the loader state, the queued files and bytes, the disc bytes read, in flight and learned, the conversions done and queued, and the progress bar's share ([loading progress](optimizations/assets/load-time-asset-conversion.md)) |
 | `net` | the network devices' requests, sockets, lookups and TLS sessions ([online](online.md)) |
 | `threads` | every guest thread switch ([online](online.md#guest-threads)) |
+| `movie` | once a second of each movie: the video frame shown against its sound stream's time and against the frame a count of game ticks would show (`MH3 movie` lines, movie_draw.cpp) |
 | `effect-objects` | each effect object update callback and kind the first time it runs, and every 900 ticks (30 s of game time) each kind's mean life in ticks (`MH3 effect object lives`, field_lists.cpp) |
 
 ### `MH3_MONSTER_CONTROL`: drive a monster

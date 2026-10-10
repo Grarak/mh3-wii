@@ -91,7 +91,7 @@ enum : uint32_t {
     kSplitRead = 0xD0,    // u8: the read stops at the loop end, the rest follows from the loop start
     kLastChunk = 0xD1,    // u8: the end of the data was read
     kChannels = 0xD3,     // s8
-    kGainCategory = 0xD4, // u16, low byte selects the stream gain
+    kGainCategory = 0xD4, // u16: the slot (PlayStream, GetStreamStatus); its low byte selects the stream gain
     kReadPending = 0xD6,  // u8
     kLooping = 0xD8,      // u8
     kLoops = 0xE0,        // u32
@@ -978,6 +978,29 @@ void Start(uint32_t manager, uint32_t object) {
     FlatWrite32(manager + kStreamCount, FlatRead32(manager + kStreamCount) + 1);
     Set(object, kStarted);
     FlatWrite8(record + kEnvelope + kEnvState, kEnvAttacking);
+}
+
+bool Played(uint32_t slot, uint32_t& object, double& seconds) {
+    for (object = FlatRead32(kActive + kNext); object != kActive; object = FlatRead32(object + kNext)) {
+        const uint32_t record = Record(object);
+
+        if (FlatRead8(object + kObjType) != kTypeStream || FlatRead16(record + kGainCategory) != slot)
+            continue;
+
+        const uint32_t info = FlatRead32(record + kInfo), rate = info ? FlatRead32(info + kInfoRate) : 0;
+
+        if (!FlatRead32(record + kLeft) || !rate)
+            return false;
+
+        // ADPCM frames are 8 bytes of 14 samples.
+        const uint32_t bytes = FlatRead32(record + kPlayed), f = Format(info);
+        const double samples = f < 2 ? bytes * (14.0 / 8.0) : f < 4 ? bytes / 2.0 : bytes;
+        seconds = samples / rate;
+        return true;
+    }
+
+    object = 0;
+    return false;
 }
 
 } // namespace SoundEngine::Stream

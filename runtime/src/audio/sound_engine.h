@@ -186,6 +186,11 @@ void Stop(CpuContext* cpu, uint32_t manager, uint32_t object);
 void Pause(uint32_t object);
 void Resume(uint32_t object);
 void Start(uint32_t manager, uint32_t object);
+
+// The seconds the stream of `slot` (PlayStream's slot, record +0xD4, as
+// GetStreamStatus 0x800ED618 finds it) has played, from its voice's position;
+// its object in `object`. False with no such stream or no voice yet.
+bool Played(uint32_t slot, uint32_t& object, double& seconds);
 } // namespace Stream
 
 } // namespace SoundEngine

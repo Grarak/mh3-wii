@@ -169,7 +169,7 @@ inline const DevOptions& ProfileOptions() {
 // object update callback and kind the first time it runs (field_lists.cpp),
 // the network devices' requests, sockets, lookups and TLS sessions
 // (ios_net.cpp) and every guest thread switch (guest_threads.cpp).
-inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads"});
+inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads", "movie"});
 
 inline const DevOptions& TraceOptions() {
     static const DevOptions options("MH3_TRACE", kTraceItems);
