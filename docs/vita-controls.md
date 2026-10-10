@@ -90,6 +90,28 @@ Why this layout:
   PS button belongs to the system); a PS TV controller has them on L2/R2 and
   L3 + R3.
 
+### The buttons on screen
+
+The game's prompts and controls pages draw the Classic Controller's buttons
+as round discs with a letter. On every host they show the Vita's buttons
+instead: a as ○, b as ×, y as □, + as START and − as SELECT (the words in
+3x5 pixel letters, which just fill the small discs' 15 px). The Classic Controller's x has no disc in the game's atlases. The
+Wii Remote's and Nunchuk's buttons (A, B, 1, 2, C, Z), L, R and the gold z
+(ZL/ZR) stay as they are.
+
+The atlases are `menu01` (the prompts' buttons, every language),
+`reward02` (the result screen), image 1 of `title_menu_*.tpl` (the controls
+page) and image 0 of `charmake_*.tpl` (character creation's "y Zoom").
+`runtime/src/button_glyphs.cpp` erases each letter from its disc, keeping
+the game's own disc, rim and shadow, and draws the symbol in the letters'
+grey: in the texture converter for the packed textures, and in the
+renderer for images decoded from guest memory (the TPLs, and atlases
+without a converted pack), told apart there by their format, size and the
+hash of their texels. The symbols are coverage masks that
+`scripts/vita_button_glyphs.py` draws and writes to
+`runtime/src/button_glyphs.inc`; they are part of the program, nothing of
+the disc or of any texture pack is shipped.
+
 The pad is read with `sceCtrlPeekBufferPositive2` (port 1 first, as SDL's
 Vita driver did, then port 0), so a PS TV controller drives the game too.
 One sample serves 4 ms of the game's several reads per frame. Code:

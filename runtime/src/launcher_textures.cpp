@@ -1,6 +1,7 @@
 // Startup conversion of external disc textures. The swizzle/CMPR routines
 // mirror the verified host packer in scripts/vita_texture_pack.cpp.
 #include "vita_launcher.h"
+#include "button_glyphs.h"
 #include "fatal.h"
 #include "disc_image.h"
 #include "launcher_texture_inventory.h"
@@ -306,10 +307,17 @@ std::vector<uint8_t> native(const TextureInventory::Texture& s, const uint8_t* r
     return output;
 }
 
+// The texels, with the Vita's buttons drawn over the Classic Controller's
+// (button_glyphs.cpp).
 aurora::gfx::ConvertedTexture Decode(const TextureInventory::Texture& s, std::span<const uint8_t> data) {
     const aurora::ArrayRef<uint8_t> bytes{data.data() + s.offset, s.bytes};
-    return s.entries ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries, {data.data() + s.palette, size_t(s.entries) * 2})
-                     : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+    auto converted = s.entries ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries, {data.data() + s.palette, size_t(s.entries) * 2})
+                               : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+
+    if (converted.format == aurora::gl::Format::RGBA8 && converted.data.size() >= size_t(s.width) * s.height * 4)
+        ButtonGlyphs::Patch(s.name, s.width, s.height, converted.data.data());
+
+    return converted;
 }
 
 bool Compressed(const TextureInventory::Texture& s) {

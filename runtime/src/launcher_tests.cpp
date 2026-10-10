@@ -1,4 +1,5 @@
 #include "vita_launcher.h"
+#include "button_glyphs.h"
 #include "disc_image.h"
 #include "load_progress.h"
 #include "launcher_convert.h"
@@ -254,7 +255,7 @@ void DiscTests(const std::filesystem::path& root) {
 void CheckTextures(const std::filesystem::path& root) {
     DiscImage disc(root, false);
     std::map<uint32_t, std::pair<unsigned, uint64_t>> formats;
-    unsigned textures = 0;
+    unsigned textures = 0, patched = 0;
 
     for (const auto& path : VitaLauncher::TextureInventory::SourceNames(disc.FileNames())) {
         const auto data = disc.ReadFile(path);
@@ -268,9 +269,17 @@ void CheckTextures(const std::filesystem::path& root) {
             CheckStatus(VitaLauncher::TexturePayloadBytes(s, data, disc.FileOffset(path), planned));
             Check(planned == converted.payload.size(), "planned texture bytes differ from the payload");
             const aurora::ArrayRef<uint8_t> bytes{data.data() + s.offset, s.bytes};
-            const auto source = s.entries ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries,
-                                                                                {data.data() + s.palette, size_t(s.entries) * 2})
-                                          : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+            auto source = s.entries ? aurora::gfx::convert_texture_palette(s.format, s.width, s.height, s.mips, bytes, GXTlutFmt(s.paletteFormat), s.entries,
+                                                                          {data.data() + s.palette, size_t(s.entries) * 2})
+                                    : aurora::gfx::convert_texture(s.format, s.width, s.height, s.mips, bytes);
+
+            // The atlases with the Classic Controller's buttons carry the Vita's.
+            if (source.format == aurora::gl::Format::RGBA8 && ButtonGlyphs::Patch(s.name, s.width, s.height, source.data.data())) {
+                ++patched;
+                std::cout << "button atlas " << path << " " << s.name << " " << s.width << "x" << s.height << " GX format " << s.format << " level 0 hash " << std::hex
+                          << ButtonGlyphs::SourceHash({data.data() + s.offset, size_t(s.width) * s.height * (s.format == GX_TF_RGBA8 ? 4 : 2)}) << std::dec << "\n";
+            }
+
             const auto& r = converted.record;
             const unsigned tolerance = r.format == 2 || r.format == 3 ? 11 : 0;
             size_t at = 0;
@@ -298,7 +307,7 @@ void CheckTextures(const std::filesystem::path& root) {
     for (const auto& [format, count] : formats)
         std::cout << "tag " << format << ": " << count.first << " textures, " << count.second / 1048576.0 << " MiB\n";
 
-    std::cout << textures << " textures sample as their source\n";
+    std::cout << textures << " textures sample as their source, " << patched << " atlases with the Vita's buttons\n";
 }
 } // namespace
 

@@ -9,6 +9,7 @@
 #include "native_frame_packet.h"
 #include "guest_worker.h"
 #include "asset_cache.h"
+#include "button_glyphs.h"
 #include "model_assets.h"
 #include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/adapters/model_pose_bridge.h"
@@ -254,6 +255,11 @@ void OpenNativeAssets() {
 #endif
                                                   ) /
                             "native-textures.bin";
+    // The Vita's buttons on the atlases decoded from guest memory.
+    aurora::set_native_texture_patch([](const aurora::NativeTextureSource& source, uint8_t* rgba) {
+        ButtonGlyphs::PatchSource(source.format, source.width, source.height, source.bytes, rgba);
+    });
+
     if (std::filesystem::exists(nativePack))
         aurora::gl::open_native_texture_pack(nativePack.string().c_str());
     else if (GameAssetCache()) {

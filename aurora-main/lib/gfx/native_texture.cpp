@@ -22,6 +22,8 @@
 
 namespace aurora {
 namespace {
+NativeTexturePatch s_patch = nullptr;
+
 // Budget resident texture storage separately from display/depth/offscreen
 // targets. GLES texel estimates exclude driver bookkeeping; GXM charges the
 // CDRAM image/palette layout. Backend fences retain evicted in-flight storage.
@@ -296,6 +298,8 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
   return bytes;
 }
 
+void set_native_texture_patch(NativeTexturePatch patch) { s_patch = patch; }
+
 namespace {
 bool SameSource(const NativeTextureSource& a, const NativeTextureSource& b) {
   return a.bytes.data() == b.bytes.data() && a.bytes.size() == b.bytes.size() && a.palette.data() == b.palette.data() && a.palette.size() == b.palette.size() &&
@@ -511,6 +515,9 @@ void bind(uint32_t unit, const NativeTextureSource& source, const NativeTextureS
 
     if (converted.data.empty() || converted.format != gl::Format::RGBA8)
       AURORA_THROW(std::runtime_error("Native texture conversion produced no RGBA image"));
+
+    if (s_patch)
+      s_patch(source, converted.data.data());
 
     texture = gl::create_texture(source.width, source.height, source.levels, converted.format, "Native producer texture");
     size_t offset = 0;

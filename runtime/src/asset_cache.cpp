@@ -36,8 +36,9 @@ constexpr const char* Version = "mh3-asset-cache 1\n";
 constexpr const char* ModelFormat = "mh3-model-packs 2\n";
 
 // The same for the texture packs (2: exact small formats,
-// docs/optimizations/assets/compressed-textures.md).
-constexpr const char* TextureFormat = "mh3-texture-packs 2\n";
+// docs/optimizations/assets/compressed-textures.md; 3: the Vita's buttons,
+// button_glyphs.cpp).
+constexpr const char* TextureFormat = "mh3-texture-packs 3\n";
 constexpr uint32_t RecordMagic = 0x5243334d; // "M3CR"
 constexpr unsigned Workers = 3;
 #ifdef __vita__
