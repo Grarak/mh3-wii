@@ -17,9 +17,8 @@ techniques carry over to other Wii games:
 
 ## Installing on the PS Vita
 
-1. A Vita or PS TV with HENkaku/Ensō (taiHEN).
-2. Install the kernel plugins [kubridge](https://github.com/bythos14/kubridge/releases)
-   (0.3.1 or newer) and [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker)
+1. Install the kernel plugins [kubridge](https://github.com/bythos14/kubridge/releases)
+   (0.3.1 or newer) and [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker/releases)
    under `*KERNEL` in `ux0:tai/config.txt` (or `ur0:tai/config.txt`), then
    reboot:
 
@@ -28,9 +27,17 @@ techniques carry over to other Wii games:
    ur0:tai/kubridge.skprx
    ur0:tai/CapUnlocker.skprx
    ```
+   or
+   ```
+   *KERNEL
+   ux0:tai/kubridge.skprx
+   ux0:tai/CapUnlocker.skprx
+   ```
 
-3. Install `mh3-vita.vpk` with VitaShell.
-4. Copy the disc image to `ux0:/data/mh3-wii/`.
+2. Install `mh3-vita.vpk` with VitaShell.
+3. Copy the disc image to `ux0:/data/mh3-wii/`.
+   Name of the file doesn't matter, as long it has the correct file extension (iso, rvz)
+   Make sure your ROM file is not corrupted, and that you have enough storage space left after putting the ROM there.
 
 The first start checks the image and writes about 7 MB of disc metadata to
 `ux0:/data/mh3-wii/disc/`; textures and models are converted while the game
