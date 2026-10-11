@@ -111,7 +111,7 @@ A hot or step-dependent guest function is replaced by C
 
 ## 2. Tick sites: inventory
 
-There are 442 entries in total. The ambient flutterer 0x803BC584 has none
+There are 514 entries in total. The ambient flutterer 0x803BC584 has none
 left: its native port (`ambient_flutter.cpp`) scales its angles and counts its
 waits itself.
 
@@ -119,18 +119,18 @@ waits itself.
 
 | Kind | Count | Class |
 |---|---:|---|
-| Countdown | 161 | discrete |
-| Countup | 139 | discrete |
-| CountdownPastZero | 69 | discrete |
-| CountupEvery | 5 (0x803BBB00, 0x802F3420 and 0x8028CB4C, N = 32; 0x80113DC4, N = 5; 0x801143E4, N = 30) | discrete |
+| Countdown | 170 | discrete |
+| Countup | 142 | discrete |
+| CountdownPastZero | 70 | discrete |
+| CountupEvery | 6 (0x803BBB00, 0x802F3420, 0x8028CB4C and 0x80258588, N = 32; 0x80113DC4, N = 5; 0x801143E4, N = 30) | discrete |
 | CountdownEvery | 2 (0x80264500, N = 90; 0x808F7A7C, N = 10) | discrete |
-| **Discrete total** | **376** | |
-| Advance | 39 | continuous |
-| PerStep | 28 | continuous |
+| **Discrete total** | **390** | |
+| Advance | 45 | continuous |
+| PerStep | 60 | continuous |
 | Rate | 11 | continuous |
 | EaseDivisor | 7 | continuous |
 | Decay | 1 | continuous |
-| **Continuous total** | **86** | |
+| **Continuous total** | **124** | |
 
 ### 2.2 By subsystem
 
@@ -146,6 +146,7 @@ group of the commented entry before them.
 | Effects (spawner, effect life/age, debris, markers) | 11 | 2 Countup, 1 CountdownPastZero | 7 Advance, 1 PerStep | effect age 0x80308050, life 0x8030805C; debris gravity 0x80308A00 (PerStep), spin 0x80308A18 (−2185); marker bob/spin 0x8031F728/0x8031F734; online markers 0x803C37D4…0x803C3A34 |
 | Objects (generic, volcano, village, desert, stage, 0x8035AF48, the field actor 0x8038595C, the field object step 0x8032C574) | 20 | 8 Countdown, 5 CountdownPastZero, 7 Countup | — | 0x8010A538, volcano 0x8011D02C/0x8011D31C/0x8037F62C (up to 450), desert 0x80367920/0x80368ACC/0x80369360/0x80369BA8, stage 0x802B4BA8; the field actor's wander wait 0x803A451C (its turns: `field_actor.cpp`) |
 | Uncommented (in the field player range) | 3 | 2 Countdown, 1 CountdownPastZero | — | 0x8024ACD0, 0x8024C224 (limit 1), 0x8024C314 |
+| Hunter moves and timers (the 2026-10-11 sweep of every weapon's actions and the hunter's evades and moves) | 52 | 9 Countdown, 3 Countup, 1 CountdownPastZero, 1 CountupEvery | 32 PerStep, 6 Advance | pushes applied once a step in a frame window: the rolls' Evade Distance push 0x80247C44/0x8025A2F0, the weapon-drawn evades 0x80248D54…0x80248FD8 (by weapon kind), the lance's step 0x80289130, the bowguns' side steps (push 0x8028ADC4/0x8028B100, move angle ±364 a step 0x8028ADA0…0x8028B0EC, Advance), the switch axe's turn ±128 0x8034DCCC/0x8034DCF0; the attack lunges K · cos(90° · frame / N) of 0x802556F8, 0x80255A50, 0x80255EFC, 0x8025779C, 0x80257BE0 (by weapon kind), sword and shield 0x802839AC and long sword 0x80331DA8; carrying 0x8025CAC0/0x8025CCB0, swims 0x80254010/0x802545B8 (and the swim dash wait 0x802544D8), the ledge push 0x80247D58, 0x8025D7DC, the velocity move 0x8026A548 (0x8026A54C…) and the knockback 0x8027AF98 (steps +0xB4, velocity +0x9C…); timers: idle 0x80246C64, +0x3F4 0x802581F0, +0x34 0x8025C3B8, the bound hunter's escape 0x802587FC with its mash cooldown 0x802587B8 and shake every 32 0x80258588, the long sword actions' input cooldowns (+7) 0x803323B0…0x803342E8 |
 | Grilling meat (PlGrillStep 0x8024AAB8) | 1 | 1 Countup | — | the cook time 0x8024AE74 (s16 +0x5B8) against the meat's raw/done/burnt steps |
 | Village and city NPCs | 4 | 1 Countdown, 2 Countup | 1 Advance (yaw +512) | 0x80201884, 0x80203744; the script's steps in an entry (s16 +0x20A, NpcScriptStep 0x801FFD04) 0x801FFE40/0x801FFE74. Their eased and timed turns are `npc_turn.cpp` (section 4) |
 | Talk windows (typing) | 2 | 2 Countup | — | the village talk (0x8021D258, VillageTalkTypeStep, 0x806ACC2C) and quest NPC talk (0x803C80F4, QuestNpcTalkStep, +0x10C) count steps and show steps / 2 + 1 letters (FontTypeText 0x8005CAC8) |

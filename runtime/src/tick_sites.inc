@@ -170,16 +170,59 @@
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
 {0x8021D258u, TickSite::Countup},           // village talk typing (8021D238): steps (0x806ACC2C); shows steps / 2 + 1 letters
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
+{0x80246C64u, TickSite::Countup},            // player idle (80246BE0): steps waiting (+0x28), the idle motion after 30
+{0x80247C44u, TickSite::PerStep},            // roll (802479B0): Evade Distance push per step in its frame window
+{0x80247D58u, TickSite::PerStep},            // ledge drop (80247D28): push off the edge per step
+{0x80248D54u, TickSite::PerStep},            // weapon-drawn evade (80248A38): lance push per step (r29 set)
+{0x80248DA4u, TickSite::PerStep},            // weapon-drawn evade: switch axe push per step (evade kind 0-1)
+{0x80248E70u, TickSite::PerStep},            // weapon-drawn evade: Evade Distance push per step (great sword, sword and shield, hammer, long sword)
+{0x80248EE4u, TickSite::PerStep},            // weapon-drawn evade: Evade Distance push per step (bowguns)
+{0x80248F58u, TickSite::PerStep},            // weapon-drawn evade: Evade Distance push per step (lance, switch axe)
+{0x80248FD8u, TickSite::PerStep},            // weapon-drawn evade: Evade Distance push per step (evade kind 2-4)
 {0x8024ACD0u, TickSite::CountdownPastZero},
 {0x8024AE74u, TickSite::Countup},           // grilling meat (PlGrillStep 8024AAB8): cook time (s16 +0x5B8) against the item's raw/done/burnt steps
 {0x8024C224u, TickSite::Countdown, 1},
 {0x8024C314u, TickSite::Countdown},
+{0x80254010u, TickSite::PerStep},            // swim (80253F4C): forward push per step
+{0x802544D8u, TickSite::Countdown},          // swim dash (80254428): steps before the next dash (u8 +6)
+{0x802545B8u, TickSite::PerStep},            // swim dash: forward push per step
+{0x80255804u, TickSite::PerStep},            // weapon attack lunge (802556F8): K * cos(...) per step until its frame
+{0x80255B60u, TickSite::PerStep},            // weapon attack lunge (80255A50): K * cos(...) per step
+{0x80255BB4u, TickSite::PerStep},
+{0x80255C08u, TickSite::PerStep},
+{0x802560CCu, TickSite::PerStep},            // weapon attack lunge (80255EFC): K * cos(...) per step
+{0x802578CCu, TickSite::PerStep},            // weapon attack lunge (8025779C): K * cos(...) per step
+{0x80257D0Cu, TickSite::PerStep},            // weapon attack lunge (80257BE0): K * cos(...) per step
+{0x802581F0u, TickSite::Countup},            // player action (8025810C): steps (s16 +0x3F4), on at 200
+{0x80258588u, TickSite::CountupEvery, 32},   // bound hunter (8025856C): steps (u8 +6), a shake every 32
+{0x802587B8u, TickSite::Countdown},          // bound hunter: mash cooldown (u8 +7, 3 steps)
+{0x802587FCu, TickSite::CountdownPastZero},  // bound hunter: steps left (s16 +0x3FA) before breaking free
 {0x80259EFCu, TickSite::PerStep},            // player anchored action (80259E3C, motion 422): offset z (+0x80) += this each step
+{0x8025A2F0u, TickSite::PerStep},            // roll (8025A190): Evade Distance push per step in its frame window
+{0x8025C3B8u, TickSite::Countup},            // player action (8025C2E0): steps (s16 +0x34), on at 150
+{0x8025CAC0u, TickSite::PerStep},            // carrying (8025C9D8): walk push per step
+{0x8025CCB0u, TickSite::PerStep},            // carrying (8025CB2C): dash push per step
+{0x8025D7DCu, TickSite::PerStep},            // player action (8025D720): y lowered per step
 {0x80264378u, TickSite::Countdown},          // player condition (80264334): countdown (s16 +0x3EE), fires at 0
 {0x80264500u, TickSite::CountdownEvery, 90}, // player condition: countdown (s16 +0x404), tested % 90 == 0
 {0x80264760u, TickSite::Countdown},          // player condition: countdown (s16 +0x462), fires at 0
+{0x8026A54Cu, TickSite::PerStep},            // player move (8026A548, from 80256694): velocity x (+0x78) per step
+{0x8026A55Cu, TickSite::PerStep},            // player move: velocity y (+0x7C) per step
+{0x8026A56Cu, TickSite::PerStep},            // player move: velocity z (+0x80) per step
 {0x8026B018u, TickSite::Countdown},          // player input (8026AF6C): input lock (s16 +0x352), also counted down by PlayerStepTimers
 {0x8026C0C4u, TickSite::Countdown},          // Classic commands (8026BFFC): chord window (u8 +0x137, from 2) for a second attack button
+{0x8027AF98u, TickSite::Countdown},          // knockback (8027AF98): steps left (s16 +0xB4)
+{0x8027AFB4u, TickSite::PerStep},            // knockback: velocity x (+0x9C) per step
+{0x8027AFC4u, TickSite::PerStep},            // knockback: velocity y (+0xA0) per step
+{0x8027AFD4u, TickSite::PerStep},            // knockback: velocity z (+0xA4) per step
+{0x802839ACu, TickSite::PerStep},            // sword and shield lunge (80283874): K * cos(...) per step
+{0x80289130u, TickSite::PerStep},            // lance step (80288ECC): push per step in its frame window
+{0x8028ADA0u, TickSite::Advance, -364},      // bowgun side step (8028AC78): move angle (+0x58), -364 per step
+{0x8028ADB0u, TickSite::Advance, 364},       // bowgun side step: move angle, +364 per step
+{0x8028ADC4u, TickSite::PerStep},            // bowgun side step: push per step
+{0x8028B0DCu, TickSite::Advance, -364},      // bowgun side step (8028AFB4): move angle (+0x58), -364 per step
+{0x8028B0ECu, TickSite::Advance, 364},       // bowgun side step: move angle, +364 per step
+{0x8028B100u, TickSite::PerStep},            // bowgun side step: push per step
 {0x8028CB4Cu, TickSite::CountupEvery, 32},  // FieldOnlineLoad (8028C730): steps waiting for the members (s16 +6), a sync message every 32
 {0x8028D064u, TickSite::Countdown},         // FieldOnlinePlay (8028CE14): input lock (s16 +4) of 30 steps at the online quest's start
 {0x802B4BA8u, TickSite::Countdown},          // stage (802B4B20): countdown (s16 +0x2FDC), fires at 0
@@ -239,7 +282,14 @@
 {0x8031F728u, TickSite::Advance, 512},      // marker effect (8031F574): bob phase (u16), +512 per step
 {0x8031F734u, TickSite::Advance, 255},      // marker effect: spin angle (+0x28), +255 per step
 {0x8032C5A8u, TickSite::Countdown},         // field object (step 8032C574 in the handler table 805DE1A0): random wait (s16 +0x22) of 30..329 steps before its next state
+{0x80331DA8u, TickSite::PerStep},            // long sword step (80331D68, each step from 80331E58): push per step
+{0x803323B0u, TickSite::Countdown},          // actor action (803321FC): input cooldown (u8 +7, 3 steps)
+{0x8033275Cu, TickSite::Countdown},          // actor action (80332684): input cooldown (u8 +7)
 {0x803327A4u, TickSite::CountdownPastZero}, // actor action countdown (+0x28), fires at <= 0
+{0x80332BECu, TickSite::Countdown},          // actor action (80332A40): input cooldown (u8 +7)
+{0x80333668u, TickSite::Countdown},          // actor action (803334B4): input cooldown (u8 +7)
+{0x803338ECu, TickSite::Countdown},          // actor action (80333740): input cooldown (u8 +7)
+{0x803342E8u, TickSite::Countdown},          // actor action (80334214): input cooldown (u8 +7)
 {0x80334330u, TickSite::CountdownPastZero},
 {0x803407D0u, TickSite::PerStep},           // fish (8034062C, appearing): scale x grown per step (target / 10)
 {0x803407E8u, TickSite::PerStep},           // fish appearing: scale y grown per step
@@ -264,6 +314,8 @@
 {0x80346E68u, TickSite::Countdown},          // object (80346AF0): countdown (s16 +0x20), fires at 0
 {0x80346F08u, TickSite::Countup},            // object: steps (s16 +0x22)
 {0x80346F18u, TickSite::Countup},            // object: steps (s16 +0x22), against 600
+{0x8034DCCCu, TickSite::Advance, 128},       // switch axe action (8034D980): facing (+0xA8), +128 per step
+{0x8034DCF0u, TickSite::Advance, -128},      // switch axe action: facing, -128 per step
 {0x8034E5ECu, TickSite::Countup},           // actor action step counter (+0x28)
 {0x8034EC68u, TickSite::Countup},
 {0x8034F5B4u, TickSite::Countdown},          // small monster (8034F588): s16 timer (+0x32E) in state 1
