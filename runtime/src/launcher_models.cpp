@@ -14,11 +14,18 @@
 #include "launcher_convert.h"
 #include "runtime/native/mh3_prepare_model.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <span>
 #include <stdexcept>
+#include <thread>
+#ifdef __vita__
+#include <psp2/kernel/sysmem.h>
+#endif
 
 namespace VitaLauncher {
 namespace {
@@ -77,21 +84,91 @@ struct File {
 
 // Workspace sized like the parity harness: per-source caps, one conversion at a time.
 struct ModelConverter::Workspace {
-    std::vector<uint8_t> metadata = std::vector<uint8_t>(MH3_PREPARE_MAX_METADATA), identities = std::vector<uint8_t>(MH3_PREPARE_MAX_IDENTITY);
-    std::vector<uint32_t> scratch = std::vector<uint32_t>((8u << 20) / 4);
-    std::vector<mh3_pack_layout> layouts = std::vector<mh3_pack_layout>(256);
-    std::vector<mh3_prepare_string> strings = std::vector<mh3_prepare_string>(4096);
-    std::vector<mh3_prepare_model_plan> plans = std::vector<mh3_prepare_model_plan>(4096);
-    std::vector<uint8_t> vertices = std::vector<uint8_t>(65536 * 128);
-    std::vector<mh3_corner_tree_node> tree = std::vector<mh3_corner_tree_node>(65536);
-    std::vector<uint16_t> corners = std::vector<uint16_t>(65536);
-    std::vector<mh3_pack_palette_batch> batches = std::vector<mh3_pack_palette_batch>(16384);
+    // The fixed arrays (~30 MiB), carved from one allocation: on the Vita a
+    // memory block of its own, as one piece that size no longer fits the libc
+    // heap once loads have broken it up.
+    std::span<uint8_t> metadata, identities;
+    std::span<uint32_t> scratch;
+    std::span<mh3_pack_layout> layouts;
+    std::span<mh3_prepare_string> strings;
+    std::span<mh3_prepare_model_plan> plans;
+    std::span<uint8_t> vertices;
+    std::span<mh3_corner_tree_node> tree;
+    std::span<uint16_t> corners;
+    std::span<mh3_pack_palette_batch> batches;
 
     // GPU skinning (docs/optimizations/rendering/gpu-skinning.md): every indexed shape whose
     // selectors allow it is converted skinned.
-    std::vector<mh3_skin_matrix> skinMatrices = std::vector<mh3_skin_matrix>(MH3_SKIN_MAX_MATRICES);
-    std::vector<mh3_skin_row> skinRows = std::vector<mh3_skin_row>(MH3_SKIN_MAX_ROWS);
-    std::vector<uint8_t> skinLookup = std::vector<uint8_t>(MH3_SKIN_MAX_MATRICES * 2);
+    std::span<mh3_skin_matrix> skinMatrices;
+    std::span<mh3_skin_row> skinRows;
+    std::span<uint8_t> skinLookup;
+
+    uint8_t* base = nullptr;
+    size_t bytes = 0;
+#ifdef __vita__
+    SceUID block = -1;
+#endif
+
+    // The arrays at `at` (0 to measure); returns their end.
+    uintptr_t Carve(uintptr_t at) {
+        const auto take = [&]<typename T>(std::span<T>& array, size_t count) {
+            at = (at + alignof(T) - 1) & ~uintptr_t(alignof(T) - 1);
+            array = {reinterpret_cast<T*>(at), count};
+            at += count * sizeof(T);
+        };
+
+        take(metadata, MH3_PREPARE_MAX_METADATA);
+        take(identities, MH3_PREPARE_MAX_IDENTITY);
+        take(scratch, (8u << 20) / 4);
+        take(layouts, 256);
+        take(strings, 4096);
+        take(plans, 4096);
+        take(vertices, 65536 * 128);
+        take(tree, 65536);
+        take(corners, 65536);
+        take(batches, 16384);
+        take(skinMatrices, MH3_SKIN_MAX_MATRICES);
+        take(skinRows, MH3_SKIN_MAX_ROWS);
+        take(skinLookup, MH3_SKIN_MAX_MATRICES * 2);
+        return at;
+    }
+
+    Workspace() {
+        bytes = (Carve(0) + 4095) & ~size_t(4095);
+
+        // The memory the other loads hold comes back as they finish: wait up to
+        // 2 s for room.
+        for (int tries = 0; !base && tries < 100; ++tries) {
+            if (tries)
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+#ifdef __vita__
+            block = sceKernelAllocMemBlock("MH3 model workspace", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, bytes, nullptr);
+            void* at = nullptr;
+
+            if (block >= 0 && sceKernelGetMemBlockBase(block, &at) >= 0)
+                base = static_cast<uint8_t*>(at);
+#else
+            base = static_cast<uint8_t*>(std::malloc(bytes));
+#endif
+        }
+
+        if (!base)
+            MH3Fatal("No memory for the model converter's workspace");
+
+        std::memset(base, 0, bytes);
+        Carve(reinterpret_cast<uintptr_t>(base));
+    }
+
+    ~Workspace() {
+#ifdef __vita__
+        sceKernelFreeMemBlock(block);
+#else
+        std::free(base);
+#endif
+    }
+
+    Workspace(const Workspace&) = delete;
+    Workspace& operator=(const Workspace&) = delete;
     Memory indices, gpu;
     mh3_prepare_model_workspace Get() {
         indices.data.clear();
