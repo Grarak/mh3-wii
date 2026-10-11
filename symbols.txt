@@ -999,6 +999,11 @@
 8025b15c FieldActionMotion210
 8028563c FieldActionSpin1103
 802869d4 FieldActionSpin1162
+80285144 FieldActionHammerSwing
+8028648c FieldActionHammerSwimSwing
+802866a0 FieldActionHammerSwimSwing1
+80284514 PlHammerChargeRelease
+80286e5c PlHammerActions
 802598c4 FieldActionFall
 8025cecc FieldActionFall2
 802501b8 FieldActionAwaitPlace

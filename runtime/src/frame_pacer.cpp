@@ -263,7 +263,9 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // MH3_TRACE=input: once per tick of game time, the input as the game read
     // it and what it moved: the field camera's yaw and pitch (current and
     // target), player 0's position and facing, and how many steps since the
-    // last line reported a key repeat (comparing step modes by game time).
+    // last line reported a key repeat (comparing step modes by game time),
+    // then its action (group.number.state), motion, motion frame and weapon type
+    // (+0x1D0: 7 great sword, 8 sword and shield, 9 hammer, ...).
     static const TraceFlag traceInput("input");
 
     if (traceInput) {
@@ -281,15 +283,19 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
             const uint32_t table = Memory::Read32(0x8065AB04);
             const uint32_t plw = table ? Memory::Read32(table + 16 + 2 * 4) : 0;
             const bool player = plw && Memory::Read8(plw);
+            const uint32_t chr = player ? Memory::Read32(plw + 0x13C) : 0; // MHchar: motion number +0x54, frame +0x78
+            const uint32_t motion = chr ? Memory::Read16(chr + 0x54) : 0;
+            const float frame = chr ? Memory::ReadFloat32(chr + 0x78) : 0.0f;
             std::fprintf(stderr,
                          "MH3 input: game %.3f s %.3f stick %d %d %d %d keys %04x camera yaw %u -> %u pitch %d -> %d player %.2f %.2f %.2f facing %u steps %u repeats %u %u "
-                         "commands %08x stick-camera %u ramp %d distance %u state %u\n",
+                         "commands %08x stick-camera %u ramp %d distance %u state %u action %u.%u.%u motion %u frame %.2f weapon %u\n",
                          GameStep::Elapsed(), GameStep::Scale(), int16_t(Memory::Read16(kPad + 0x8E)), int16_t(Memory::Read16(kPad + 0x90)), int16_t(Memory::Read16(kPad + 0x92)),
                          int16_t(Memory::Read16(kPad + 0x94)), Memory::Read16(kPad + 0x2C0), Memory::Read32(kCamera + 0x70) & 0xFFFF, Memory::Read32(kCamera + 0x68) & 0xFFFF,
                          int16_t(Memory::Read32(kCamera + 0x6C)), int16_t(Memory::Read32(kCamera + 0x64)), player ? Memory::ReadFloat32(plw + 0x3C) : 0.0f, player ? Memory::ReadFloat32(plw + 0x40) : 0.0f,
                          player ? Memory::ReadFloat32(plw + 0x44) : 0.0f, player ? Memory::Read32(plw + 0x58) & 0xFFFF : 0, steps, padRepeats, keyRepeats,
                          player ? Memory::Read32(plw + 0xDC) : 0, player ? Memory::Read8(plw + 0x5C5) : 0, int8_t(Memory::Read8(kCamera + 0xA1)), Memory::Read8(kCamera + 0x7C),
-                         player ? Memory::Read8(plw + 9) : 0);
+                         player ? Memory::Read8(plw + 9) : 0, player ? Memory::Read8(plw + 10) : 0, player ? Memory::Read16(plw + 12) : 0,
+                         player ? Memory::Read8(plw + 5) : 0, motion, frame, player ? Memory::Read8(plw + 0x1D0) : 0);
             steps = padRepeats = keyRepeats = 0;
         }
     }

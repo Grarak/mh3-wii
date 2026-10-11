@@ -72,6 +72,9 @@
 //               player's leaves after 300 steps
 //   0x8028563C, 0x802869D4  a spin after a charge (1103 / 1162): the charge
 //               level + 2 motion loops, steered, then 1104 / 1163
+//   0x80285144, 0x8028648C, 0x802866A0  the hammer's charged swings (on
+//               land, in water level 0 and 1); the lunging ones go forward
+//               18 or 27 · cos(90° · frame / 24) a step until frame 30
 //   0x802598C4, 0x8025CECC  falls (motion 56), landing by the steps fallen
 //   0x802501B8  waiting in motion 1, then placed beside the spot 0x803BAA14
 //               finds (action 84)
@@ -2045,6 +2048,153 @@ void Spin(CpuContext* ctx) {
 constexpr SpinParams kSpin1103{1103, 1104, 0, 0, 10, 11, 12, 13, 0x805CA2DC, 0x805CA308, 38.0};
 constexpr SpinParams kSpin1162{1162, 1163, 3, 3, 34, 31, 32, 33, 0x805CA414, 0x805CA440, -1.0};
 
+// The hammer's charged swings that lunge (0x80284514 picks them by the charge
+// level and whether the stick moves): while the motion is short of frame 30
+// (Pl_frame_check mode 2) the hunter goes forward 18 (27 for the moving level
+// 1 swing) times cos(90° · frame / 24), along x and z: the lunge fades out by
+// frame 24 and draws back a little to 30. The originals moved that much a
+// step, so at 60 steps a second the lunge went twice as far: here times the
+// step length. The constants are the guest's.
+constexpr uint32_t kLungeEnd = 0x8079C698, kZero = 0x8079C6A4, kLungeFar = 0x8079C6B8, kTwoPi = 0x8079C6BC, kQuarterTurn = 0x8079C6C0, kLungeFrames = 0x8079C6C4,
+                   kCircle = 0x8079C6C8, kLunge = 0x8079C6CC;
+
+void HammerLunge(const Player& p, uint32_t step, uint32_t distance) {
+    const auto f = [](uint32_t at) { return Memory::ReadFloat32(at); };
+
+    if (p.game.Call<FrameCheck>({p.plw, 2}, {f(kLungeEnd), f(kZero)}) != 1)
+        return;
+
+    float angle = float(double(Memory::ReadFloat32(p.Char() + 0x78)) / double(f(kLungeFrames))); // 0x8026A3B0, the motion's frame
+    angle = f(kTwoPi) * (f(kQuarterTurn) * angle);
+    angle = float(double(angle) / double(f(kCircle)));
+    p.game.Call<0x804644D0>({}, {angle}); // cosf
+    MoveTurned(p, step, float(double(f(distance)) * p.game.F1()));
+    Memory::WriteFloat32(p.plw + kPosition + 0, Memory::ReadFloat32(p.plw + kPosition + 0) + Memory::ReadFloat32(step + 0));
+    Memory::WriteFloat32(p.plw + kPosition + 8, Memory::ReadFloat32(p.plw + kPosition + 8) + Memory::ReadFloat32(step + 8));
+}
+
+// 0x80285144 (plw, kind): a charged swing on land, by kind: 0 level 1 (motion
+// 1135), 1 and 2 level 0 (1105) standing and moving, 3 level 1 moving (1135),
+// 4 1105 from the side (+0x445 counted). Kinds 0, 2 and 3 lunge; the swing
+// ends with its motion.
+void HammerSwing(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    const uint32_t kind = frame.Arg(4);
+    game.Call<Vec3Ctor>({frame[8]});
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+
+        if (kind == 0 || kind == 3) {
+            p.Set(1135, 4, 0);
+            game.Call<0x8027714C>({plw, 0x805CAAE0, 0});
+            game.Call<0x80284268>({plw, 14, 0});
+        } else if (kind == 1 || kind == 2) {
+            p.Set(1105, 4, 0);
+            game.Call<0x8027714C>({plw, 0x805CA9D8, 0});
+            game.Call<0x80284268>({plw, 6, 0});
+        } else if (kind == 4) {
+            p.Set(1105, 2, 0);
+            game.Call<0x8027714C>({plw, 0x805CAA5C, 0});
+            game.Call<0x80284268>({plw, 6, 0});
+            game.Call<0x8027E0AC>({plw});
+        }
+
+        p.Flags(0, 1, 0);
+        game.Call<0x80277CB4>({plw, 60});
+        break;
+    case 1:
+        if (kind == 0 || kind == 2 || kind == 3)
+            HammerLunge(p, frame[8], kind == 3 ? kLungeFar : kLunge);
+
+        if (p.Ended())
+            p.End(0, 4);
+        else
+            game.Call<0x80284654>({plw}, {-1.0});
+
+        break;
+    }
+}
+
+// 0x8028648C (plw, kind): a level 0 charged swing in water (flag 9 is 3),
+// standing (kind 0) or moving (1), or kind 2 (+0x445 counted): two motions
+// from 0x80284338's table (0x805CA3DC, 18 bytes a kind), then the moving
+// one's lunge until its motion ends.
+void HammerSwimSwing(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    const uint32_t kind = frame.Arg(4);
+    const uint32_t table = 0x805CA3DC + kind * 18, list = kind == 2 ? 0x805CB2A0 : 0x805CB1F0;
+    game.Call<Vec3Ctor>({frame[8]});
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(3, 1, 0);
+        game.Call<0x80284338>({plw, 0, table, list});
+
+        if (kind == 2)
+            game.Call<0x8027E0AC>({plw});
+
+        break;
+    case 1:
+        if (p.Ended()) {
+            p.NextState();
+            game.Call<0x80284338>({plw, 1, table, list});
+        }
+
+        break;
+    case 2:
+        if (kind == 1)
+            HammerLunge(p, frame[8], kLunge);
+
+        if (p.Ended())
+            p.End(3, 6);
+        else
+            game.Call<0x80284654>({plw}, {-1.0});
+
+        break;
+    }
+}
+
+// 0x802866A0 (plw, kind): a level 1 charged swing in water (motion 1158),
+// standing (kind 0) or moving (1, lunging), until its motion ends.
+void HammerSwimSwing1(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    const uint32_t kind = frame.Arg(4);
+    game.Call<Vec3Ctor>({frame[8]});
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(3, 1, 0);
+        p.Set(1158, 2, 0);
+        game.Call<0x8027714C>({plw, 0x805CB350, 0});
+        game.Call<0x80277CB4>({plw, 60});
+        game.Call<0x80284268>({plw, 23, 0});
+        break;
+    case 1:
+        if (kind == 1)
+            HammerLunge(p, frame[8], kLunge);
+
+        if (p.Ended())
+            p.End(3, 6);
+        else
+            game.Call<0x80284654>({plw}, {-1.0});
+
+        break;
+    }
+}
+
 // The falls (motion 56) of 0x802598C4 and 0x8025CECC. The velocity (+0x78,
 // y +0x7C, forward +0x80) takes the acceleration (+0x84..+0x8C) and moves the
 // player turned by the facing (+0x58); kind 1 starts at 8 forward and -10 up
@@ -3606,6 +3756,24 @@ extern "C" void MH3_FieldActionSpin1103(CpuContext* ctx) {
     PortCheck::Call(ctx, "FieldActionSpin1103", func_8028563C, Spin<kSpin1103>);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8028563C, MH3_FieldActionSpin1103, "FieldActionSpin1103");
+
+extern "C" void func_80285144(CpuContext* ctx);
+extern "C" void MH3_FieldActionHammerSwing(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionHammerSwing", func_80285144, HammerSwing);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80285144, MH3_FieldActionHammerSwing, "FieldActionHammerSwing");
+
+extern "C" void func_8028648C(CpuContext* ctx);
+extern "C" void MH3_FieldActionHammerSwimSwing(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionHammerSwimSwing", func_8028648C, HammerSwimSwing);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8028648C, MH3_FieldActionHammerSwimSwing, "FieldActionHammerSwimSwing");
+
+extern "C" void func_802866A0(CpuContext* ctx);
+extern "C" void MH3_FieldActionHammerSwimSwing1(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionHammerSwimSwing1", func_802866A0, HammerSwimSwing1);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802866A0, MH3_FieldActionHammerSwimSwing1, "FieldActionHammerSwimSwing1");
 
 extern "C" void func_802869D4(CpuContext* ctx);
 extern "C" void MH3_FieldActionSpin1162(CpuContext* ctx) {
