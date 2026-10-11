@@ -2041,6 +2041,10 @@
 800aa324 ParticleSendClosing
 800ab7a0 ParticleManagerDestroyFunc
 800aa330 ParticleDestroyFunc
+800aa804 ParticleInitialize
+800aa334 ParticleParameterCopy
+800aa764 EfAngleByte
+800aa7c0 Vec2Copy
 800a9938 EmitterForeachParticleManager
 800a52bc EffectForeachParticleManager
 800a5348 EffectForeachEmitterFrom
