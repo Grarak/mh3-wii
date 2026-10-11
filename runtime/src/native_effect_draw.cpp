@@ -1885,8 +1885,11 @@ extern "C" void MH3_EffectSmoothTubeSegment(CpuContext *cpu) {
 
     mh3_effect_tube_frame control[3], previous, current, frames[2];
 
-    for (uint32_t i = 0; i < 3; i++)
-        ReadTubeFrame(cpu->gpr[6 + i], control[i]);
+    // Constant register indexes: the translator's native contract scan sees
+    // only those, and its callers then store r6-r8.
+    ReadTubeFrame(cpu->gpr[6], control[0]);
+    ReadTubeFrame(cpu->gpr[7], control[1]);
+    ReadTubeFrame(cpu->gpr[8], control[2]);
 
     float weights[3];
     mh3_effect_spline_weights(0, weights);

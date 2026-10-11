@@ -43,6 +43,29 @@ public sealed class RuntimeNativeGuestEffectAnalyzerTests
     }
 
     [Fact]
+    public void ComputedRegisterSubscriptGetsTheCompleteContext()
+    {
+        // 0x800C1084 read its spline frames as ctx->gpr[6 + i]: the index
+        // starts with a digit, so neither the constant scan nor the computed
+        // check saw it, and the callers never stored r6-r8 (a crash under
+        // water on the Deserted Island).
+        using var fixture = new SourceFixture("""
+            extern "C" void Tube(CpuContext* ctx) {
+                const auto count = ctx->gpr[4];
+                for (uint32_t i = 0; i < 3; i++)
+                    Read(ctx->gpr[6 + i], count);
+            }
+            REGISTER_NATIVE_FUNCTION(0x800C1084, Tube);
+            """);
+
+        // It gets the EABI boundary: every argument register is stored.
+        var effects = RuntimeNativeGuestEffectAnalyzer.AnalyzeDirectory(fixture.Directory);
+        Assert.Equal(0x7F8u, effects.Contracts[0x800C1084u].GprReadBeforeWriteMask & 0x7F8u);
+        Assert.Contains(0x800C1084u, effects.ConservativeContracts);
+        Assert.DoesNotContain(0x800C1084u, effects.PreciseContracts);
+    }
+
+    [Fact]
     public void EscapedContextAndSchedulerCallsRemainExplicitFullBoundaries()
     {
         using var fixture = new SourceFixture("""

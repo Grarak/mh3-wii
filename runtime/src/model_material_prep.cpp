@@ -144,10 +144,11 @@ REGISTER_NATIVE_FUNCTION_AS(0x800881F0, MH3_ModelCurrentFog, "ModelCurrentFog");
 extern "C" void MH3_ModelCurrentLights(CpuContext* cpu) {
     const auto& slots = SelectNativeModelLightSet(0x80686368, cpu->gpr[3]);
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
+    const uint32_t outputs[]{cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7]}; // constant indexes for the contract scan
 
     for (unsigned i = 0; i < 4; i++)
-        if (cpu->gpr[4 + i])
-            Memory::Write32(cpu->gpr[4 + i], masks[i]);
+        if (outputs[i])
+            Memory::Write32(outputs[i], masks[i]);
     if (cpu->gpr[8])
         std::memcpy(GuestRange(cpu->gpr[8], 4), &slots.ambient, 4);
 }

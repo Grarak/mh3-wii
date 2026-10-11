@@ -420,10 +420,11 @@ const mh3_native_light_slots& SelectNativeModelLightSet(uint32_t state, uint32_t
 extern "C" void MH3_ModelLightSelect(CpuContext* cpu) {
     const auto& slots = SelectNativeModelLightSet(cpu->gpr[3], cpu->gpr[4]);
     const uint32_t masks[]{slots.diffuse_color, slots.diffuse_alpha, slots.specular_color, slots.specular_alpha};
+    const uint32_t outputs[]{cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->gpr[8]}; // constant indexes for the contract scan
 
     for (uint32_t i = 0; i < 4; i++)
-        if (cpu->gpr[5 + i])
-            Memory::Write32(cpu->gpr[5 + i], masks[i]);
+        if (outputs[i])
+            Memory::Write32(outputs[i], masks[i]);
     if (cpu->gpr[9]) {
         auto* destination = GuestRange(cpu->gpr[9], 4);
         destination[0] = slots.ambient.r;

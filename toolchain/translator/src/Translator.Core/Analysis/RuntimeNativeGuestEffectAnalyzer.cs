@@ -246,7 +246,9 @@ public static class RuntimeNativeGuestEffectAnalyzer
         AnalyzeScalar("ctr", (read, write) => { ctrRead |= read; ctrWrite |= write; });
         AnalyzeScalar("lr", (read, write) => { lrRead |= read; lrWrite |= write; });
 
-        if (Regex.IsMatch(body, $@"\b{escapedName}\s*->\s*(gpr|fpr)\s*\[\s*[^0-9\s]", RegexOptions.CultureInvariant) ||
+        // A computed subscript (`gpr[i]`, and also `gpr[6 + i]`, which starts
+        // with a digit) names registers the scan cannot list.
+        if (Regex.IsMatch(body, $@"\b{escapedName}\s*->\s*(gpr|fpr)\s*\[(?!\s*[0-9]+\s*\])", RegexOptions.CultureInvariant) ||
             Regex.IsMatch(body, $@"\b{escapedName}\s*->\s*(?!gpr\b|fpr\b|cr\b|xer\b|ctr\b|lr\b)", RegexOptions.CultureInvariant))
             flags |= GuestCallBoundaryFlags.RequiresCompleteContext;
 
