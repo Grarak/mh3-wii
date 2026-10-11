@@ -22,7 +22,7 @@
 // and GXM buffers have separate bounded memblocks; leave room for them within
 // the retail main-memory budget (with 112 MiB a retail Vita still had 62 MiB of
 // main RAM free in the field; the model converter's ~30 MiB workspace takes
-// its own block of that while it runs).
+// its own block of that from the first model conversion on).
 extern "C" {
 unsigned int _newlib_heap_size_user = 128 * 1024 * 1024;
 unsigned int _pthread_stack_default_user = 1024 * 1024;

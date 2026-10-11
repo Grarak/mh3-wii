@@ -283,8 +283,9 @@ struct AssetCache::Impl {
     size_t pendingBytes = 0;
     unsigned modelJobs = 0;
 
-    // Model workspaces not in use (~30 MiB each on the Vita): shared by the
-    // workers, so no more exist than model jobs run at once.
+    // Model workspaces not in use (~30 MiB each): shared by the workers, so no
+    // more exist than model jobs run at once, and kept once made, so a later
+    // load never waits for that much memory.
     std::vector<std::unique_ptr<ModelConverter>> spareConverters;
     bool stopping = false;
     std::vector<pthread_t> threads;
@@ -979,8 +980,6 @@ struct AssetCache::Impl {
         std::unique_lock guard(lock);
 
         for (;;) {
-            if (jobs.empty())
-                spareConverters.clear(); // Return the model workspaces while idle.
             auto next = jobs.end();
             Wait(guard, [&] {
                 next = std::find_if(jobs.begin(), jobs.end(), [&](const Job& j) { return j.kind != Kind::Models || modelJobs < ModelWorkers; });
