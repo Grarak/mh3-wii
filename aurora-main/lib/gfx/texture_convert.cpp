@@ -36,6 +36,11 @@ size_t calc_offset_rgba8(uint32_t x, uint32_t y, uint32_t width) {
  */
 ByteBuffer downscale(const uint8_t* src, uint32_t srcWidth, uint32_t srcHeight, uint32_t dstWidth, uint32_t dstHeight) {
   ByteBuffer dst{calc_size_rgba8(dstWidth, dstHeight)};
+
+  if (dst.empty()) {
+    return dst;
+  }
+
   auto* dstPixels = dst.data();
 
   for (uint32_t y = 0; y < dstHeight; ++y) {
@@ -130,6 +135,11 @@ bool arb_mip_check(uint32_t width, uint32_t height, uint32_t mips, ArrayRef<uint
   for (uint32_t mip = 0; mip + 1 < mips; ++mip) {
     const uint8_t* src = mip == 0 ? levels[mip].data : downscaled.data();
     downscaled = downscale(src, levels[mip].width, levels[mip].height, levels[mip + 1].width, levels[mip + 1].height);
+
+    if (downscaled.empty()) {
+      return false;
+    }
+
     totalDiff += avg_diff(levels[mip + 1].data, downscaled.data(), levels[mip + 1].width, levels[mip + 1].height);
   }
 
@@ -255,6 +265,10 @@ static ByteBuffer DecodeTiled(uint32_t width, uint32_t height, uint32_t mips, Ar
   const size_t texelCount = ComputeMippedTexelCount(width, height, mips);
   ByteBuffer buf{texelCount * sizeof(typename T::Target)};
 
+  if (buf.empty()) {
+    return buf;
+  }
+
   uint32_t w = width;
   uint32_t h = height;
   auto* targetMip = reinterpret_cast<typename T::Target*>(buf.data());
@@ -304,6 +318,11 @@ static ByteBuffer DecodeTiled(uint32_t width, uint32_t height, uint32_t mips, Ar
 template <TextureDecoder T>
 static ByteBuffer DecodeLinear(uint32_t width, ArrayRef<uint8_t> data) {
   ByteBuffer buf{width * sizeof(typename T::Target)};
+
+  if (buf.empty()) {
+    return buf;
+  }
+
   auto* target = reinterpret_cast<typename T::Target*>(buf.data());
   const auto* in = reinterpret_cast<const typename T::Source*>(data.data());
 
@@ -461,6 +480,10 @@ static ByteBuffer BuildRGBA8FromGCN(uint32_t width, uint32_t height, uint32_t mi
   const size_t texelCount = ComputeMippedTexelCount(width, height, mips);
   ByteBuffer buf{sizeof(RGBA8) * texelCount};
 
+  if (buf.empty()) {
+    return buf;
+  }
+
   uint32_t w = width;
   uint32_t h = height;
   auto* targetMip = reinterpret_cast<RGBA8*>(buf.data());
@@ -517,6 +540,10 @@ static ByteBuffer BuildRGBA8FromGCN(uint32_t width, uint32_t height, uint32_t mi
 static ByteBuffer BuildRGBA8FromCMPR(uint32_t width, uint32_t height, uint32_t mips, ArrayRef<uint8_t> data) {
   const size_t texelCount = ComputeMippedTexelCount(width, height, mips);
   ByteBuffer buf{sizeof(RGBA8) * texelCount};
+
+  if (buf.empty()) {
+    return buf;
+  }
 
   uint32_t h = height;
   uint32_t w = width;
@@ -676,7 +703,7 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
   const auto glFormat = to_gl_format(format);
   bool hasArbitraryMips = false;
 
-  if (glFormat == gl::Format::RGBA8 && mips > 1) {
+  if (glFormat == gl::Format::RGBA8 && mips > 1 && !converted.empty()) {
     hasArbitraryMips = arb_mip_check(width, height, mips, converted);
   }
 

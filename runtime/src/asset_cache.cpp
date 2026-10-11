@@ -282,6 +282,10 @@ struct AssetCache::Impl {
     std::deque<Job> jobs;
     size_t pendingBytes = 0;
     unsigned modelJobs = 0;
+
+    // Model workspaces not in use (~30 MiB each on the Vita): shared by the
+    // workers, so no more exist than model jobs run at once.
+    std::vector<std::unique_ptr<ModelConverter>> spareConverters;
     bool stopping = false;
     std::vector<pthread_t> threads;
 #ifdef MH3_DEVELOPMENT
@@ -972,12 +976,11 @@ struct AssetCache::Impl {
         Step& step = workerSteps[nextWorker++ % Workers];
         step.Set("idle", nullptr);
 #endif
-        std::unique_ptr<ModelConverter> converter;
         std::unique_lock guard(lock);
 
         for (;;) {
             if (jobs.empty())
-                converter.reset(); // Return the model workspace while idle.
+                spareConverters.clear(); // Return the model workspaces while idle.
             auto next = jobs.end();
             Wait(guard, [&] {
                 next = std::find_if(jobs.begin(), jobs.end(), [&](const Job& j) { return j.kind != Kind::Models || modelJobs < ModelWorkers; });
@@ -1018,8 +1021,16 @@ struct AssetCache::Impl {
                 continue;
             }
 
-            if (job.kind == Kind::Models)
+            std::unique_ptr<ModelConverter> converter;
+
+            if (job.kind == Kind::Models) {
                 ++modelJobs;
+
+                if (!spareConverters.empty()) {
+                    converter = std::move(spareConverters.back());
+                    spareConverters.pop_back();
+                }
+            }
 
             auto& s = *job.source;
             const auto data = s.data;
@@ -1066,6 +1077,10 @@ struct AssetCache::Impl {
                 s.modelsDone = true;
                 s.modelsUsable = usable;
                 --modelJobs;
+
+                if (converter)
+                    spareConverters.push_back(std::move(converter));
+
                 Announce(s);
             }
 

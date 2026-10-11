@@ -102,7 +102,15 @@ private:
 class ByteBuffer {
 public:
   ByteBuffer() noexcept = default;
-  explicit ByteBuffer(size_t size) noexcept : m_data(static_cast<uint8_t*>(calloc(1, size))), m_length(size), m_capacity(size) {}
+
+  // Empty when the allocation fails.
+  explicit ByteBuffer(size_t size) noexcept : m_data(static_cast<uint8_t*>(calloc(1, size))) {
+    if (m_data != nullptr) {
+      m_length = size;
+      m_capacity = size;
+    }
+  }
+
   explicit ByteBuffer(uint8_t* data, size_t size) noexcept : m_data(data), m_capacity(size), m_owned(false) {}
   ~ByteBuffer() noexcept {
     if (m_data != nullptr && m_owned) {

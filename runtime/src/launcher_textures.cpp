@@ -11,10 +11,12 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <map>
 #include <stdexcept>
+#include <thread>
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
 #endif
@@ -355,10 +357,17 @@ void Publish(const std::filesystem::path& temporary, const std::filesystem::path
 // passed ValidateSource and the inventory's checks.
 Status ConvertTexture(const TextureInventory::Texture& s, std::span<const uint8_t> data, uint64_t fileOffset, const std::string& path, TextureConversion& out) {
     MH3_RETURN_IF_ERROR(TextureInventory::ValidateSource(data, fileOffset, s));
-    const auto converted = Decode(s, data);
+    auto converted = Decode(s, data);
+
+    // The inventory's formats all decode, so an empty result is a full heap
+    // (the other workers' buffers, a model workspace): wait up to 2 s for room.
+    for (int tries = 0; converted.data.empty() && tries < 100; ++tries) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        converted = Decode(s, data);
+    }
 
     if (converted.data.empty())
-        return Status::Error("Texture conversion failed: " + path);
+        return Status::Error("Texture conversion failed (out of memory?): " + path);
 
     out = {};
     auto& r = out.record;
