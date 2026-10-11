@@ -23,6 +23,7 @@
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "frame_split.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -357,6 +358,9 @@ bool RunDeferredScene(CpuContext* cpu) {
         SceneQueue::DrawPrepared(cpu);
         return true;
     }
+
+    // A view held for a walked scene that never drew is not this scene's.
+    EffectStep::ReleaseView();
 
     GuestFrame frame(cpu, 0x10);
     GuestCall call{cpu};

@@ -426,6 +426,7 @@ void LaunchScenePrepare(CpuContext* cpu) {
         // both read its cached view matrix, which a read after logic makes.
         GuestFrame frame(cpu, 0x40);
         GuestCall{cpu}.Call<0x802BDCA4>({frame[0x10]}); // get_current_view_mtx
+        EffectStep::HoldView(frame[0x10]);
     }
 
     // Prepare's effect launch stays here (the draw thread's would not launch).

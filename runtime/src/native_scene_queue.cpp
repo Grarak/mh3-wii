@@ -489,6 +489,7 @@ void DrawPrepared(CpuContext* cpu) {
     MH3_SPLIT_SCOPE(MH3_SPLIT_SCENE);
     G3dNative::RunDeferredViewPasses();
     DrawPreparedSingle(cpu, true);
+    EffectStep::ReleaseView();
 }
 
 bool HoldsPrepared(uint32_t begin, uint32_t end) {

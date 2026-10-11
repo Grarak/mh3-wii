@@ -772,12 +772,25 @@ bool OnDrawThread() {
 
 Deferral deferral;
 
+// The view held for the walked scene (HoldView), while held.
+uint32_t heldView[12];
+bool viewHeld = false;
+
 // func_800D4910's work: the current view into the effect system's view matrix.
 void PutEffectView(CpuContext* cpu) {
     const uint32_t system = MemoryInline::FlatRead32(0x80796E30);
+    const uint32_t view = MemoryInline::FlatRead32(system + 0x29084);
 
-    if (const uint32_t view = MemoryInline::FlatRead32(system + 0x29084); view && MemoryInline::FlatRead32(system + 0x29074))
+    if (!view || !MemoryInline::FlatRead32(system + 0x29074))
+        return;
+
+    if (!viewHeld) {
         GuestCall{cpu}.Call<0x802BDCA4>({view}); // get_current_view_mtx
+        return;
+    }
+
+    for (uint32_t k = 0; k < 12; ++k)
+        MemoryInline::FlatWrite32(view + 4 * k, heldView[k]);
 }
 
 // Runs the collected calls (on the worker, or on the game thread at Join).
@@ -920,6 +933,17 @@ void NoteQueuedChildren(uint32_t count) {
 
 void SetOverlap(bool enabled) {
     overlap = enabled;
+}
+
+void HoldView(uint32_t view) {
+    for (uint32_t k = 0; k < 12; ++k)
+        heldView[k] = MemoryInline::FlatRead32(view + 4 * k);
+
+    viewHeld = true;
+}
+
+void ReleaseView() {
+    viewHeld = false;
 }
 #ifdef MH3_DEVELOPMENT
 

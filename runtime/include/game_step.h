@@ -73,6 +73,14 @@ void Join(CpuContext* cpu);
 // does nothing.
 void SetOverlap(bool enabled);
 
+// The walked scene the draw thread draws beside the next logic step, which
+// moves the camera: the game thread holds the view (12 floats at `view`) at
+// the walk's launch, and the scene's effect view (func_800D4910) puts the held
+// one instead of the live camera's, as the walk's models see it. The draw
+// thread releases it after the scene.
+void HoldView(uint32_t view);
+void ReleaseView();
+
 // Game thread, before any use of the effects (the effect ports, Effect::Calc,
 // effect creation, the world split's worker job): joins the previous step's
 // calculation if it still runs. Other threads return at once.
