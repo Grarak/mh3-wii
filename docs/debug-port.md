@@ -32,6 +32,7 @@ when one is an error.
 | `poke ADDR VALUE...` | writes 32-bit words (hex); `pokeh`, `pokeb`, `pokef` (decimal floats) |
 | `wait TICKS` | answers TICKS ticks of game time later (30 a second) |
 | `steps N` | answers N logic steps later |
+| `press BUTTONS [TICKS]` | holds the Classic buttons for TICKS ticks (3), then gives the controller back to the host input or playback, and answers: names joined by `+` (`a`, `b`, `x`, `y`, `l`, `r`, `zl`, `zr`, `plus`, `minus`, `home`, `up`, `down`, `left`, `right`; the Vita's circle is `a`, cross `b`) or hex Classic bits |
 | `shot PATH` | dumps the next drawn frame to PATH (BMP) |
 | `call ADDR [INT...] [f FLOAT...]` | calls the guest function at ADDR with the ints (hex) in r3.. and the floats in f1..; answers r3 and f1 |
 | `cheat NAME[=VALUE]` | turns on an integrated cheat (as `--cheat`) |

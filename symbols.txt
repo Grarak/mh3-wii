@@ -157,6 +157,14 @@
 800f2d3c DemoStreamsPrepare
 800f2e9c DemoStreamsReady
 800f2fd8 DemoStreamsPlay
+# Field load (FieldTaskOfflineLoad): the demos that may start. EventDemoSetup picks the
+# quest's records ({u8 area, u16 flag, u8 demo}, 0x80795BF8..0x80795D68), EventDemoRegister
+# skips a record whose flag is set (the demo was watched; flags 0x18A-0x18D always play)
+# or whose demo data is not loaded (0x806BE650[demo]).
+803c3ad4 EventDemoSetup
+803c3e80 EventDemoRegister
+803c41cc EventDemoMapEntries
+803c3dd8 GalleryDemoSetup
 804360a0 IsNetworkBusy
 # Timers that convert seconds to frames with the fps float at 0x8065B4D0.
 8012e9cc TimedCheckByKind
@@ -1810,7 +1818,9 @@
 8004d14c MoneyAdd
 8004d398 ResourcesAdd
 803090fc FundsPanelDraw
+# The save's flag bits at +0x47DA (story, star quests, watched demos, shops): test and set.
 8004d2e0 StarQuestUnlocked
+8004d274 SetSaveFlag
 8004d770 QuestCleared
 8004ddd8 RankClass
 8004df74 HunterRankStatus

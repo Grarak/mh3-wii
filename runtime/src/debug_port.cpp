@@ -20,6 +20,8 @@
 //   trace [ITEM on|off]       the MH3_TRACE items and which are on, or turn
 //                             one on or off
 //   movie skip                end the open movie (as at its last frame)
+//   press BUTTONS [TICKS]     hold Classic buttons (a+b, ..., or hex bits) for
+//                             TICKS ticks (3), then give the controller back
 //   online [state|circles|post QUEST [MEMBERS]|join N|accept [QUEST]|ready|unready|depart|auto SPEC]
 //                             the online screens' state, or a quest circle
 //                             command (online_auto.cpp)
@@ -29,6 +31,7 @@
 
 #include "abi_bridge.h"
 #include "cheats.h"
+#include "controller_host.h"
 #include "dev_options.h"
 #include "game_step.h"
 #include "gx_host.h"
@@ -37,6 +40,7 @@
 #include "movie_draw.h"
 #include "net/online_auto.h"
 #include "ppc_runtime.h"
+#include "runtime/native/mh3_classic_map.h"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -233,6 +237,9 @@ struct Session {
     double until = 0;
     uint32_t steps = 0;
     uint64_t step = 0;
+
+    // press: the controller goes back to the host when the command is done.
+    bool release = false;
 };
 
 std::string Format(const char* format, ...) __attribute__((format(printf, 1, 2)));
@@ -270,7 +277,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps shot call cheat trace movie online (docs/debug-port.md)";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press shot call cheat trace movie online (docs/debug-port.md)";
 
     if (word == "state")
         return State(s);
@@ -359,6 +366,42 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         s.busy = true;
         s.until = word == "wait" ? GameStep::Elapsed() + amount : 0;
         s.steps = word == "steps" ? uint32_t(amount) : 0;
+        return "";
+    }
+
+    if (word == "press") {
+        static const std::map<std::string, uint16_t> names{
+            {"a", MH3_CL_A}, {"b", MH3_CL_B}, {"x", MH3_CL_X}, {"y", MH3_CL_Y}, {"l", MH3_CL_L}, {"r", MH3_CL_R}, {"zl", MH3_CL_ZL}, {"zr", MH3_CL_ZR},
+            {"plus", MH3_CL_PLUS}, {"minus", MH3_CL_MINUS}, {"home", MH3_CL_HOME}, {"up", MH3_CL_UP}, {"down", MH3_CL_DOWN}, {"left", MH3_CL_LEFT},
+            {"right", MH3_CL_RIGHT},
+        };
+
+        double ticks = 3;
+
+        if (!(in >> arg))
+            return "error: press BUTTONS [TICKS]";
+
+        in >> ticks;
+        uint16_t buttons = 0;
+        std::istringstream parts(arg);
+
+        for (std::string part; std::getline(parts, part, '+');) {
+            char* end = nullptr;
+            const unsigned long bits = std::strtoul(part.c_str(), &end, 16);
+
+            if (const auto name = names.find(part); name != names.end())
+                buttons |= name->second;
+            else if (!part.empty() && !*end && bits <= 0xFFFF)
+                buttons |= uint16_t(bits);
+            else
+                return "error: no button " + part;
+        }
+
+        SetControllerTestSample(ClassicControllerSample{true, buttons});
+        s.busy = true;
+        s.release = true;
+        s.until = GameStep::Elapsed() + ticks;
+        s.steps = 0;
         return "";
     }
 
@@ -475,6 +518,11 @@ void Step(CpuContext* ctx) {
             return;
 
         s.busy = false;
+
+        if (s.release)
+            SetControllerTestSample(std::nullopt);
+
+        s.release = false;
         Answer(s.client, "ok");
     }
 
