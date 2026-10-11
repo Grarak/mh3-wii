@@ -256,9 +256,14 @@ uint32_t EventDemoTriggered(GuestCall& game, uint32_t entry) {
 }
 
 void EventDemoTriggeredPort(CpuContext* ctx) {
-    GuestFrame frame(ctx, 0x20);
-    GuestCall game{ctx};
-    ctx->gpr[3] = EventDemoTriggered(game, frame.Arg(3));
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        result = EventDemoTriggered(game, frame.Arg(3));
+    }
+
+    ctx->gpr[3] = result; // after the frame restored the GPRs
 }
 
 // 0x803C4914(demo): the demo's fades from kFadeTable (fade out 32 frames
@@ -394,9 +399,14 @@ uint32_t EventDemoUpdate(GuestCall& game, uint32_t entry) {
 }
 
 void EventDemoUpdatePort(CpuContext* ctx) {
-    GuestFrame frame(ctx, 0x10);
-    GuestCall game{ctx};
-    ctx->gpr[3] = EventDemoUpdate(game, frame.Arg(3));
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x10);
+        GuestCall game{ctx};
+        result = EventDemoUpdate(game, frame.Arg(3));
+    }
+
+    ctx->gpr[3] = result; // after the frame restored the GPRs
 }
 
 // 0x800F1E44() -> 1 once both stream files are read. The original tests the
@@ -412,9 +422,14 @@ uint32_t DemoStreamsLoaded(GuestCall& game) {
 }
 
 void DemoStreamsLoadedPort(CpuContext* ctx) {
-    GuestFrame frame(ctx, 0x20);
-    GuestCall game{ctx};
-    ctx->gpr[3] = DemoStreamsLoaded(game);
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        result = DemoStreamsLoaded(game);
+    }
+
+    ctx->gpr[3] = result; // after the frame restored the GPRs
 }
 
 // 0x800F2D3C(demo): asks the loaded streams to preload; demo 0x2C outside
@@ -493,9 +508,14 @@ uint32_t DemoStreamsReady(GuestCall& game, uint8_t id) {
 }
 
 void DemoStreamsReadyPort(CpuContext* ctx) {
-    GuestFrame frame(ctx, 0x20);
-    GuestCall game{ctx};
-    ctx->gpr[3] = DemoStreamsReady(game, uint8_t(frame.Arg(3)));
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        result = DemoStreamsReady(game, uint8_t(frame.Arg(3)));
+    }
+
+    ctx->gpr[3] = result; // after the frame restored the GPRs
 }
 
 // 0x800F2FD8(demo): starts the prepared streams.

@@ -488,7 +488,7 @@ uint32_t CellList(uint32_t ground, const Layer& l, int32_t x, int32_t y, int32_t
     return Memory::Read32(Memory::Read32(ground + l.lists) + index * 4);
 }
 
-void SweepQuery(CpuContext* cpu) {
+uint32_t SweepQueryResult(CpuContext* cpu) {
     GuestFrame frame(cpu, 0x40);
     GuestCall game{cpu};
     const uint32_t from = frame.Arg(3), to = frame.Arg(4), out = frame.Arg(5), layers = frame.Arg(6) & 0xFF;
@@ -503,8 +503,7 @@ void SweepQuery(CpuContext* cpu) {
     const uint32_t ground = kGrounds + (area & 0xFF) * 0x88;
 
     if (MemoryInline::FlatRead8(ground) == 0 && MemoryInline::FlatRead8(ground + 1) == 0) {
-        cpu->gpr[3] = uint32_t(-1);
-        return;
+        return uint32_t(-1);
     }
 
     const V3 a = Load(from), b = Load(to);
@@ -569,8 +568,7 @@ void SweepQuery(CpuContext* cpu) {
 
                         if (hit != 0) {
                             if (!collect) {
-                                cpu->gpr[3] = 1;
-                                return;
+                                return 1;
                             }
 
                             Memory::Write32(kTaken + taken++ * 4, triangle);
@@ -584,7 +582,12 @@ void SweepQuery(CpuContext* cpu) {
                 }
     }
 
-    cpu->gpr[3] = out ? game.Call<SweepResult>({record, out}) : 0;
+    return out ? game.Call<SweepResult>({record, out}) : 0;
+}
+
+void SweepQuery(CpuContext* cpu) {
+    const uint32_t result = SweepQueryResult(cpu); // the frame restored the GPRs
+    cpu->gpr[3] = result;
 }
 
 } // namespace
