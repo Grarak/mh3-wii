@@ -756,6 +756,7 @@
 800832f4 ScnRootCalcWorld
 8028cce0 FieldFrameUpdate
 802e55c0 FieldHudDraw
+802ed758 HudIconCycle
 8004925c DrawLayers
 80078b00 G3dDrawOpaXlu
 8007dc40 ScnMdlDrawOpa
