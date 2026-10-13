@@ -143,7 +143,10 @@ enum {
     MH3_SHADE_CONSTANT_HALF,
     MH3_SHADE_CONSTANT_REGISTER, /* index 0 prev, 1..3 reg0..2 */
     MH3_SHADE_CONSTANT_KONST,    /* index: GX konst colour or alpha selector */
-    MH3_SHADE_CONSTANT_FRACTION  /* index n: n/8 (16 = 2) */
+    MH3_SHADE_CONSTANT_FRACTION, /* index n: n/8 (16 = 2) */
+    /* 1 - a register or konst factor (LAYERS only: mix(a, zero, c) = a (1 - c)) */
+    MH3_SHADE_CONSTANT_REGISTER_COMPLEMENT,
+    MH3_SHADE_CONSTANT_KONST_COMPLEMENT
 };
 
 /* value = first * second; each factor optionally replicates its alpha. */

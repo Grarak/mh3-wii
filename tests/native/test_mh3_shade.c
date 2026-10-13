@@ -71,7 +71,8 @@ static float evaluate(const mh3_shade_material *m, const mh3_shade_draw *d,
 
     sum *= q->s[k];
     sum = sum < 0.f ? 0.f : sum > 1.f ? 1.f : sum;
-    return sum * (ras[k] * q->mv[k] + q->mc[k]);
+    sum *= ras[k] * q->mv[k] + q->mc[k];
+    return sum < 0.f ? 0.f : sum > 1.f ? 1.f : sum;
   }
 
   if (m->model == MH3_SHADE_MODULATE) {
@@ -385,6 +386,41 @@ static void sea_surface(void) {
   }
 }
 
+/* The Tundra cave ice (B-p02-kabeE, B-p02-jimen): colour =
+ * saturate(2 * ras * (c0 + t0 * Ka + mix(t1, 0, Ka))), alpha the same without
+ * c0 and the 2: the inverse konst weight and the scaled last multiply. */
+static float clamp01(float x) { return x < 0.f ? 0.f : x > 1.f ? 1.f : x; }
+
+static void cave_ice(void) {
+  mh3_native_material_state s;
+  base(&s);
+  stage(&s, 0, pass(15, 8, 14, 2, 0, 0), pass(7, 4, 6, 7, 0, 0), 0, 6, 31, 31);
+  stage(&s, 1, pass(8, 15, 14, 0, 0, 0), pass(4, 7, 6, 0, 0, 0), 1, 6, 31, 31);
+  stage(&s, 2, pass(15, 0, 10, 15, 1, 0), pass(7, 0, 5, 7, 0, 0), 255, 4, 12, 28);
+  s.color[1].rgba[0] = 40;
+  s.color[1].rgba[1] = 60;
+  s.color[1].rgba[2] = 80;
+  s.konst[3].rgba[3] = 170;
+  mh3_shade_material m;
+  assert(mh3_shade_classify(&s, &m) == MH3_SHADE_EXACT);
+  assert(m.model == MH3_SHADE_LAYERS && m.textures == 2);
+  mh3_shade_draw d;
+  memset(&d, 0, sizeof d);
+  mh3_shade_fill(&m, &s, &d);
+  const float tex[3][4] = {{0.6f, 0.3f, 0.9f, 0.5f}, {0.2f, 0.8f, 0.4f, 0.7f}},
+              ras[2][4] = {{0.1f, 0.2f, 0.15f, 0.6f}, {0.9f, 0.7f, 0.8f, 1.f}};
+  const float ka = 170.f / 255.f;
+
+  for (unsigned r = 0; r < 2; ++r) {
+    for (unsigned k = 0; k < 3; ++k) {
+      const float sum = clamp01(s.color[1].rgba[k] / 255.f + tex[0][k] * ka + tex[1][k] * (1.f - ka));
+      near(evaluate(&m, &d, 0, k, tex, ras[r]), clamp01(2.f * ras[r][k] * sum));
+    }
+
+    near(evaluate(&m, &d, 1, 3, tex, ras[r]), clamp01(tex[0][3] * ka + tex[1][3] * (1.f - ka)) * ras[r][3]);
+  }
+}
+
 static void approximations(void) {
   mh3_native_material_state s;
   base(&s);
@@ -547,6 +583,7 @@ int main(void) {
   overlay_alpha_map();
   layers();
   sea_surface();
+  cave_ice();
   split_color_alpha();
   approximations();
   fog();

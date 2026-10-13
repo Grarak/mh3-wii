@@ -1058,7 +1058,7 @@ double ClippedScreens(const float* a, const float* b, const float* c) {
 }
 
 // BASIC structure: per input source (0, T role, V; ' replicates alpha) with
-// offset + scale constants (Z 1 H R K F kind, index), then subtract/bias/scale.
+// offset + scale constants (Z 1 H R K F kind, r/k one minus R/K, index), then subtract/bias/scale.
 std::string BasicStructure(const mh3_shade_material& shading) {
     const auto constant = [](const mh3_shade_constant& c) {
         std::string out;
@@ -1067,7 +1067,7 @@ std::string BasicStructure(const mh3_shade_material& shading) {
             if (c.kind[i] == MH3_SHADE_CONSTANT_ONE)
                 continue;
 
-            out += "Z1HRKF"[c.kind[i] < 6 ? c.kind[i] : 0];
+            out += "Z1HRKFrk"[c.kind[i] < 8 ? c.kind[i] : 0];
 
             if (c.kind[i] >= MH3_SHADE_CONSTANT_REGISTER)
                 out += std::to_string(c.index[i]);

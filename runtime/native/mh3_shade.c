@@ -630,6 +630,27 @@ static int factor_of(const mh3_shade_term *t, mh3_shade_constant *out) {
     return 1;
 }
 
+/* 1 - k for a constant of one factor; 0 when k has two. */
+static int complement(const mh3_shade_constant *k, mh3_shade_constant *out) {
+    unsigned n;
+
+    if (static_eighths(k, &n)) {
+        if (n > 8)
+            return 0;
+
+        *out = constant(MH3_SHADE_CONSTANT_FRACTION, (uint8_t)(8 - n), 0);
+        return 1;
+    }
+
+    const unsigned f = k->kind[0] == MH3_SHADE_CONSTANT_ONE ? 1 : 0;
+
+    if (k->kind[1 - f] != MH3_SHADE_CONSTANT_ONE || (k->kind[f] != MH3_SHADE_CONSTANT_REGISTER && k->kind[f] != MH3_SHADE_CONSTANT_KONST))
+        return 0;
+
+    *out = constant(k->kind[f] == MH3_SHADE_CONSTANT_KONST ? MH3_SHADE_CONSTANT_KONST_COMPLEMENT : MH3_SHADE_CONSTANT_REGISTER_COMPLEMENT, k->index[f], k->alpha[f]);
+    return 1;
+}
+
 /* sum += x * y. Colour terms take colours, not replicated alphas. */
 static int layer_add(layer_sum *l, mh3_shade_term x, mh3_shade_term y, int alpha) {
     if (is_zero(&x) || is_zero(&y))
@@ -685,9 +706,16 @@ static int layer_channel(classifier *c, int alpha, unsigned count, layer_sum *l)
 
         /* prev * x ends the sum; the sum is saturated (its last stage clamps). */
         if (started && is_zero_argument(p->a, alpha) && is_zero_argument(p->d, alpha) && is_prev(p->b, alpha) != is_prev(p->c, alpha)) {
-            const mh3_shade_term x = argument(c, alpha, is_prev(p->b, alpha) ? p->c : p->b);
+            mh3_shade_term x = argument(c, alpha, is_prev(p->b, alpha) ? p->c : p->b);
 
-            if (p->scale || !pass_of(c, last, alpha)->clamp || x.source == MH3_SHADE_SOURCE_TEXTURE || (!alpha && x.replicate_alpha))
+            if (!pass_of(c, last, alpha)->clamp || x.source == MH3_SHADE_SOURCE_TEXTURE || (!alpha && x.replicate_alpha))
+                return 0;
+
+            /* Its scale (x2, x4, x1/2) goes into the factor. */
+            static const uint8_t eighths[4] = {8, 16, 32, 4};
+            const mh3_shade_constant scale = constant(MH3_SHADE_CONSTANT_FRACTION, eighths[p->scale & 3], 0);
+
+            if (p->scale && !merge(&x, &scale))
                 return 0;
 
             l->factor = x;
@@ -708,6 +736,12 @@ static int layer_channel(classifier *c, int alpha, unsigned count, layer_sum *l)
                 return 0;
         } else if (!alpha && p->c == COLOR_ONE) {
             if (!layer_add(l, argument(c, alpha, p->b), one, alpha))
+                return 0;
+        } else if (is_zero_argument(p->b, alpha)) {
+            const mh3_shade_term weight = argument(c, alpha, p->c);
+            mh3_shade_constant rest;
+
+            if (!is_constant(&weight) || !complement(&weight.offset, &rest) || !layer_add(l, argument(c, alpha, p->a), constant_term(rest), alpha))
                 return 0;
         } else if (!is_zero_argument(p->a, alpha) || !layer_add(l, argument(c, alpha, p->b), argument(c, alpha, p->c), alpha))
             return 0;
@@ -881,6 +915,14 @@ static void factor(const mh3_native_material_state *s, uint8_t kind, uint8_t ind
     case MH3_SHADE_CONSTANT_KONST:
         konst_value(s, index, out);
         break;
+    case MH3_SHADE_CONSTANT_REGISTER_COMPLEMENT:
+    case MH3_SHADE_CONSTANT_KONST_COMPLEMENT:
+        factor(s, kind == MH3_SHADE_CONSTANT_KONST_COMPLEMENT ? MH3_SHADE_CONSTANT_KONST : MH3_SHADE_CONSTANT_REGISTER, index, alpha, out);
+
+        for (unsigned i = 0; i < 4; ++i)
+            out[i] = 1.f - out[i];
+
+        return;
     default:
         out[0] = out[1] = out[2] = out[3] = index / 8.f;
         return;
@@ -1138,6 +1180,9 @@ static int gpu_split_constant(const mh3_shade_constant *c, gpu_split *out) {
 
             break;
         }
+        case MH3_SHADE_CONSTANT_REGISTER_COMPLEMENT:
+        case MH3_SHADE_CONSTANT_KONST_COMPLEMENT:
+            return 0;
         default:
             value = index / 8.f;
             break;
