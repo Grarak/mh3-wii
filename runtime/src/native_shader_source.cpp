@@ -607,6 +607,9 @@ void main() {
     alpha = (alpha_input(3, t0, t1, t2) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
     vec4 result = clamp(vec4(color, alpha), 0.0, 1.0);
 #endif
+#if RASTER_PRODUCT
+    result *= v_color0;
+#endif
 #if ALPHA_TEST
     if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
@@ -1157,6 +1160,11 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     alpha = (alpha_input(3, t0, t1, t2, v) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * alpha) * ALPHA_EQUATION.y;
     real4 result = saturate(real4(color, alpha));
 #endif
+#if RASTER_PRODUCT
+    // Two components wide, as MODULATE.
+    result.rg *= v.rg;
+    result.ba *= v.ba;
+#endif
 #if ALPHA_TEST
     if (result.a < ALPHA_RANGE.x || result.a >= ALPHA_RANGE.y)
         discard;
@@ -1238,7 +1246,7 @@ bool Dynamic(const NativeShaderVariant& variant) {
 std::string FragmentDefines(const NativeShaderFragmentKey& key) {
     return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("LAYERS", key.model == NativeShaderModel::Layers) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
            Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
-           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp);
+           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product);
 }
 
 std::string GlslVertex(const NativeShaderVertexKey& key) {
@@ -1301,6 +1309,7 @@ NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& var
     key.material_gpu = variant.material_gpu;
     key.dynamic = Dynamic(variant);
     key.basic_lerp = variant.basic_lerp && variant.model == NativeShaderModel::Basic && variant.textures > 0 && !variant.overlay;
+    key.raster_product = variant.raster_product && variant.model == NativeShaderModel::Basic && !variant.overlay;
 
     // LAYERS has no Material block (mh3_shade_gpu_bake) and no overlay.
     if (variant.model == NativeShaderModel::Layers)
@@ -1350,7 +1359,7 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
 
     for (unsigned model = 0; model < NativeShaderModelCount; ++model)
         for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
-            for (unsigned flags = 0; flags < 512; ++flags) {
+            for (unsigned flags = 0; flags < 1024; ++flags) {
                 v.model = NativeShaderModel(model);
                 v.textures = uint8_t(textures);
                 v.overlay = flags & 1;
@@ -1362,6 +1371,7 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
                 v.material_gpu = flags & 64;
                 v.dynamic = flags & 128;
                 v.basic_lerp = flags & 256;
+                v.raster_product = flags & 512;
                 const auto key = NativeShaderFragmentKeyOf(v);
 
                 if (seen.insert(key).second)
@@ -1425,7 +1435,7 @@ std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
     static constexpr const char* models[NativeShaderModelCount] = {"basic", "modulate", "layers"};
     return std::string(models[unsigned(key.model)]) + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
-           (key.basic_lerp ? "_lerp" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
+           (key.basic_lerp ? "_lerp" : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }
 
 std::string NativeShaderVertexName(NativeShaderVariant variant) {

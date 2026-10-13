@@ -112,6 +112,7 @@ typedef struct {
     uint8_t quality;
     unsigned stage;    /* stage whose arguments are being mapped */
     uint8_t exhausted; /* a stage sampled a map beyond the three roles */
+    uint8_t extended;  /* also fold mix(A, prev, C) and the raster product */
 } classifier;
 
 /* Texture role for a stage's (map, coordinate); allocates the next role. */
@@ -365,6 +366,53 @@ static int fold_layer(classifier *c, const mh3_pack_tev_pass *p, int alpha, mh3_
     return 1;
 }
 
+/* mix(A, prev, C) or mix(prev, B, C) over a single product prev: prev
+ * collapses into one term (texture or vertex times constants). */
+static int fold_mix(classifier *c, const mh3_pack_tev_pass *p, int alpha, mh3_shade_equation *eq) {
+    if (!c->extended || p->operation >= 2 || is_prev(p->c, alpha) || is_prev(p->d, alpha) || is_prev(p->a, alpha) == is_prev(p->b, alpha) || !product_form(eq) || eq->scale)
+        return 0;
+
+    mh3_shade_term prev;
+
+    if (!product(&eq->input[1], &eq->input[2], &prev))
+        return 0;
+
+    mh3_shade_equation next;
+    const uint8_t arguments[4] = {p->a, p->b, p->c, p->d};
+
+    for (unsigned i = 0; i < 4; ++i)
+        next.input[i] = is_prev(arguments[i], alpha) ? prev : argument(c, alpha, arguments[i]);
+
+    next.subtract = p->operation;
+    next.bias = p->bias;
+    next.scale = p->scale;
+    *eq = next;
+    c->quality |= MH3_SHADE_FOLDED;
+    return 1;
+}
+
+/* A last stage prev * ras over a clamped prev: BASIC's raster product. */
+static int fold_raster(classifier *c, const mh3_pack_tev_pass *p, int alpha) {
+    if (!c->extended || c->stage + 1 != c->state->tev_count || !c->stage || !pass_of(c, c->stage - 1, alpha)->clamp)
+        return 0;
+
+    if (p->operation || p->bias || p->scale || !is_zero_argument(p->a, alpha) || !is_zero_argument(p->d, alpha) || is_prev(p->b, alpha) == is_prev(p->c, alpha))
+        return 0;
+
+    const uint8_t other = is_prev(p->b, alpha) ? p->c : p->b;
+
+    if (other != (alpha ? ALPHA_RASTER : COLOR_RASTER))
+        return 0;
+
+    const mh3_shade_term x = argument(c, alpha, other);
+
+    if (x.source != MH3_SHADE_SOURCE_VERTEX)
+        return 0;
+
+    c->out->raster_product |= (uint8_t)(1u << alpha);
+    return 1;
+}
+
 /* Fold one channel's stages start..last into eq. */
 static void fold_channel(classifier *c, int alpha, unsigned start, unsigned count, mh3_shade_equation *eq) {
     if (pass_of(c, start, alpha)->output != 0 && start + 1 != count)
@@ -381,7 +429,7 @@ static void fold_channel(classifier *c, int alpha, unsigned start, unsigned coun
         if ((p->output != 0 && i + 1 != count) || passthrough(p, alpha))
             continue;
 
-        if (!fold_multiply(c, p, alpha, eq) && !fold_layer(c, p, alpha, eq))
+        if (!fold_multiply(c, p, alpha, eq) && !fold_layer(c, p, alpha, eq) && !fold_mix(c, p, alpha, eq) && !fold_raster(c, p, alpha))
             c->quality |= MH3_SHADE_FALLBACK;
     }
 }
@@ -477,7 +525,7 @@ static int overlay(classifier *c) {
 
     for (unsigned i = 0; i < s->tev_count && !exact; ++i) {
         mh3_shade_material trial = *m;
-        classifier t = {&trial, s, 0, 0, 0};
+        classifier t = {&trial, s, 0, 0, 0, 0};
         fold_channel(&t, 1, i, s->tev_count, &trial.alpha);
         exhausted |= t.exhausted;
 
@@ -788,13 +836,15 @@ static int layers(classifier *c, unsigned count) {
     return !(c->quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE));
 }
 
-uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_material *out) {
+/* One classification: the folds, else LAYERS. extended adds the folds that
+ * only replace a fallback (mh3_shade_classify). */
+static uint8_t classify_pass(const mh3_native_material_state *state, mh3_shade_material *out, int extended, int *layered) {
     reset(out, state);
-    classifier c = {out, state, 0, 0};
-    int layered = 0;
+    classifier c = {out, state, 0, 0, 0, 0};
     const unsigned count = state->tev_count ? (state->tev_count < 16 ? state->tev_count : 16) : 1;
 
     if (!overlay(&c)) {
+        c.extended = (uint8_t)extended;
         /* Try each start stage per channel; keep the first exact fold, else
          * the first stage that samples a texture. Textures are re-allocated
          * by the final attempt so roles only cover what is read. */
@@ -812,7 +862,7 @@ uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_mat
                     textured = s;
                 mh3_shade_material trial;
                 reset(&trial, state);
-                classifier t = {&trial, state, 0, 0};
+                classifier t = {&trial, state, 0, 0, 0, (uint8_t)extended};
                 fold_channel(&t, alpha, s, count, alpha ? &trial.alpha : &trial.color);
 
                 if (!(t.quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE)))
@@ -830,27 +880,52 @@ uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_mat
         if (c.quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE)) {
             mh3_shade_material trial;
             reset(&trial, state);
-            classifier t = {&trial, state, 0, 0, 0};
+            classifier t = {&trial, state, 0, 0, 0, 0};
 
             if (layers(&t, count)) {
                 *out = trial;
                 c.quality = t.quality;
-                layered = 1;
+                *layered = 1;
             }
+        }
+    }
+    /* The raster product multiplies colour and alpha together. */
+    if (out->raster_product && out->raster_product != 3) {
+        out->raster_product = 0;
+        c.quality |= MH3_SHADE_FALLBACK;
+    }
+
+    return c.quality;
+}
+
+uint8_t mh3_shade_classify(const mh3_native_material_state *state, mh3_shade_material *out) {
+    const unsigned count = state->tev_count ? (state->tev_count < 16 ? state->tev_count : 16) : 1;
+    int layered = 0;
+    uint8_t quality = classify_pass(state, out, 0, &layered);
+
+    if (quality & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE)) {
+        mh3_shade_material trial;
+        int trial_layered = 0;
+        const uint8_t extended = classify_pass(state, &trial, 1, &trial_layered);
+
+        if (!(extended & (MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE))) {
+            *out = trial;
+            quality = extended;
+            layered = trial_layered;
         }
     }
 
     for (unsigned i = 0; i < count; ++i)
         if (state->tev[i].indirect_matrix)
-            c.quality |= MH3_SHADE_INDIRECT;
-    if (!(c.quality & (MH3_SHADE_SWAP | MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE | MH3_SHADE_INDIRECT | MH3_SHADE_CHANNEL1)))
-        c.quality |= MH3_SHADE_EXACT;
+            quality |= MH3_SHADE_INDIRECT;
+    if (!(quality & (MH3_SHADE_SWAP | MH3_SHADE_FALLBACK | MH3_SHADE_COMPARE | MH3_SHADE_INDIRECT | MH3_SHADE_CHANNEL1)))
+        quality |= MH3_SHADE_EXACT;
 
-    out->quality = c.quality;
-    out->model = layered ? MH3_SHADE_LAYERS : modulate_channel(out, &out->color, 0) && modulate_channel(out, &out->alpha, 1) ? MH3_SHADE_MODULATE : MH3_SHADE_BASIC;
-    out->pure_modulate = (c.quality & MH3_SHADE_EXACT) && out->model == MH3_SHADE_MODULATE && out->textures == 1 && !out->overlay &&
+    out->quality = quality;
+    out->model = layered ? MH3_SHADE_LAYERS : !out->raster_product && modulate_channel(out, &out->color, 0) && modulate_channel(out, &out->alpha, 1) ? MH3_SHADE_MODULATE : MH3_SHADE_BASIC;
+    out->pure_modulate = (quality & MH3_SHADE_EXACT) && out->model == MH3_SHADE_MODULATE && out->textures == 1 && !out->overlay &&
                          pure_modulate_channel(&out->color) && pure_modulate_channel(&out->alpha);
-    return c.quality;
+    return quality;
 }
 
 /* ---- Per-draw resolution ---- */

@@ -93,7 +93,12 @@ static float evaluate(const mh3_shade_material *m, const mh3_shade_draw *d,
   if (!alpha)
     b += d->fragment.overlay[k] * tex[1][k] * tex[2][k];
 
-  return (dd + e[0] + e[2] * (a + (b - a) * c)) * e[1];
+  const float out = (dd + e[0] + e[2] * (a + (b - a) * c)) * e[1];
+
+  if (!m->raster_product)
+    return out;
+
+  return (out < 0.f ? 0.f : out > 1.f ? 1.f : out) * ras[k];
 }
 
 /* Material uniforms in GPU memory: the baked block and the animated palette
@@ -421,6 +426,36 @@ static void cave_ice(void) {
   }
 }
 
+/* The Loc Lac city walls: a baked shadow mask (texture 1) blends the lit
+ * texture toward the shadow colour c0, then the vertex colour multiplies:
+ * colour = ras * 2 * mix(c0, t0 * K3a, t1), alpha = (t0 K3a + t1 (1 - K3a)) * ras. */
+static void city_wall(void) {
+  mh3_native_material_state s;
+  base(&s);
+  stage(&s, 0, pass(15, 8, 14, 15, 0, 0), pass(7, 4, 6, 7, 0, 0), 0, 6, 31, 31);
+  stage(&s, 1, pass(2, 0, 8, 15, 1, 0), pass(4, 7, 6, 0, 0, 0), 1, 6, 31, 31);
+  stage(&s, 2, pass(15, 10, 0, 15, 0, 0), pass(7, 5, 0, 7, 0, 0), 255, 4, 12, 28);
+  s.color[1].rgba[0] = 40;
+  s.color[1].rgba[1] = 60;
+  s.color[1].rgba[2] = 80;
+  s.konst[3].rgba[3] = 170;
+  mh3_shade_material m;
+  assert(mh3_shade_classify(&s, &m) == (MH3_SHADE_EXACT | MH3_SHADE_FOLDED));
+  assert(m.model == MH3_SHADE_BASIC && m.textures == 2 && m.raster_product == 3);
+  const float tex[3][4] = {{0.6f, 0.3f, 0.9f, 0.5f}, {0.2f, 0.8f, 0.4f, 0.7f}},
+              ras[2][4] = {{0.1f, 0.2f, 0.15f, 0.6f}, {0.9f, 0.7f, 0.8f, 1.f}};
+  const float ka = 170.f / 255.f;
+
+  for (unsigned r = 0; r < 2; ++r) {
+    for (unsigned k = 0; k < 3; ++k) {
+      const float c0 = s.color[1].rgba[k] / 255.f;
+      check(&m, &s, 0, k, tex, ras[r], clamp01(2.f * (c0 + (tex[0][k] * ka - c0) * tex[1][k])) * ras[r][k]);
+    }
+
+    check(&m, &s, 1, 3, tex, ras[r], clamp01(tex[0][3] * ka + tex[1][3] * (1.f - ka)) * ras[r][3]);
+  }
+}
+
 static void approximations(void) {
   mh3_native_material_state s;
   base(&s);
@@ -584,6 +619,7 @@ int main(void) {
   layers();
   sea_surface();
   cave_ice();
+  city_wall();
   split_color_alpha();
   approximations();
   fog();

@@ -194,8 +194,20 @@ const ShadeEntry& ClassifyRecord(uint64_t key, const mh3_native_material_state& 
     out.key = key;
     const uint8_t quality = mh3_shade_classify(&state, &out.shading);
 #ifdef MH3_DEVELOPMENT
-    if (!(quality & MH3_SHADE_EXACT))
+    if (!(quality & MH3_SHADE_EXACT)) {
         std::fprintf(stderr, "[shade] approximated material structure %016llx quality %02x stages %u\n", (unsigned long long)key, quality, state.tev_count);
+
+        // Its stages: colour and alpha (a b c d op bias scale clamp out), the
+        // texture map/coordinate, raster channel and konst selectors.
+        for (uint32_t i = 0; i < state.tev_count && i < 16; ++i) {
+            const auto& t = state.tev[i];
+            const auto& c = t.color;
+            const auto& a = t.alpha;
+            std::fprintf(stderr, "[shade]   stage %u color %x %x %x %x op %u bias %u scale %u clamp %u out %u alpha %x %x %x %x op %u bias %u scale %u clamp %u out %u map %u coord %u ras %u kc %u ka %u\n", i,
+                         c.a, c.b, c.c, c.d, c.operation, c.bias, c.scale, c.clamp, c.output, a.a, a.b, a.c, a.d, a.operation, a.bias, a.scale, a.clamp, a.output, t.texture_map,
+                         t.texture_coordinate, t.raster_channel, t.konst_color, t.konst_alpha);
+        }
+    }
 #else
     (void)quality;
 #endif
@@ -318,7 +330,7 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 1 | uint64_t(variant.lights) << 3 | uint64_t(variant.model) << 7 | uint64_t(variant.textures) << 8 |
                          uint64_t(variant.overlay) << 10 | uint64_t(variant.alpha_test) << 11 | uint64_t(variant.fog) << 12 | uint64_t(variant.texgen[0]) << 13 | uint64_t(variant.texgen[1]) << 16 |
                          uint64_t(variant.texgen[2]) << 19 | uint64_t(variant.linear_fog) << 22 | uint64_t(variant.pure_modulate) << 23 | uint64_t(variant.target_alpha_one) << 24 |
-                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26 | uint64_t(variant.basic_lerp) << 27 | uint64_t(variant.skinned) << 28;
+                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26 | uint64_t(variant.basic_lerp) << 27 | uint64_t(variant.skinned) << 28 | uint64_t(variant.raster_product) << 29;
 
     if (shade.lastProgram && key == shade.lastProgramKey)
         return *shade.lastProgram;
@@ -587,6 +599,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : shading.model == MH3_SHADE_LAYERS ? NativeShaderModel::Layers : NativeShaderModel::Basic;
     variant.pure_modulate = shading.pure_modulate != 0;
     variant.basic_lerp = BasicLerp(shading);
+    variant.raster_product = shading.raster_product != 0;
     variant.target_alpha_one = aurora::gl::shaded_target_alpha_one();
     variant.textures = shading.textures;
     variant.overlay = shading.overlay != 0;

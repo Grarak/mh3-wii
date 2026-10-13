@@ -12,13 +12,17 @@
  *          each input is one texture role or the vertex colour times constants.
  * OVERLAY: overlay * texture1 * texture2 added to colour input b (the
  *          four-stage "base + masked overlay, then lit" material family).
+ *          With RASTER, the saturated result is then multiplied by the
+ *          vertex colour (a closing prev * ras stage, the city's baked-shadow
+ *          walls: ras * 2 * mix(c0, t0 * k, t1)).
  * LAYERS:  out = saturate(saturate((sum_r (vertex * kv_r + kc_r) * t_r +
  *          vertex * kv_3 + kc_3) * s) * (vertex * mv + mc)), colour and alpha
  *          separately: stages that add a texture times the vertex colour or a
  *          constant each (the Deserted Island sea surface, A-p09-uv-suimen*),
  *          then at most one multiply by the vertex colour or a constant.
  * Multi-stage programs are folded into this form when exact: prev * x
- * multiplies, prev + X layers (up to three) and stages that leave prev alone. */
+ * multiplies, prev + X layers (up to three), mix(A, prev, C) over a single
+ * product and stages that leave prev alone. */
 #include "mh3_model_state.h"
 #include "mh3_material_state.h"
 #include <stddef.h>
@@ -191,6 +195,8 @@ typedef struct mh3_shade_material {
      * input[3] the textureless term, scale the GX scale; factor[0/1] multiplies
      * the saturated colour/alpha (offset + scale * vertex). */
     mh3_shade_term factor[2];
+    /* BASIC: multiply the saturated result by the vertex colour, RGBA. */
+    uint8_t raster_product;
     /* Cached exact form: saturate(texture0 * vertex), RGBA independently.
      * Only literal zero/one references qualify; draw-time register values do not. */
     uint8_t pure_modulate;

@@ -86,6 +86,10 @@ struct NativeShaderVariant {
     // that input's arithmetic per fragment.
     bool basic_lerp = false;
 
+    // BASIC whose saturated result is multiplied by the vertex colour (a
+    // closing prev * ras stage, mh3_shade_material::raster_product).
+    bool raster_product = false;
+
     // Mesh only: GPU skinning (docs/optimizations/rendering/gpu-skinning.md), four palette rows and
     // weights per vertex instead of the GX matrix selectors.
     bool skinned = false;
@@ -93,7 +97,7 @@ struct NativeShaderVariant {
 };
 
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 18, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 19, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
 // the GXM shader bank holds one program per key (docs/optimizations/rendering/offline-shader-bank.md).
@@ -120,6 +124,7 @@ struct NativeShaderFragmentKey {
     bool material_gpu = false;
     bool dynamic = false;          // only material_gpu Modulate, not pure
     bool basic_lerp = false;       // only Basic with textures, no overlay
+    bool raster_product = false;   // only Basic, no overlay
     auto operator<=>(const NativeShaderFragmentKey&) const = default;
 };
 

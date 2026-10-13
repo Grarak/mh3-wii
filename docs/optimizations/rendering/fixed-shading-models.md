@@ -20,7 +20,10 @@ three hand-written programs (`runtime/native/mh3_shade.h`):
   per channel: texture times lit vertex colour, layered textures, and the
   four-stage "base plus masked overlay" family.
 - **BASIC**: the general three-texture `(d + bias ± mix(a, b, c)) · scale`
-  for colour and alpha separately, as a fallback.
+  for colour and alpha separately, as a fallback; optionally the saturated
+  result times the lit vertex colour (the Loc Lac city walls,
+  `ras · 2 · mix(c0, t0·k, t1)`: a baked shadow mask blends toward the shadow
+  colour register before lighting).
 - **LAYERS**: the multi-stage sums neither folds,
   `sat(sat((Σ_r (v·kv_r + kc_r)·t_r + v·kv_3 + kc_3) · s) · (v·mv + mc))`:
   each stage adds a texture times the vertex colour or a constant, then at
@@ -29,7 +32,8 @@ three hand-written programs (`runtime/native/mh3_shade.h`):
 
 `runtime/native/mh3_shade.c` folds multi-stage programs into these forms
 where that is exact (multiplies, up to three added layers, stages that
-leave the previous value alone); a structure that has no exact form gets
+leave the previous value alone; when those fall back, also `mix(A, prev, C)`
+over a single product and a closing multiply by the vertex colour); a structure that has no exact form gets
 the nearest model, and development builds log it. Per draw only the
 constant references (TEV registers, konst colours) are resolved, or read by
 the GPU from a material block ([material uniforms](material-uniform-blocks.md)).
