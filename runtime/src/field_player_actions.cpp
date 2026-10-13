@@ -76,6 +76,9 @@
 //               land, in water level 0 and 1); the lunging ones go forward
 //               18 or 27 · cos(90° · frame / 24) a step until frame 30
 //   0x802598C4, 0x8025CECC  falls (motion 56), landing by the steps fallen
+//   0x8025C900, 0x8025C9D8, 0x8025CB2C, 0x8025CD1C  carrying an egg: standing,
+//               walking, dashing, putting it down; 0x8025C834 the carry check,
+//               0x8027BE90 and 0x8010D6EC its break, 0x8027BD44 the item
 //   0x802501B8  waiting in motion 1, then placed beside the spot 0x803BAA14
 //               finds (action 84)
 //   0x80253038  a run (motion 119) draining stamina; after 40 steps action 8
@@ -149,7 +152,13 @@ enum : uint32_t {
     kWord1608 = 0x648,    // s16
     kState918 = 0x396,    // s16 (0x80277BA8)
     kState1408 = 0x580,   // s16 (0x80277CAC)
+    kCarry = 0x5C4,       // u8: the carried kind << 4 | a countdown (0x8025C834)
+    kPouch = 0x278,       // {u16 item, s16 count}[kPouchSlots]
+    kFlag904 = 0x388,     // u8 (0x802785C8 sets bits)
 };
+
+constexpr uint32_t kPouchSlots = 24;
+constexpr uint32_t kCarryCues = 0x805C5CA0; // 0x8027714C's list for the carry
 
 enum : uint32_t {
     NextAction = 0x80275B28,        // (plw, u8, u16 action, u16): +14 = 1, then 0x80275754 sets it
@@ -2311,6 +2320,298 @@ void Fall(CpuContext* ctx) {
     }
 }
 
+// Carrying an egg (items 139 and 395, and 381, 382) in both arms, the
+// actions of group 12. Each step of them starts with the carry check, which
+// keeps the carried kind in the high nibble of +0x5C4 and its low nibble at 4
+// (PlayerStepTimers runs it down while the group is 12); most other actions
+// break the egg on their start while the low nibble is set.
+
+// 0x802740A0: the carried kind of an item: 1 for 139, 2 for 395, 3 for 381,
+// 4 for 382, else 0.
+uint32_t CarryKind(uint32_t item) {
+    switch (item) {
+    case 139:
+        return 1;
+    case 395:
+        return 2;
+    case 381:
+        return 3;
+    case 382:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+// 0x8027BD44 (plw) -> r3: the last carried item in the pouch with a count
+// above 0, or 0xFFFF.
+uint32_t CarriedItem(uint32_t plw) {
+    uint32_t item = 0xFFFF;
+
+    for (uint32_t slot = 0; slot < kPouchSlots; ++slot) {
+        const uint32_t at = plw + kPouch + slot * 4;
+        const uint32_t id = Memory::Read16(at);
+
+        if (int16_t(Memory::Read16(at + 2)) > 0 && CarryKind(id) != 0)
+            item = id;
+    }
+
+    return item;
+}
+
+void CarriedItemPort(CpuContext* ctx) {
+    ctx->gpr[3] = CarriedItem(ctx->gpr[3]);
+}
+
+// 0x8010D6EC (plw) -> r3: the egg breaks: a broken egg object (0x8010D770,
+// kind 2) where the hunter stands, and its effect 7 on the hunter's model.
+uint32_t BreakEgg(GuestCall& game, uint32_t plw) {
+    const uint32_t egg = game.Call<0x8010D770>({plw, 2, 0, 1});
+
+    if (egg == 0)
+        return 0;
+
+    const uint32_t work = Memory::Read32(egg + 56);
+    Memory::WriteFloat32(work + 104, Memory::ReadFloat32(plw + kLastY));
+    Memory::WriteFloat32(work + 108, Memory::ReadFloat32(plw + 0x7C));
+    game.Call<0x800E0A78>({Memory::Read32(plw + kChar) + 4, 7, work + 52});
+    Memory::Write8(egg + 4, 5);
+    return egg;
+}
+
+void BreakEggPort(CpuContext* ctx) {
+    uint32_t egg;
+
+    {
+        GuestFrame frame(ctx, 16);
+        GuestCall game{ctx};
+        egg = BreakEgg(game, frame.Arg(3));
+    }
+
+    ctx->gpr[3] = egg;
+}
+
+// 0x8027BE90 (plw): at the start of an action that is not a carry: the egg
+// still carried breaks.
+void DropCarried(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const uint32_t plw = frame.Arg(3);
+    const uint32_t carry = Memory::Read8(plw + kCarry);
+
+    if ((carry & 0xF) == 0)
+        return;
+
+    Memory::Write8(plw + kCarry, carry & 0xF0);
+    BreakEgg(game, plw);
+}
+
+// 0x8025C834 (plw): the carry check. The local player's (out of actions
+// (12, 10) and (12, 11)) takes the carried kind from the pouch: none clears
+// it, unless in an event demo. The countdown goes back to 4.
+void CarryCheck(GuestCall& game, uint32_t plw) {
+    const uint32_t action = Memory::Read16(plw + 12);
+
+    if (game.Call<MasterCheck>({plw}) == 1 && !(Memory::Read8(plw + 10) == 12 && (action == 10 || action == 11))) {
+        const uint32_t item = CarriedItem(plw);
+
+        if (item != 0xFFFF)
+            Memory::Write8(plw + kCarry, uint8_t(CarryKind(item) << 4));
+        else if (game.Call<InEventDemo>({1}) != 1)
+            Memory::Write8(plw + kCarry, 0);
+    }
+
+    Memory::Write8(plw + kCarry, (Memory::Read8(plw + kCarry) & 0xF0) | 4);
+}
+
+void CarryCheckPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    CarryCheck(game, frame.Arg(3));
+}
+
+// The carry's push forward along +0x58 (0x8025C9D8, 0x8025CB2C), when
+// 0x8027BE38 allows it: `forward` a tick.
+void CarryPush(const Player& p, uint32_t step, float forward) {
+    if (p.game.Call<0x8027BE38>({p.plw}) != 1)
+        return;
+
+    MoveTurned(p, step, forward);
+
+    for (uint32_t k = 0; k < 12; k += 8)
+        Memory::WriteFloat32(p.plw + kPosition + k, Memory::ReadFloat32(p.plw + kPosition + k) + Memory::ReadFloat32(step + k));
+}
+
+// The carry's walk and dash: the local player's turns with the stick
+// (0x8026A40C) and is pushed; without the stick it stands, action (12, 0).
+bool CarryMove(const Player& p, uint32_t step, float forward) {
+    if ((p.game.Call<Nearby>({p.plw, 0}) & 0xFF) == 0) {
+        p.Next(12, 0, 0);
+        return false;
+    }
+
+    p.game.Call<0x8026A40C>({p.plw});
+    CarryPush(p, step, forward);
+    return true;
+}
+
+// 0x8025C900 (plw, kind): standing with the egg, motion 51 (kind 0 and 1
+// with the cue list 0x805C5CA0, 1 from frame 30; kind 2 0x800CF328 (0)).
+void CarryStand(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+    CarryCheck(game, plw);
+
+    if (p.State() != 0)
+        return;
+
+    p.NextState();
+
+    if (kind == 0)
+        game.Call<0x8027714C>({plw, kCarryCues, 0});
+    else if (kind == 1)
+        game.Call<0x8027714C>({plw, kCarryCues, 30});
+    else if (kind == 2)
+        game.Call<0x800CF328>({0});
+
+    Memory::Write8(plw + kFlag614, 0);
+    p.Flags(0, 0, 0);
+    p.Set(51, 4, 0);
+    game.Call<0x8027AC70>({plw});
+}
+
+// 0x8025C9D8 (plw): walking with the egg, motion 52, 2 a tick forward.
+void CarryWalk(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    CarryCheck(game, plw);
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Flags(0, 0, 0);
+        Memory::Write8(plw + kFlag614, 30);
+        p.Set(52, 4, 0);
+        game.Call<MotionAfterSet>({plw});
+        game.Call<SetActFlags>({plw, 64});
+        game.Call<0x8027714C>({plw, kCarryCues, 20});
+        game.Call<0x8027AC70>({plw});
+        break;
+    case 1:
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
+
+        // The guest's 2 (r2 - 15476), as the cheats see it.
+        CarryMove(p, frame[8], Memory::ReadFloat32(0x8079FF60 - 15476));
+        break;
+    }
+}
+
+// 0x8025CB2C (plw): dashing with the egg, motion 53 (59 with +20 set), 5 a
+// tick forward while the stamina (0x80276AA0 drains it) lasts: out of it
+// action (12, 4); a drop ahead (0x80277E10 (85, -60)) is action (12, 5).
+void CarryDash(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw;
+    CarryCheck(game, plw);
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.SetX(Memory::Read8(plw + kFlag20) == 0 ? 53 : 59, 4, 0);
+        Memory::Write8(plw + kFlag614, 30);
+        game.Call<MotionAfterSet>({plw});
+        p.Flags(0, 0, 0);
+        game.Call<SetActFlags>({plw, 384});
+        Memory::Write8(plw + kFlag904, Memory::Read8(plw + kFlag904) | 1);
+        game.Call<0x8027714C>({plw, kCarryCues, 20});
+        game.Call<0x8027AC70>({plw});
+        break;
+    case 1:
+        if (game.Call<MasterCheck>({plw}) == 0)
+            break;
+
+        if (game.Call<0x80277E10>({plw, 0}, {Memory::ReadFloat32(0x8079FF60 - 15264), Memory::ReadFloat32(0x8079FF60 - 15260)}) != 0) {
+            Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle2) & 0xFFFF);
+            p.Next(12, 5, 0);
+            break;
+        }
+
+        game.Call<0x80276AA0>({plw});
+
+        if (int16_t(Memory::Read16(plw + kCondition)) <= 0) {
+            p.Next(12, 4, 0);
+            break;
+        }
+
+        CarryMove(p, frame[8], Memory::ReadFloat32(0x8079FF60 - 15256));
+        break;
+    }
+}
+
+// 0x8025CD1C (plw, kind): putting the egg down, motion 54 (55 for kind 1),
+// until frame 114 (4): the carry ends; kind 0 and 1 break it (kind 0 also
+// takes it from the local player's pouch with message 21), kind 2 (+0x396
+// 2 meanwhile) keeps it. Back to the field stance when the motion ends.
+void CarryPutDown(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, kind = frame.Arg(4);
+
+    if (kind == 2)
+        Memory::Write16(plw + kState918, 2);
+
+    switch (p.State()) {
+    case 0:
+        p.NextState();
+        p.Set(kind == 1 ? 55 : 54, 4, 0);
+        game.Call<MotionAfterSet>({plw});
+        p.Flags(0, 0, 0);
+        game.Call<0x8027AC70>({plw});
+        break;
+    case 1: {
+        const float at = Memory::ReadFloat32(0x8079FF60 - (kind == 1 ? 15180 : 15088));
+
+        if (game.Call<FrameCheck>({plw, 0}, {at, 0.0}) != 1) {
+            CarryCheck(game, plw);
+            break;
+        }
+
+        p.NextState();
+        Memory::Write8(plw + kCarry, Memory::Read8(plw + kCarry) & 0xF0);
+
+        if (kind != 2)
+            BreakEgg(game, plw);
+
+        if (kind != 0 || game.Call<MasterCheck>({plw}) != 1)
+            break;
+
+        if (const uint32_t item = CarriedItem(plw); item != 0xFFFF) {
+            game.Call<StatusMessage>({plw, 2, 21, item});
+            game.Call<0x80272E18>({plw, item});
+        }
+
+        break;
+    }
+    case 2:
+        if (!p.Ended())
+            break;
+
+        if (kind == 2)
+            Memory::Write16(plw + kState918, 0);
+
+        p.End(0, 8);
+        break;
+    }
+}
+
 // 0x8025CECC (plw, kind): a fall (0x8025C834 each step); landing after 50
 // steps (60 on 0x8027BE38) without skill 36 is action 2 (2), after 30 (40)
 // action 7 (12), else 8.
@@ -2320,7 +2621,7 @@ void Fall2(CpuContext* ctx) {
     const Player p{{game, frame.Arg(3)}};
     const uint32_t plw = p.plw, kind = frame.Arg(4);
     game.Call<Vec3Ctor>({frame[8]});
-    game.Call<0x8025C834>({plw});
+    CarryCheck(game, plw);
     p.CountUp();
 
     switch (p.State()) {
@@ -2343,8 +2644,8 @@ void Fall2(CpuContext* ctx) {
             hard = 60, soft = 40;
 
         if (p.Timer() >= hard && game.Call<CatSkillCheck>({plw, 36}) == 0) {
-            Memory::Write8(plw + 0x5C4, Memory::Read8(plw + 0x5C4) & 0xF0);
-            game.Call<0x8010D6EC>({plw});
+            Memory::Write8(plw + kCarry, Memory::Read8(plw + kCarry) & 0xF0);
+            BreakEgg(game, plw);
             p.Next(2, 2, 0);
         } else {
             p.Next(12, p.Timer() >= soft ? 7 : 8, 2);
@@ -3792,6 +4093,60 @@ extern "C" void MH3_FieldActionFall2(CpuContext* ctx) {
     PortCheck::Call(ctx, "FieldActionFall2", func_8025CECC, Fall2);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8025CECC, MH3_FieldActionFall2, "FieldActionFall2");
+
+extern "C" void func_8025C834(CpuContext* ctx);
+extern "C" void MH3_PlCarryCheck(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlCarryCheck", func_8025C834, CarryCheckPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8025C834, MH3_PlCarryCheck, "PlCarryCheck");
+
+extern "C" void func_8027BE90(CpuContext* ctx);
+extern "C" void MH3_PlDropCarried(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlDropCarried", func_8027BE90, DropCarried);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8027BE90, MH3_PlDropCarried, "PlDropCarried");
+
+extern "C" void func_8010D6EC(CpuContext* ctx);
+extern "C" void MH3_PlBreakEgg(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlBreakEgg", func_8010D6EC, BreakEggPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8010D6EC, MH3_PlBreakEgg, "PlBreakEgg");
+
+extern "C" void func_8025C900(CpuContext* ctx);
+extern "C" void MH3_FieldActionCarryStand(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCarryStand", func_8025C900, CarryStand);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8025C900, MH3_FieldActionCarryStand, "FieldActionCarryStand");
+
+extern "C" void func_8025C9D8(CpuContext* ctx);
+extern "C" void MH3_FieldActionCarryWalk(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCarryWalk", func_8025C9D8, CarryWalk);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8025C9D8, MH3_FieldActionCarryWalk, "FieldActionCarryWalk");
+
+extern "C" void func_8025CB2C(CpuContext* ctx);
+extern "C" void MH3_FieldActionCarryDash(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCarryDash", func_8025CB2C, CarryDash);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8025CB2C, MH3_FieldActionCarryDash, "FieldActionCarryDash");
+
+extern "C" void func_8025CD1C(CpuContext* ctx);
+extern "C" void MH3_FieldActionCarryPutDown(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldActionCarryPutDown", func_8025CD1C, CarryPutDown);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8025CD1C, MH3_FieldActionCarryPutDown, "FieldActionCarryPutDown");
+
+// No guest writes: checked by its r3 on every call.
+extern "C" void func_8027BD44(CpuContext* ctx);
+extern "C" void MH3_PlCarriedItem(CpuContext* ctx) {
+    if (PortCheck::Enabled("PlCarriedItem")) [[unlikely]] {
+        PortCheck::RunPure(ctx, "PlCarriedItem", PortCheck::Returns::Gpr3, func_8027BD44, CarriedItemPort);
+        return;
+    }
+
+    CarriedItemPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8027BD44, MH3_PlCarriedItem, "PlCarriedItem");
 
 extern "C" void func_802501B8(CpuContext* ctx);
 extern "C" void MH3_FieldActionAwaitPlace(CpuContext* ctx) {

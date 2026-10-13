@@ -1014,6 +1014,14 @@
 80286e5c PlHammerActions
 802598c4 FieldActionFall
 8025cecc FieldActionFall2
+8025c834 PlCarryCheck
+8027be90 PlDropCarried
+8010d6ec PlBreakEgg
+8027bd44 PlCarriedItem
+8025c900 FieldActionCarryStand
+8025c9d8 FieldActionCarryWalk
+8025cb2c FieldActionCarryDash
+8025cd1c FieldActionCarryPutDown
 802501b8 FieldActionAwaitPlace
 80253038 FieldActionRun119
 80254a28 FieldActionJump15
