@@ -23,6 +23,15 @@
 //              each, array *(0x806AFB20), count *(0x806AFB1C)) of that phase
 //              (u8 +0x108): each live one's update (+0xF8), then its two
 //              effect holders (+0x5C 0x8029F040, +0xB8 0x8029F070)
+//   0x802AAF88 FieldObjectDraw(object, ch, u8 mode): a field object's model
+//              to the scene: mode 0 only while the MHchar's model (+0x118) is
+//              its resource's (*(+0x10C) + 4), and pushed onto the scene root
+//              (0x8007F130, root *(r13 - 17580)); then, for a shown object
+//              (u8 +1) in the current area (u8 +8), its primitive request
+//              (0x800E3BF0): (1, u8 ch+0x35, model) in mode 0, (1, 1, ch, 2)
+//              in mode 1. The objects' updates call it every step; the 60 fps
+//              cheat codes replay it at the steps they skip, which never
+//              happens here.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -216,6 +225,28 @@ void FieldObjectsUpdate(CpuContext* ctx) {
     }
 }
 
+void FieldObjectDraw(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t object = frame.Arg(3), ch = frame.Arg(4), mode = frame.Arg(5) & 0xFF;
+    const uint32_t model = Read32(ch + 0x118);
+
+    if (mode == 0) {
+        if (model != Read32(Read32(ch + 0x10C) + 4))
+            return;
+
+        game.Call<0x8007F130>({Read32(0x8079B2E0u - 17580), model}); // ScnRootPushBack
+    }
+
+    if (!MemoryInline::FlatRead8(object + 1) || MemoryInline::FlatRead8(object + 8) != (game.Call<0x802AFCE8>() & 0xFF))
+        return;
+
+    if (mode == 0)
+        game.Call<0x800E3BF0>({1, MemoryInline::FlatRead8(ch + 0x35), model, 0, 0, 0, 0}); // PrimRequest
+    else if (mode == 1)
+        game.Call<0x800E3BF0>({1, 1, ch, 2, 0, 0, 0});
+}
+
 void CapsuleSetup(uint32_t seg, uint32_t out) {
     for (uint32_t k = 0; k < 0x1C; k += 4)
         MemoryInline::FlatWrite32(out + k, Read32(seg + k)); // p0, p1, radius
@@ -265,6 +296,12 @@ extern "C" void MH3_FieldObjectsUpdate(CpuContext* ctx) {
     PortCheck::Call(ctx, "FieldObjectsUpdate", func_802AAE40, FieldObjectsUpdate);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x802AAE40, MH3_FieldObjectsUpdate, "FieldObjectsUpdate");
+
+extern "C" void func_802AAF88(CpuContext* ctx);
+extern "C" void MH3_FieldObjectDraw(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldObjectDraw", func_802AAF88, FieldObjectDraw);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802AAF88, MH3_FieldObjectDraw, "FieldObjectDraw");
 
 extern "C" void func_8028F5BC(CpuContext* ctx);
 static void CapsuleSetupPort(CpuContext* p) {

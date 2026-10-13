@@ -1023,6 +1023,7 @@
 8025c9d8 FieldActionCarryWalk
 8025cb2c FieldActionCarryDash
 8025cd1c FieldActionCarryPutDown
+8025de9c PlActionStep
 802501b8 FieldActionAwaitPlace
 80253038 FieldActionRun119
 80254a28 FieldActionJump15
@@ -1991,6 +1992,7 @@
 8028f5bc CapsuleSetup
 8029d8f8 EnemyPartShape
 802aae40 FieldObjectsUpdate
+802aaf88 FieldObjectDraw
 80343d48 MonsterIconsUpdate
 803ba604 GatherSpotsUpdate
 80501c48 MTX34MultVecSR

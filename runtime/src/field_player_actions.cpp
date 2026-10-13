@@ -90,6 +90,7 @@
 //   0x80256A58  (plw, kind) knocked flying (205 / 208), landing, getting up
 //   0x80258AC8  (plw, kind) grabbed by a monster (271 / 219)
 //   0x8026A57C  VelocityStep: the jumps' velocity and position, per step
+//   0x8025DE9C  the action step: the group's (and weapon's) action function
 //
 // The originals count by 1 per step and move by a fixed amount per step (and
 // test the player's step counter, which runs a tick at a time, for `% n == 0`). Here
@@ -110,6 +111,9 @@ using namespace Plw;
 // PLW fields of the field's actions.
 enum : uint32_t {
     kFlag1 = 1,           // u8
+    kWeapon = 2,          // u8: the weapon kind (0-8)
+    kGroup = 10,          // u8: the action's group
+    kActionNumber = 12,   // u16: the action within its group
     kFlag6 = 6,           // u8
     kFlag7 = 7,           // u8
     kFlag20 = 20,         // u8
@@ -3801,6 +3805,46 @@ void Walk101(CpuContext* ctx) {
     }
 }
 
+// 0x8025DE9C: the action's step, once per logic step: clears +14, then the
+// group's (u8 +10, 0-12; group 3 has none) action function, which switches on
+// the action; group 4's actions below 100 go to the weapon's (u8 +2, 0-8)
+// table. The actions count and move by the step's length themselves, so this
+// runs every step; the 60 fps cheat codes skip it every other frame instead.
+void ActionStep(CpuContext* ctx) {
+    static constexpr uint32_t kGroups[13] = {0x80251BEC, 0x80254920, 0x802552CC, 0, 0, 0x80256514, 0x8025A33C,
+                                             0x8025B04C, 0x8025B4FC, 0x8025DDA0, 0x8025BBAC, 0x8025C5C8, 0x8025D55C};
+    static constexpr uint32_t kWeapons[9] = {0x80282A18, 0x80284140, 0x80286E5C, 0x8034EE7C, 0x802888AC,
+                                             0x802888AC, 0x802888AC, 0x8028B394, 0x803347BC};
+    static constexpr uint32_t kWeaponCommon = 0x8025B6FC; // group 4, actions from 100
+    static const RawDispatchRecord* memos[13 + 9 + 1] = {};
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    const uint32_t plw = frame.Arg(3);
+    Memory::Write8(plw + kFlag14, 0);
+    const uint32_t group = Memory::Read8(plw + kGroup);
+
+    if (group > 12)
+        return;
+
+    uint32_t slot = group;
+
+    if (group == 4) {
+        const uint32_t weapon = Memory::Read8(plw + kWeapon);
+
+        if (Memory::Read16(plw + kActionNumber) >= 100)
+            slot = 13 + 9;
+        else if (weapon <= 8)
+            slot = 13 + weapon;
+        else
+            return;
+    }
+
+    const uint32_t fn = slot < 13 ? kGroups[slot] : slot < 13 + 9 ? kWeapons[slot - 13] : kWeaponCommon;
+
+    if (fn != 0)
+        game.CallAt(memos[slot], fn, {plw});
+}
+
 } // namespace
 
 // The Walk101 port for the Enhanced-movement wrapper (cheat_movement.cpp).
@@ -4147,6 +4191,12 @@ extern "C" void MH3_PlCarriedItem(CpuContext* ctx) {
     CarriedItemPort(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8027BD44, MH3_PlCarriedItem, "PlCarriedItem");
+
+extern "C" void func_8025DE9C(CpuContext* ctx);
+extern "C" void MH3_PlActionStep(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlActionStep", func_8025DE9C, ActionStep);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8025DE9C, MH3_PlActionStep, "PlActionStep");
 
 extern "C" void func_802501B8(CpuContext* ctx);
 extern "C" void MH3_FieldActionAwaitPlace(CpuContext* ctx) {
