@@ -82,7 +82,7 @@ struct Plw {
     }
 };
 
-void Tick(GuestCall& game, const Plw p) {
+void Tick(GuestCall& game, const Plw p, bool first) {
     const uint32_t pl = p.base;
     p.W32(0x20, p.S32(0x20) + 1);
     p.W32(0x24, p.S32(0x24) + 1);
@@ -167,7 +167,12 @@ void Tick(GuestCall& game, const Plw p) {
     const uint8_t delay = p.U8(0x5C4);
 
     if ((delay & 0xF) != 0 && p.U8(10) == 12) {
-        p.W8(0x5C4, ((delay & 0xF) - 1) | (delay & 0xF0));
+        // The carry actions set this countdown to 4 once per step (0x8025C834)
+        // for all of the step's ticks, so it runs down once a step: a long
+        // step (a loading hitch, DisplayStep's repeated retraces) ran it out
+        // and dropped the carried egg, which broke.
+        if (first)
+            p.W8(0x5C4, ((delay & 0xF) - 1) | (delay & 0xF0));
     } else {
         bool check = p.U8(10) != 0;
 
@@ -379,7 +384,7 @@ void PlayerStepTimers(CpuContext* ctx) {
     const Plw player{frame.Arg(3)};
 
     for (uint32_t i = 0, ticks = GameStep::Ticks(); i < ticks; ++i)
-        Tick(game, player);
+        Tick(game, player, i == 0);
 }
 
 } // namespace
