@@ -7,10 +7,14 @@
 // 2026-10-06): a hand gripping the rear panel or a thumb on the screen never
 // reaches the game. The game polls the controller several times a frame
 // (WPADProbe per channel, WPADRead, the 5 ms sampling feed), so one sample
-// serves 4 ms.
+// serves 4 ms. While the system's UI is over the game (the quick menu a long
+// press of PS opens) the samples still carry the buttons and sticks: the game
+// gets a neutral controller then.
 #include "controller_host.h"
 #include "../native/mh3_classic_map.h"
 
+#include <psp2/appmgr.h>
+#include <psp2common/defs.h>
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
 
@@ -21,10 +25,20 @@ void Initialize() {
     sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE);
 }
 
+// The system UI (the quick menu, a notification's menu) is over the game, or
+// the system took the controls.
+bool Overlaid(const SceCtrlData& ctrl) {
+    if (ctrl.buttons & SCE_CTRL_INTERCEPTED)
+        return true;
+
+    SceAppMgrAppState state{};
+    return _sceAppMgrGetAppState(&state, sizeof(state), PSP2_SDK_VERSION) == 0 && state.isSystemUiOverlaid;
+}
+
 ClassicControllerSample Sample() {
     SceCtrlData ctrl{};
 
-    if (sceCtrlPeekBufferPositive2(1, &ctrl, 1) < 0 && sceCtrlPeekBufferPositive2(0, &ctrl, 1) < 0) {
+    if ((sceCtrlPeekBufferPositive2(1, &ctrl, 1) < 0 && sceCtrlPeekBufferPositive2(0, &ctrl, 1) < 0) || Overlaid(ctrl)) {
         ctrl = SceCtrlData{};
         ctrl.lx = ctrl.ly = ctrl.rx = ctrl.ry = 128;
     }
