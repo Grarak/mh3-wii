@@ -279,6 +279,7 @@ struct Step {
     uint64_t generation = 0;
     double particleStep = 1.0; // ticks particles advance in this Effect::Calc pass
     bool particlesOnly = false;
+    bool firstCalc = false; // the running Effect::Calc is the effect's first (MH3_EffectCalc)
 };
 
 Step step;
@@ -694,7 +695,10 @@ static void EffectCalcPort(CpuContext* ctx) {
     const bool onlyBillboard = (ctx->gpr[4] & 0xFF) != 0;
     const CalcClock clock = CurrentClock();
     const double scale = clock.scale;
-    const uint32_t ticks = clock.ticks;
+
+    // An effect's first Calc runs a whole tick between ticks too: on the Wii it
+    // emits in the frame that created the effect.
+    const uint32_t ticks = std::max(clock.ticks, uint32_t(step.firstCalc));
 
     if (onlyBillboard) {
         EffectCalcNative(ctx);
@@ -759,6 +763,10 @@ struct Deferral {
     std::atomic<bool> joinPending{false};
     std::vector<std::pair<uint32_t, uint32_t>> calls;
     CalcClock clock; // the task pass's, for the calls
+
+    // The effects the game thread created in this step and has not calculated
+    // yet: their first Calc runs at once (MH3_EffectCalc).
+    std::vector<uint32_t> uncalculated;
 };
 
 bool overlap = false;
@@ -970,6 +978,7 @@ void Defer(bool enabled) {
     // Port checks compare whole RAM around a call: they need the game thread's order.
     deferral.enabled = enabled && GuestWorker::Available() && !PortCheck::Set();
     deferral.collecting = deferral.enabled;
+    deferral.uncalculated.clear();
 #if defined(MH3_DEVELOPMENT) && !defined(__vita__)
     TouchCheck::Arm();
 #endif
@@ -1090,6 +1099,9 @@ extern "C" void func_800A5AF4(CpuContext* ctx);
 extern "C" void MH3_EffectSystemCreateEffect(CpuContext* ctx) {
     EffectStep::Touch();
     func_800A5AF4(ctx);
+
+    if (ctx->gpr[3] && PpcThread::CurrentThread() == PpcThread::Game)
+        deferral.uncalculated.push_back(ctx->gpr[3]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A5AF4, MH3_EffectSystemCreateEffect, "EffectSystemCreateEffect");
 
@@ -1109,22 +1121,52 @@ extern "C" void MH3_EffectSystemView(CpuContext* ctx) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800D4910, MH3_EffectSystemView, "EffectSystemView");
 
+// Whether this Effect::Calc is the first whole one of an effect the game thread
+// created in this step. That Calc runs at once and a whole tick, as on the Wii:
+// the code that created the effect may use what it made. The effect object of
+// kind 0x88 (0x80112DBC, a Clust S shot's) runs its effect's first Calc, then
+// retires the particles and the last particle manager of its first emitter,
+// whose one burst is out. Deferred past the retirement, or between ticks (the
+// emitters wait), that Calc left the emitter to emit after it with no manager:
+// its emission (0x800A8E5C) read the matrix of a null one.
+static bool TakeFirstCalc(const CpuContext* ctx) {
+    if ((ctx->gpr[4] & 0xFF) || PpcThread::CurrentThread() != PpcThread::Game)
+        return false;
+
+    auto& uncalculated = deferral.uncalculated;
+    const auto it = std::find(uncalculated.begin(), uncalculated.end(), ctx->gpr[3]);
+
+    if (it == uncalculated.end())
+        return false;
+
+    uncalculated.erase(it);
+    return true;
+}
+
 extern "C" void MH3_EffectCalc(CpuContext* ctx) {
+    const bool first = TakeFirstCalc(ctx);
+
     if (deferral.collecting) {
 #ifdef MH3_DEVELOPMENT
         GuestWorker::NoteShared("Effect::Calc collection");
 #endif
         EffectStep::Touch();
-        deferral.calls.emplace_back(ctx->gpr[3], ctx->gpr[4] & 0xFF);
-        return;
+
+        if (!first) {
+            deferral.calls.emplace_back(ctx->gpr[3], ctx->gpr[4] & 0xFF);
+            return;
+        }
+    } else {
+        EffectStep::Join(ctx);
+#ifdef MH3_DEVELOPMENT
+        MH3FrameSplitCall(2);
+#endif
     }
 
-    EffectStep::Join(ctx);
-#ifdef MH3_DEVELOPMENT
-    MH3FrameSplitCall(2);
-#endif
     MH3_SPLIT_SCOPE(MH3_SPLIT_EFFECT_CALC);
+    step.firstCalc = first;
     CalcEffect(ctx);
+    step.firstCalc = false;
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A4C20, MH3_EffectCalc, "EffectCalc");
 
