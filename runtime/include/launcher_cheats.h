@@ -64,4 +64,12 @@ bool SetText(size_t cheat, std::string_view text);
 // the first in the list.
 bool EnableByName(std::string_view name, std::string_view value);
 
+// --weapon KIND[:ID]: the worn weapon replaced each time a character's save
+// data loads, also in its equipment box slot (great-sword, sword, hammer,
+// lance, long-sword, switch-axe; bowgun[:FRAME[:BARREL:STOCK]], frames 17 to
+// 19 with their own barrel and stock). Id 1 by default. Returns false for an
+// unknown kind or a placeholder id; an id past the kind's last is reported
+// when the save data loads.
+bool RequestWeapon(std::string_view weapon);
+
 } // namespace LauncherCheats

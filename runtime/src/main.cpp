@@ -149,6 +149,9 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --quest-small <name|id>        (with --quest) replace the quest's small monsters\n"
                                "                                 (a field area full: --quest 1028 --area 1)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
+                               "  --weapon <kind>[:<id>]         (with any of the above) the hunter wears that weapon: great-sword,\n"
+                               "                                 sword, hammer, lance, long-sword, switch-axe (id 1 by default) or\n"
+                               "                                 bowgun[:<frame>[:<barrel>:<stock>]] (frames 17-19 bring their own)\n"
                                "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
                                "                                 the launcher's list by its name (\"InfHP\"; with its\n"
                                "                                 group when lists share it, \"Bully:ActionRepeater\"),\n"
@@ -437,6 +440,21 @@ int main(int argc, char** argv) {
                 MH3_THROW(std::runtime_error("Unknown cheat or value: " + std::string(cheat)));
 
             std::cerr << "MH3: cheat " << cheat << "\n";
+            std::copy(argv + i + 2, argv + argc, argv + i);
+            argc -= 2;
+        }
+
+        // --weapon goes with any other option too.
+        for (int i = 1; i + 1 < argc;) {
+            if (std::string_view(argv[i]) != "--weapon") {
+                ++i;
+                continue;
+            }
+
+            if (!LauncherCheats::RequestWeapon(argv[i + 1]))
+                MH3_THROW(std::runtime_error("Unknown weapon: " + std::string(argv[i + 1])));
+
+            std::cerr << "MH3: weapon " << argv[i + 1] << "\n";
             std::copy(argv + i + 2, argv + argc, argv + i);
             argc -= 2;
         }

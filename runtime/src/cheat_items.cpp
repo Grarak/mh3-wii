@@ -10,8 +10,11 @@
 #include "ppc_runtime.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -918,6 +921,73 @@ void FillEquipmentBox(CpuContext* ctx) {
         game.Call<EquipBoxAdd>({save, piece->kind, piece->id});
 }
 
+bool Contains(std::span<const uint16_t> ids, uint16_t id) {
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+// --weapon: the worn weapon replaced each time a character's save data loads.
+// A bowgun is a frame, a barrel and a stock (the frame's own for frames 17 to
+// 19, which the box never holds); a blade weapon wears none of the two.
+struct WeaponRequest {
+    uint8_t kind = 0;
+    uint16_t id = 0, barrel = 0, stock = 0;
+};
+
+WeaponRequest g_weapon;
+
+// What the hunter wears: box slots from +0x8C, 0xFFFF none (weapon or frame,
+// barrel, stock first), and the copies PlLoadUserData reads from +0x20, 12
+// bytes a piece in the same order. The first box page always exists.
+constexpr uint32_t kWornSlots = 0x8C, kWornCopies = 0x20, kFirstPage = 100;
+
+// One worn piece: its copy, and a box record in its worn slot or a free one
+// (kind 0: none; boxed false: worn without a box record).
+void Wear(uint32_t save, uint32_t piece, uint8_t kind, uint16_t id, bool boxed) {
+    const uint32_t slotAt = save + kWornSlots + 2 * piece;
+    const uint32_t copy = save + kWornCopies + 12 * piece;
+
+    for (uint32_t i = 0; i < 12; i += 4)
+        Memory::Write32(copy + i, 0);
+
+    Memory::Write8(copy, kind);
+    Memory::Write16(copy + 2, id);
+    uint32_t slot = Memory::Read16(slotAt);
+
+    if (kind == 0 || !boxed) {
+        Memory::Write16(slotAt, 0xFFFF);
+        return;
+    }
+
+    for (uint32_t i = 0; slot == 0xFFFF && i < kFirstPage; ++i)
+        if (Memory::Read8(save + kEquipmentBox + 12 * i) == 0)
+            slot = i;
+
+    if (slot == 0xFFFF)
+        return;
+
+    for (uint32_t i = 0; i < 12; i += 4)
+        Memory::Write32(save + kEquipmentBox + 12 * slot + i, Memory::Read32(copy + i));
+
+    Memory::Write16(slotAt, uint16_t(slot));
+}
+
+void WearRequestedWeapon(uint32_t save) {
+    const auto count = [](uint8_t kind) { return Memory::Read32(kEquipmentCounts + 4 * (kind - 1)); };
+    const bool bowgun = g_weapon.kind == kFrame;
+
+    if (g_weapon.id >= count(g_weapon.kind) || (bowgun && (g_weapon.barrel >= count(kBarrel) || g_weapon.stock >= count(kStock)))) {
+        std::fprintf(stderr, "MH3: --weapon: no such piece (ids 1 to %lu; barrels %lu, stocks %lu)\n", (unsigned long)(count(g_weapon.kind) - 1),
+                     (unsigned long)(count(kBarrel) - 1), (unsigned long)(count(kStock) - 1));
+        g_weapon.kind = 0;
+        return;
+    }
+
+    const bool fixed = bowgun && Contains(kFixedFrameParts, g_weapon.id);
+    Wear(save, 0, g_weapon.kind, g_weapon.id, true);
+    Wear(save, 1, bowgun ? kBarrel : 0, bowgun ? g_weapon.barrel : 0, !fixed);
+    Wear(save, 2, bowgun ? kStock : 0, bowgun ? g_weapon.stock : 0, !fixed);
+}
+
 } // namespace
 
 // PlLoadUserData (0x80049FE0, player): the player's work filled from the
@@ -949,10 +1019,66 @@ extern "C" void MH3_CheatLoadUserData(CpuContext* ctx) {
         FillEquipmentBox(ctx);
     }
 
+    if (g_weapon.kind != 0 && UserData() != 0)
+        WearRequestedWeapon(UserData());
+
     func_80049FE0(ctx);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80049FE0, MH3_CheatLoadUserData, "CheatLoadUserData");
+
+namespace LauncherCheats {
+
+bool RequestWeapon(std::string_view text) {
+    static constexpr struct {
+        const char* name;
+        uint8_t kind;
+    } kKinds[]{{"greatsword", kGreatSword}, {"sword", kSwordAndShield}, {"swordandshield", kSwordAndShield}, {"hammer", kHammer}, {"lance", kLance},
+               {"bowgun", kFrame}, {"longsword", kLongSword}, {"switchaxe", kSwitchAxe}};
+
+    std::vector<std::string> parts(1);
+
+    for (const char c : text)
+        if (c == ':')
+            parts.emplace_back();
+        else if (std::isalnum(static_cast<unsigned char>(c)))
+            parts.back() += char(std::tolower(static_cast<unsigned char>(c)));
+
+    WeaponRequest request;
+
+    for (const auto& k : kKinds)
+        if (parts[0] == k.name)
+            request.kind = k.kind;
+
+    std::vector<uint16_t> ids;
+
+    for (size_t i = 1; i < parts.size(); ++i) {
+        if (parts[i].empty() || parts[i].size() > 4 || !std::ranges::all_of(parts[i], [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
+            return false;
+
+        ids.push_back(uint16_t(std::stoul(parts[i])));
+    }
+
+    // kind[:id], bowgun[:frame[:barrel:stock]]; the first of each by default.
+    if (request.kind == 0 || ids.size() > (request.kind == kFrame ? 3u : 1u) || ids.size() == 2)
+        return false;
+
+    request.id = ids.empty() ? 1 : ids[0];
+    const bool fixed = request.kind == kFrame && Contains(kFixedFrameParts, request.id);
+    request.barrel = fixed ? request.id : ids.size() == 3 ? ids[1] : 1;
+    request.stock = fixed ? request.id : ids.size() == 3 ? ids[2] : 1;
+
+    if (request.id == 0 || Contains(Excluded(request.kind), request.id))
+        return false;
+
+    if (request.kind == kFrame && !fixed && (Contains(Excluded(kBarrel), request.barrel) || Contains(Excluded(kStock), request.stock)))
+        return false;
+
+    g_weapon = request;
+    return true;
+}
+
+} // namespace LauncherCheats
 
 namespace Cheats {
 

@@ -12,7 +12,9 @@ monster (quest 9004, the arena pit's Rathian) with the named one. The name
 is one of the launcher's monster names, compared without case (`Deviljho`),
 or the number. The quest's objectives follow the new monster
 (`MH3 quest 9004: large monster 1 replaced by 7`). `--spawn X,Y,Z` and
-`--no-damage` help keep the hunter alive and out of the way.
+`--no-damage` help keep the hunter alive and out of the way, and
+`--weapon KIND[:ID]` arms the hunter with any weapon (`lance`, `bowgun:19`;
+the kinds in `--help`), on any quest, the arena's too.
 
 ```
 MH3_MONSTER_CONTROL=$PWD/jho.ctl MH3_TRACE=actions \
