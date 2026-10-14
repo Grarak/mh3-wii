@@ -19,10 +19,11 @@
 namespace {
 aurora::MaterialSource Snapshot(uint32_t object) {
     const uint32_t image = Memory::Read32(object + 8);
+
     // GX texture image addresses are physical; host memory reads take the
     // cached alias (0x80000000 + MEM1 or MEM2 offset): on the Vita a release
     // build's Read32 is one add from the cached base (HostCached), and a
-    // physical address faulted there (retail, loading, 2026-10-05).
+    // physical address faulted there (retail, loading).
     const uint32_t address = ((Memory::Read32(object + 12) & 0xffffffu) << 5) | 0x80000000u;
     aurora::MaterialSource source;
     source.width = (image & 1023) + 1;

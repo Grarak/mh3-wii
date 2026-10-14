@@ -230,7 +230,7 @@ void NoteShared(const char* what) {
 
 namespace DrawThread {
 GuestThread& Thread() {
-    // Core 1, beside the render thread's core 0. On core 3 until 2026-10-08:
+    // Core 1, beside the render thread's core 0. On core 3 before:
     // busy most of a frame, it starved the system's work there, the network
     // stack's among it (the devkit answered pings after seconds and the
     // online login stalled).

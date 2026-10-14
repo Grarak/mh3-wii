@@ -43,8 +43,8 @@ The first start checks the image and writes about 7 MB of disc metadata to
 `ux0:/data/mh3-wii/disc/`; textures and models are converted while the game
 loads them and cached there. Saves live in `ux0:/data/mh3-wii/saves/`. The
 launcher's menus start the game, quests and custom quests, and set cheats,
-widescreen, upscaling, MSAA and the frame limit ([launcher](docs/vita-launcher.md),
-[controls](docs/vita-controls.md)). Online play uses the community
+widescreen, upscaling, MSAA and the frame limit
+([controls](docs/vita-controls.md)). Online play uses the community
 [MH3SP](https://github.com/sepalani/MH3SP) servers ([online](docs/online.md)).
 
 The VPK holds the translated code and nothing of the disc: the game's
@@ -104,8 +104,8 @@ Release builds use the checked-in profile `pgo/mh3-release.profdata.tar.zst`
 Linux, arm64 (development host):
 
 ```sh
-MH3_ARCH=arm64 MH3_BUILD_DIR=build/linux-arm64-dev MH3_EXTRA_CMAKE_ARGS=-DMH3_DEVELOPMENT=ON \
-  scripts/build-aurora.sh
+MH3_ARCH=arm64 MH3_BUILD_DIR=build/linux-arm64-dev \
+  MH3_EXTRA_CMAKE_ARGS='-DMH3_DEVELOPMENT=ON -DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' scripts/build-aurora.sh
 ```
 
 Linux, arm32 (armhf, Cortex-A9 code; for a Raspberry Pi or another ARMv7+

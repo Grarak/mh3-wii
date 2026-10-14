@@ -10,7 +10,7 @@ int __real__vita_net_init(void);
 /* newlib starts SceNet at its first network call (socket, inet_pton,
  * gethostbyname and others) with a pool of 0x23114 bytes, which the game's
  * sockets use up: the stack then stops taking (and acknowledging) segments
- * for minutes. On the devkit (2026-10-08) a city entry stalled on a 1 KiB
+ * for minutes. On the devkit a city entry stalled on a 1 KiB
  * packet until the server dropped the client ("Client timed out"); every
  * online run had started the stack there first (NetHost's DefaultInterface
  * calls inet_pton), and sceNetInit with a larger pool then failed (EBUSY).

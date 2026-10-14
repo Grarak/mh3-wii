@@ -1,5 +1,5 @@
 # Adapted from Azahar (GPLv2 or later; MH3 is GPLv3).
-# Original: CMakeModules/toolchain-vita-clang.cmake, 2026-09-30.
+# Original: CMakeModules/toolchain-vita-clang.cmake.
 # Building for the PS Vita with clang and lld instead of the vitasdk's gcc.
 #
 # The vitasdk still supplies everything but the compiler: the sysroot, newlib, libstdc++ and its

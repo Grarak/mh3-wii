@@ -10,7 +10,7 @@ do so only under `__EMSCRIPTEN__`/`__wasm__` conditions.
 
 ## Build
 
-Tools (versions used on 2026-10-04):
+Tools (the versions it was built with):
 
 | Tool | Version | Install |
 | --- | --- | --- |
@@ -161,8 +161,8 @@ embeds the result (`cmake/WebShaderBank.cmake`):
    with naga. Converted stages are cached in `~/.cache/mh3-web-shader-bank`
    (a cold conversion takes about 80 s with 6 jobs). 65 MB of WGSL embed as
    1.6 MB (zstd with a shared dictionary).
-3. `lib/webgpu/shader_bank.cpp` finds a program's stages by key and reads the
-   bindings from the comment lines the converter puts first.
+3. `aurora-main/lib/webgpu/shader_bank.cpp` finds a program's stages by key
+   and reads the bindings from the comment lines the converter puts first.
 
 A program the bank lacks fails with `WebGPU shader bank has no program`.
 
@@ -197,7 +197,7 @@ below the static data (`-sGLOBAL_BASE`, 16 to 336 MiB).
 ## Status
 
 Checked on arm64 Linux with Playwright 1.63's headless Chromium 153
-(WebGPU on SwiftShader), `scripts/web-check.mjs`, 2026-10-05:
+(WebGPU on SwiftShader), `scripts/web-check.mjs`:
 
 - Boot, disc preparation into OPFS (`--rom` on the first start), the intro
   movie and the title menu (Space skips the intro) render correctly.
@@ -244,33 +244,6 @@ render loop and, through the packet limiter, the game. Queue completion
 submission, headless Chromium rejects it ("A valid external Instance reference
 no longer exists").
 
-### GLES and GXM unchanged
-
-Checked against the parent commit (4d8c4d96), 2026-10-05:
-
-- Shader sources: all 208,384 GLSL and Cg variants of the native key domain
-  stream out byte-identical, and so do the 4,808 GXM bank stages (4,190
-  vertex, 611 fragment, 7 scalar).
-- Preprocessed sources (`clang -E -P` with each build's own compile commands,
-  the tree path normalized): for arm32 Linux, 19 of the 20 changed files and
-  sample generated shards are identical and `main.cpp` differs by one blank
-  line; for the Vita, all 19 it compiles are identical.
-- `scripts/build-vita.sh` builds the VPK from the worktree
-  (`MH3_VITA_BUILD_DIR=build/vita-wasmcheck`).
-- Raspberry Pi 5, arm32 build, Alatreon (`--quest 19001 --area 1
-  --no-damage`, `MH3_STATS=1`), runs of 100 s alternating after/base, medians
-  of the last 40 stats seconds:
-
-  | Run | Before (logical fps / game frame) | After |
-  | --- | --- | --- |
-  | 1 | 119.2 / 2.499 ms | 126.7 / 2.461 ms |
-  | 2 | 121.7 / 2.482 ms | 131.3 / 2.376 ms |
-  | 3 | 126.9 / 2.409 ms | 124.6 / 2.526 ms |
-  | Median | 121.7 / 2.482 ms | 126.7 / 2.461 ms |
-
-  Equal within run-to-run noise, as the identical preprocessed sources
-  predict.
-
 ## Merging GLES and WebGPU later
 
 The two backends implement one interface from the same GLSL, so a merge has a
@@ -291,5 +264,5 @@ clear seam:
 
 WebGL 2 would have been the shorter way into browsers (Emscripten maps GLES
 3.0 onto it, so `lib/gl` would run nearly as is), at WebGL's higher cost per
-draw; this build follows the request for WebGPU, and the merge above would
-make either a matter of which executor a target links.
+draw. The merge above would make either a matter of which executor a target
+links.

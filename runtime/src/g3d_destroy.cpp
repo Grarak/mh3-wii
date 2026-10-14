@@ -30,7 +30,7 @@
 // change, or a monster leaving, destroys models the draw still holds: their
 // destructors put the base vtable in place, whose draw virtual is null, and
 // the draw thread called 0 ("Missing translated target 0x00000000", devkit,
-// Flooded Forest 0->1 and 9->7, 2026-10-05). The heap's free waited for the
+// Flooded Forest 0->1 and 9->7). The heap's free waited for the
 // draw (native_resource_lifetime.cpp), but only after the destructors ran.
 // Now a destroy waits at its start, on the game thread, while the draw holds
 // the object or the model an animation is bound to (the object's parent,

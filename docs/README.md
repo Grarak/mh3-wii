@@ -10,8 +10,6 @@ it to another Wii game.
 
 ## Reference
 
-- [vita-launcher.md](vita-launcher.md): the Vita launcher, reading the disc
-  image in place, load-time conversion, custom quests and cheats.
 - [vita-controls.md](vita-controls.md): the Classic Controller mapping on the
   Vita, gamepads and the keyboard.
 - [online.md](online.md): online play through MH3SP and a local server for

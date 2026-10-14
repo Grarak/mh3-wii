@@ -51,7 +51,7 @@ slight tilt jumped from standing to running ([controls](../../vita-controls.md))
 `mh3_classic_stick` (`runtime/native/mh3_classic_map.c`), the curve:
 
 ```c
-const mh3_stick_curve mh3_vita_stick_curve = {0.12f, 0.90f, 0.80f};  /* dead zone, saturation, window */
+const mh3_stick_curve mh3_vita_stick_curve = {0.30f, 0.90f, 0.80f}; /* dead zone, saturation, window */
 
 const float t = clampf((length - curve->dead_zone) / (curve->saturation - curve->dead_zone), 0.0f, 1.0f);
 const float first = MH3_CL_GAME_DEAD + 1.0f, full = MH3_CL_GAME_FULL;

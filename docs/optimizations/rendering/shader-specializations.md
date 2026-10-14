@@ -41,7 +41,7 @@ keeps parallel mode.
 ## Why
 
 GPU time on the Vita is fragment-bound in the fights (a GPU capture of the
-Alatreon fight, 2026-10-05: the 3D scene's fragment jobs 68% USSE and 9%
+Alatreon fight: the 3D scene's fragment jobs 68% USSE and 9%
 texture activity). Measured on the Vita:
 
 - `_a1`: desert quest GPU work per frame 20.89 → 18.53 ms, the main

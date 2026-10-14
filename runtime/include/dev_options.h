@@ -149,14 +149,13 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[frames=N][,split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,census]:
-// the frame profile and GX counters every N frames (graphics_host.cpp), the
-// per-draw split timers (game_frame.cpp), the render thread's sampled split,
+// MH3_PROFILE=[split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,census]:
+// the per-draw split timers (game_frame.cpp), the render thread's sampled split,
 // serial frames and dropped draw kinds (native_frame_packet.cpp), material
 // geometry screen area (native_material.cpp), the disc image's read speed
 // (disc_image.cpp) and the census of the model draws (native_material.cpp).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"frames", "split", "render", "sync", "skip", "fill", "disc", "census"});
+    static const DevOptions options("MH3_PROFILE", {"split", "render", "sync", "skip", "fill", "disc", "census"});
     return options;
 }
 

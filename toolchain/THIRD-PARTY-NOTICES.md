@@ -5,7 +5,7 @@ WiiCompiled itself is licensed under the GNU General Public License v3.0
 components listed below. Each remains under its own license and copyright.
 
 Nothing listed here is Nintendo intellectual property. This project ships no game code, assets,
-or data of any kind - see the [README](README.md).
+or data of any kind - see the [README](../README.md).
 
 ---
 

@@ -29,7 +29,8 @@ Discovery is purely recursive from the entry point unless the manifest provides 
 `function_map` (one `hexaddr name` per line) that seeds additional function boundaries. Unsupported
 instructions fail translation by default.
 
-See `projects/examples/generic-dol.yml` for a minimal manifest driven by `RECOMP_GENERIC_DOL`.
+This game's manifest is `recomp.yml` at the repository root. The tests translate any DOL named by
+`RECOMP_GENERIC_DOL` from its entry point (`GenericProjectTests`).
 
 ## Prerequisites
 

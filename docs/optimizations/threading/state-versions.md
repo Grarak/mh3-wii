@@ -43,7 +43,7 @@ records references to **immutable versions** instead:
 ## Why
 
 Copies (`memcpy`/`memset`) were 7.6% of the Vita game thread in Alatreon
-(stack samples, 2026-10-03); the per-draw pose copy (`CapturePose`) was
+(stack samples); the per-draw pose copy (`CapturePose`) was
 1.0%. On the Pi 5 the change was within the run-to-run spread.
 
 The structure revision (Vita, Deserted Island beach, camera turning): draw

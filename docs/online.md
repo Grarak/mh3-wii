@@ -6,7 +6,7 @@ reaches them with the MH3SP Riivolution patch (`MH3SP.xml`). This build
 applies the same patch and emulates the Wii network devices the game uses,
 so the City mode connects to MH3SP from the host build.
 
-**Testing rules (from the user).** Never interact with other players. Online,
+**Testing rules.** Never interact with other players. Online,
 only open a private city and start quests; no public cities or gates beyond
 what the connection forces, no chat, no joins, no invites. Scripted input
 must go straight to a private city. If a flow cannot guarantee that, stop at
@@ -125,54 +125,23 @@ until it is selected again, with its registers intact.
 - A blocking IOS request (connect, receive, poll, TLS handshake, name lookup)
   waits in the scheduler; the game thread's pumps retry it.
 
-## How far it gets
+## Status
 
-Host build (arm64 Linux, software rendering), against a local MH3SP server (October 5):
-Mode Menu → City → the network screen (SO, NCD and KD start) → the NAS login
-(DWC's `acctcreate`, `login` and `svcloc` over NHTTP) → the Capcom OPN
-server over TLS, verified against the installed CA (terms, announcements,
-vulgarity lists, authentication, LMP address) → the two user agreements, the
-announcement and the mic-chat notice → LMP (ticket, user list, server time)
-→ CAPCOM ID selection (a new ID in slot 1) → server type (Open) → server →
-gate (FMP) → the Loc Lac introduction movie → **the gate in Loc Lac**, drawn
-and running at that machine's usual 30 fps → "Select a City" (walk up the street
-from the spawn) → a new city ("LayerStartEmpty", recruitment text, OK) →
-**inside the city**, walking around the plaza, Lodge Street and the upper
-deck → the Tavern (the archway left of the spawn, then up the street): the
-Guildmaster's hunter registration, then the Quest Receptionist's Quest
-Counter → "Harvest 'Shroom" (Deserted Island), quest settings, OK
-(`CircleCreate` on the FMP server) → the Departure Gate at the top of the
-Tavern's stairs ("Depart on Quest", Yes) → **the quest on the Deserted
-Island**, the hunter running from the base camp. The field loads the common,
-quest, enemy and map01 modules at the offline field bases, so their existing
-profiles serve.
-
-Creating the city ran into a callback only reachable through a code constant
-(`0x803CF830`, a register shuffle that tail-calls, passed as `lis`/`addi`):
-`scripts/generate_symbols.py` now seeds text addresses the code builds with
-`lis` + `addi`/`ori` that start after a `blr`/`bctr` (127 more functions).
-
-Against the community server (`opn.mh3sp.com`, October 5) the same flow
-works with no overrides: the NAS login at `nas.mh3sp.com`, the OPN server's
-TLS verified against the embedded MH3SP CA, LMP and FMP, a new CAPCOM ID,
-the server list (one Open server, "Valor US") and its gate list ("City Gate
-1-4"). A gate is a shared area other players walk in, and a city is only
-reached through one, so testing there stops at the gate list (see the rules
-above).
+The whole flow works on Linux and on the Vita against a local MH3SP: the
+network screen, the NAS login, the OPN server over TLS (or without it, Skip
+TLS), the user agreements, a CAPCOM ID, server and gate, the Loc Lac movie,
+the gate, a private city, the Tavern's Quest Counter and the Departure Gate,
+and quests with several players (a Linux host and a Vita in one quest).
+Against the community server (`opn.mh3sp.com`) the same flow works with no
+overrides up to the gate list; a gate is shared with other players, so
+testing there stops (rules above).
 
 ## The Vita
 
-A Vita, October 5, against a local MH3SP on the LAN (OPN without TLS,
-`MH3_ONLINE_SERVER=<ip>:18080`, Skip TLS handshake): the launcher's City
-(online) → the network screen → NAS login → OPN notices → CAPCOM ID → server
-type, server, gate (LMP, FMP) → the Loc Lac movie → **the gate area**,
-running at about 47 fps. Exchanges sometimes stall for up to a minute: the
-Vita's Wi-Fi answers pings in 2-200 ms with losses (power saving), and TCP's
-retransmission backoff stretches each loss.
-
-Fixed on the way: newlib closed the process's stderr when an exited thread's
-reent was reclaimed (`runtime/vita/newlib_reent.c`), and texture packs and
-extracted streams held more than the 50 descriptors a Vita process has.
+Exchanges can stall for seconds: the Vita's Wi-Fi answers pings in 2-200 ms
+with losses (power saving), and TCP's retransmission backoff stretches each
+loss. A Vita process has 50 descriptors, shared by the sockets, the texture
+packs and the extracted streams, which cap their open files.
 
 `net_host_posix.cpp` serves the Vita too: VitaSDK's newlib implements the
 BSD socket calls, `poll` (on `sceNetEpoll`), `fcntl(O_NONBLOCK)` (sceNet's

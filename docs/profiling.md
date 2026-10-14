@@ -78,8 +78,8 @@ Rules for reading such profiles:
 
 The EABI memory helpers (`__aeabi_memcpy`, `memmove`, `memset`, `memclr` and
 their 4/8 forms) come from `runtime/vita/aeabi_memory.c`, a C port of the
-compiler-builtins routines the earlier Rust ROM decoder supplied (16-byte NEON
-loops for the aligned copy and set) ([helpers](rom-decoder.md#vita-runtime-helpers)).
+compiler-builtins routines (16-byte NEON loops for the aligned copy and set;
+[helpers](rom-decoder.md#vita-runtime-helpers)).
 Public `memcpy`, `memmove` and `memset` tail-call
 `sceClibMemcpy`/`Memmove`/`Memset`; `memcmp` is the SDK's scalar loop. The
 aligned copy and set helpers clobber `d16`/`d17`, which the Arm runtime ABI
@@ -106,29 +106,9 @@ arm-linux-gnueabihf-objdump -d --no-show-raw-insn build/linux-arm32/MH3 \
 ```
 
 Intersect it with the function list of a Vita CPU profile to find the hot
-ones. Already removed (game thread, development builds included):
-
-- Port-check flags held in local statics in every checked native: now
-  `PortCheck::Enabled`, an inline relaxed byte test while `MH3_PORT_CHECK` is
-  unset. On the Pi the PortCheck functions fell from 0.27% to 0.10% of samples.
-- `IsBaseTranslatedCpuTargetActive`, tested per function of the region on
-  every state-free call: relaxed. Translated code fell from 7431 to 2988 `dmb`
-  instructions, the rest on first-call and unresolved paths.
-- `ResourceMemory()` (`model_resources.cpp`, every NW4R resource accessor):
-  a namespace-scope constant. `FindByAddressPtr` tests its memo before the
-  acquire, so `InvokeIndirectCpuSlow`'s memo hits skip the barrier (the
-  static count rises by 527: the compiler duplicates the acquire on the cold
-  first-call path of every `InvokeDirectCpu` that resolves at run time).
-
-Still on hot paths (Vita profile share of the function, `dmb`s in it):
-`SkipNativeSceneModel` (0.34%, 17: `ReadMode`'s static and the draw table's
-`shared_ptr` copy in `Lookup`), `GuestCall::Rebind` (0.21%, 1),
-`NativeRenderThreadRunning` (0.13%, 1), the cached-resolution acquire in
-the 528 `InvokeDirectCpu`s that resolve at run time (0.06% each at most)
-and, on the render side,
-`RecordNativeMaterialGeometry` and `DispatchNativeModelIndexed`. Keep flags in
-namespace-scope variables or relaxed atomics, and keep guarded statics and
-`shared_ptr` copies out of per-call paths.
+ones. Keep flags in namespace-scope variables or relaxed atomics (as
+`PortCheck::Enabled` does), and keep guarded statics and `shared_ptr` copies
+out of per-call paths.
 
 ## ARM boards and desktops
 
@@ -155,6 +135,3 @@ hide:
   build's ELF (`addr2line`).
 - `MH3 slow shade program`, `MH3 GXM slow ...`, `MH3 slow scene setup call`:
   shader program creation over 2 ms and scene setup calls over 20 ms.
-
-First found (Alatreon, 2026-10-05): a 270 ms render packet that built nine
-model packs and three shader programs at a model's first draw mid-fight.

@@ -3,8 +3,8 @@
 // The pad comes from sceCtrlPeekBufferPositive2, as SDL's Vita driver read it:
 // port 1 first (a PS TV controller), port 0
 // when that fails. With ...Positive2 the handheld's L/R report as L1/R1 and a
-// PS TV controller's triggers as L2/R2. The touch panels are not read (user,
-// 2026-10-06): a hand gripping the rear panel or a thumb on the screen never
+// PS TV controller's triggers as L2/R2. The touch panels are not read: a
+// hand gripping the rear panel or a thumb on the screen never
 // reaches the game. The game polls the controller several times a frame
 // (WPADProbe per channel, WPADRead, the 5 ms sampling feed), so one sample
 // serves 4 ms. While the system's UI is over the game (the quick menu a long

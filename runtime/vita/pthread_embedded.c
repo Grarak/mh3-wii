@@ -21,7 +21,7 @@ extern pte_osResult pte_osSemaphorePend(pte_osSemaphoreHandle handle, unsigned i
  * waits, reach the kernel's limit within minutes. Every later post then fails
  * with SCE_KERNEL_ERROR_SEMA_OVF, which pte ignores, but the devkit's kernel
  * prints a backtrace for each failure: the flood blocks the console, so the
- * game's own printf stalls and the game hangs (the title movie, 2026-10-04).
+ * game's own printf stalls and the game hangs (the title movie).
  *
  * Posts above Cap tokens are dropped. pthread semaphores (sem_post,
  * pthread_once, condition variables) post only for registered waiters, far
@@ -63,7 +63,7 @@ int __wrap_pte_cancellable_wait(pte_osSemaphoreHandle handle, unsigned int *time
     }
 }
 
-/* Core 2 is the game thread's alone (user, 2026-10-07). pte creates its
+/* Core 2 is the game thread's alone. pte creates its
  * threads with the default affinity, any user core (0-2), and the asset
  * conversion workers, guest threads and samplers ran there now and then: a
  * new thread starts on cores 0-1 instead. A thread that pins itself

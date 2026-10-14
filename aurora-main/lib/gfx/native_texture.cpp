@@ -100,7 +100,7 @@ void make_room(size_t bytes) {
 
   // The budget exceeds GXM's CDRAM texture arena, which has no spill: also
   // drop the least recently used unbound textures until the backing fits
-  // (the opening movie after character creation filled it, 2026-10-04).
+  // (the opening movie after character creation filled it).
   // Their storage frees at once unless the GPU still reads it.
   while (!gl::render_target_allocation_available(bytes)) {
     auto victim = cache.end();

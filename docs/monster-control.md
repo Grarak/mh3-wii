@@ -150,11 +150,6 @@ and its action dispatcher (handler 3):
 | 19 | Agnaktor | 0x803790F4 | 0x8037F588 |
 | 9 | Uragaan | 0x80386940 | 0x8038CC38 |
 
-Early ports used `emNNN` labels that were wrong for
-kinds 1-12 (0x8014xxxx was called Gigginox, 0x8015611C Barioth, 0x801C7570
-Diablos, ...); they are relabeled by the dispatcher that reaches each function.
-Their prose describing a monster's behaviour was written under the old names.
-
 ## The control file
 
 `MH3_MONSTER_CONTROL=PATH` names a file of commands, one a line. The game

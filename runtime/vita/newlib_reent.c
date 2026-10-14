@@ -10,8 +10,8 @@ void __real__reclaim_reent(struct _reent *reent);
  * thread takes its slot, and the reclaim closes every FILE the reent holds
  * (_cleanup_r walks them with _fclose_r): the process's descriptors 0-2 with
  * them. The first threads to come and go were the online ones (guest threads,
- * name lookups), and stderr went silent for good on the network screen
- * (2026-10-05). The thread's standard streams are flushed, their buffers
+ * name lookups), and stderr went silent for good on the network screen.
+ * The thread's standard streams are flushed, their buffers
  * freed and left out of the walk instead. */
 void __wrap__reclaim_reent(struct _reent *reent)
 {

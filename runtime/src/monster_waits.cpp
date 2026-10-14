@@ -37,7 +37,7 @@
 //                 wait (counting up to 1800, looking every 16), a leap's and a hop's
 //                 wind-up of 24 and 12
 //     the timed actions (a motion for a count of ticks, Timed below), 31 of them
-//     from the static list of per-call counts (2026-10-06), each described at its
+//     from the static list of per-call counts, each described at its
 //     port: Qurupeco's settle, staggers and display; Barroth's hold and track;
 //     Jaggi's wander and turn; Great Jaggi's pause; Gigginox' gas, drop, leap
 //     and spin; Barioth's climb and pounce; Deviljho's and Rathian's ledge
@@ -70,9 +70,9 @@
 // ... MH3_VARIABLE_STEP=0; the ones of kinds no arena has through the enemy
 // fuzz's A: entries).
 //
-// The kinds (work +3) were relabeled on 2026-10-06 by the dispatcher that
-// reaches each function (docs/monster-control.md); the descriptions of what a
-// monster does were written under the earlier labels, wrong for kinds 1-12.
+// The kinds (work +3) are labeled by the dispatcher that reaches each
+// function (docs/monster-control.md); the descriptions of what a monster does
+// were written under earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"
 #include "game_step.h"
@@ -1308,7 +1308,7 @@ void Em008BuriedPort(CpuContext* ctx) {
                 .extra = KeepHeight, .spent = Spent::AtZero, .end = Then<0x80128158>});
 }
 
-// More timed actions (the static list of per-call counts, 2026-10-06):
+// More timed actions (the static list of per-call counts):
 //   0x8019F5D0 em025 (Jhen Mohran) motion 0xD looped for 150 ticks; 0x801A13E8
 //              motion 1 looped at the height 630, 240 ticks (r4 0) or 150
 //   0x8032D89C kind 26 (Giggi) motion 0x72 for 120 ticks; 0x8032D53C,

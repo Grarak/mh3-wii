@@ -1,5 +1,5 @@
 #pragma once
-// The launcher's screen on the native renderer (docs/vita-launcher.md).
+// The launcher's screen on the native renderer.
 // It runs the same way as the game: the calling (game) thread records frame
 // packets and the render thread owns the graphics context and presents.
 #include <cstdint>

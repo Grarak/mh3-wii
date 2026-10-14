@@ -54,7 +54,7 @@ To run the same game in a browser. It is not a performance target. WebGL 2
 would have been the shorter way (Emscripten maps GLES 3.0 onto it, so
 `lib/gl` would run nearly as is), at WebGL's higher cost per draw; the build
 follows the request for WebGPU. Measured on arm64 Linux in headless
-Chromium with WebGPU on SwiftShader (CPU rendering), 2026-10-05: about 30
+Chromium with WebGPU on SwiftShader (CPU rendering): about 30
 logical fps in the Alatreon fight and 20-25 in the title menu; every native
 shader variant the fight used came from the bank, with no WebGPU validation
 error ([web build](web-build.md)).

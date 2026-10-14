@@ -1,4 +1,4 @@
-// The native launcher (docs/vita-launcher.md). It runs on the Vita and, in
+// The native launcher. It runs on the Vita and, in
 // development builds, on Linux hosts (MH3 --launcher), which have no system
 // dialogs: messages draw as a panel there and the quest name keeps its value.
 #include "vita_launcher.h"

@@ -147,7 +147,7 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "  --quest-monster <name|id>      (with --quest) replace the quest's large monster\n"
                                "                                 (any monster in the arena pit: --quest 9004 --spawn 0,300,0)\n"
                                "  --quest-small <name|id>        (with --quest) replace the quest's small monsters\n"
-                               "                                 (four in the arena pit: --quest 9000)\n"
+                               "                                 (a field area full: --quest 1028 --area 1)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --cheat <name>[=<value>]       (with any of the above, repeatable) turn on a cheat of\n"
                                "                                 the launcher's list by its name (\"InfHP\"; with its\n"
@@ -279,8 +279,8 @@ void StartQuestBoot(int argc, char** argv) {
 
         // --quest-monster NAME|ID: the quest's large monster replaced (any
         // monster in the arena pit: --quest 9004 --spawn 0,300,0);
-        // --quest-small NAME|ID: its small monsters (--quest 9000's four
-        // Jaggi; docs/monster-control.md).
+        // --quest-small NAME|ID: its small monsters (a field area full:
+        // --quest 1028 --area 1; docs/monster-control.md).
         const auto monsterId = [](const std::string& name) {
             const auto names = QuestCatalog::MonsterNames();
             uint32_t chosen = 0;

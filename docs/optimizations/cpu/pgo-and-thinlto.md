@@ -34,7 +34,7 @@ code, so a release build takes a profile from a release build.
 ## Why
 
 Vita, Alatreon fight, development builds with and without an Alatreon
-profile (2026-10-05; plain five runs, PGO three):
+profile (plain five runs, PGO three):
 
 | | Plain | PGO | Change |
 | --- | ---: | ---: | ---: |

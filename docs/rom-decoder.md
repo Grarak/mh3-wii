@@ -35,11 +35,9 @@ decode at once and one's image read overlaps the other's decompression. A
 group queued and not begun gives way to the next one queued, or is decoded by
 the reader itself. Disc (raw) reads never use the worker.
 
-On the Vita the worker runs on core 3 (the workers' core), beside the DVD
-reader thread that calls the decoder, below the default priority so the guest
-worker and the reader run first; cores 0-1 are the render and draw threads'.
-The worker must not share the reader's core: that gives no parallel decoding
-(one boot read took 422 ms instead of ~70).
+On the Vita the worker runs on core 3 with the other workers (the DVD reader
+thread that calls the decoder among them), below the default priority so the
+guest worker and the reader run first.
 
 Checked with a standalone comparison of two decoders, with and without the
 worker: the whole 4 GiB game partition in 512 KiB reads and 20,000 random
@@ -63,41 +61,35 @@ LZMA stream decodes straight into its group buffer, which serves as the
 dictionary, so a large dictionary size costs no memory. AES-128 (32-bit
 tables built at compile time) and SHA-1 are local.
 
-Every build decodes; there is no option to leave the decoder out. The nod
-Rust bridge it replaced was removed from the repository (git history keeps
-it).
+Every build decodes; there is no option to leave the decoder out.
 
 ## Vita runtime helpers
 
-The earlier nod decoder's Rust archive supplied runtime helpers to the whole
-Vita program through its compiler-builtins. They come from these sources now:
+The Vita program's runtime helpers come from these sources:
 
 - The EABI memory helpers (`__aeabi_memcpy`, `memmove`, `memset`, `memclr` and
   their 4/8 forms) come from `runtime/vita/aeabi_memory.c`, a C port of the
-  same compiler-builtins 0.1.160 routines: scalar word loops in the generic
-  bodies, a 16-byte NEON loop in the aligned copy and set (it changes `d16/d17`,
-  as before), the 4/8 and move forms sharing one body each. The SDK's would be
-  a byte loop for move and a scalar loop for set. A helper benchmark
-  passed for the port under QEMU Cortex-A9 with the Rust objects' register
-  masks; on an idle Pi 5, ns per
+  compiler-builtins 0.1.160 routines: scalar word loops in the generic
+  bodies, a 16-byte NEON loop in the aligned copy and set (it changes
+  `d16/d17`), the 4/8 and move forms sharing one body each. The SDK's would
+  be a byte loop for move and a scalar loop for set. On an idle Pi 5, ns per
   call at 4 KiB / 32 KiB, aligned:
 
-  | | Rust (nod) | C port | SDK |
-  | --- | --- | --- | --- |
-  | `__aeabi_memcpy4/8` | 168 / 1,295 | 167 / 1,294 | |
-  | `__aeabi_memcpy` | 866 / 6,844 | 781 / 6,137 | |
-  | `__aeabi_memmove` | 1,190 / 8,663 | 773 / 6,215 | 3,191 / 25,478 |
-  | `__aeabi_memset` | 441 / 3,430 | 446 / 3,439 | 253 / 2,004 |
-  | `__aeabi_memset4/8` | 138 / 1,079 | 112 / 868 | |
+  | | C port | SDK |
+  | --- | --- | --- |
+  | `__aeabi_memcpy4/8` | 167 / 1,294 | |
+  | `__aeabi_memcpy` | 781 / 6,137 | |
+  | `__aeabi_memmove` | 773 / 6,215 | 3,191 / 25,478 |
+  | `__aeabi_memset` | 446 / 3,439 | 253 / 2,004 |
+  | `__aeabi_memset4/8` | 112 / 868 | |
 - Integer division and long/float conversions (`__aeabi_uidiv`,
   `__aeabi_uidivmod`, `__aeabi_ldivmod`, `__aeabi_f2lz`, ...) come from libgcc;
   `floor`, `ceil`, `round`, `trunc`, `fmod`, `sqrt` and their float forms,
   `fabs`, `fmin` and `fmax` from newlib's libm. These have exactly specified
-  results; their speed on the Vita is unmeasured (`__udivmodsi4` was 3.3% of
-  the game thread in an October 3 Vita profile).
+  results.
 - The C helpers have ordinary CFI for snapshot unwinding.
 
-## Verification (2026-10-03)
+## Verification
 
 A harness linked to either implementation hashed (XXH64 per 256 MiB) every
 byte each returned: the whole flat partition (4,286,328,832 bytes), the whole

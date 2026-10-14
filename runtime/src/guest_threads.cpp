@@ -607,7 +607,7 @@ extern "C" void MH3_OSExitThread(CpuContext* cpu) {
     // inside the wakeups (their __OSReschedule, when a joiner or a mutex
     // waiter is woken) would return it into guest code beside the thread it
     // handed to, and both changed the run queue (a devkit crash in Dequeue
-    // after an NHTTP request, 2026-10-08).
+    // after an NHTTP request).
     Write32(kReschedule, Read32(kReschedule) + 1);
     Call(cpu, UnlockAllMutex, {current});
     Call(cpu, OSWakeupThread, {current + kJoinQueue});

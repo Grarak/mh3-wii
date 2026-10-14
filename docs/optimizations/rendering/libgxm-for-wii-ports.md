@@ -7,8 +7,6 @@ is not a libgxm tutorial: Sony's SDK documents describe the API, and a
 general guide to writing a native GXM renderer (see "Sources") covers the
 hardware rules this page relies on.
 
-Measurements are from 2026-10-05 and earlier unless dated.
-
 ## Sources and evidence tags
 
 - Code in this repository: the GXM backend `aurora-main/lib/gxm/` (device,
@@ -161,7 +159,14 @@ How each GX feature lands in the programs (`runtime/src/native_shader_source.cpp
   `runtime/src/native_material.cpp`) [code].
 - **Texture reads** use their varying unmodified, so the hardware issues
   them before the program runs (non-dependent reads) [doc: render thread;
-  sdk].
+  sdk]. This matters for SGX performance: a
+  non-dependent read is fetched while the program waits to be scheduled and
+  its result is ready when it starts, while a read whose coordinates the
+  fragment program computes stalls it on the fetch [sdk]. Texgen, texture
+  matrices and the projective divide therefore run in the vertex program,
+  LOD bias is sampler state, and the utility programs read with `tex2D`
+  (an explicit `tex2Dlod` level made the read dependent) [code:
+  `runtime/src/native_shader_source.cpp`, `aurora-main/lib/gxm/utility/`].
 
 Rules learned on hardware [doc: renderer status, "GXM rules"]:
 
@@ -186,7 +191,10 @@ Rules learned on hardware [doc: renderer status, "GXM rules"]:
   parallel mode"]. A branch on a uniform keeps parallel mode.
 - **Half precision**: colours in `half`, texture coordinates in `float`;
   11 significant bits against the target's 8, so results differ by at most
-  one 8-bit step. Together with resolving some coefficients on the CPU it
+  one 8-bit step. Full 32-bit conversions are expensive on the SGX, as
+  Sony's GXM guide says [sdk]: a texture result or colour widened to
+  `float`, or a `float` chain narrowed back, costs extra instructions, so a
+  chain stays in one precision and only coordinates use `float`. Together with resolving some coefficients on the CPU it
   took Alatreon from 19.06 to 16.53 ms of GPU work per frame [devkit: shader
   specializations].
 
@@ -199,16 +207,14 @@ The Vita build embeds every program it can bind, compiled by Sony's
   enumerates the whole key domain: 4,180 vertex and 576 fragment stages of
   the fixed models, 35 stages of fixed GLSL programs (copy and palette
   conversion, depth peek, scene feedback) converted to Cg, and 8 stages of
-  hand-written Cg utilities, 4,799 in all [code: the generator's count,
-  2026-10-05]. The first bank, 2,648 programs, was 13.6 MB of GXP embedded
+  hand-written Cg utilities, 4,799 in all [code: the generator's count]. The first bank, 2,648 programs, was 13.6 MB of GXP embedded
   as 1.01 MB with a zstd dictionary; the current one is 27.6 MB of GXP
-  embedded as 2.2 MB [code: a development build's `shader_bank.json`,
-  2026-10-05]. A program is decompressed the first time it is bound, and a
+  embedded as 2.2 MB [code: a development build's `shader_bank.json`]. A program is decompressed the first time it is bound, and a
   quest binds a few dozen [doc: shader bank].
 - `psp2cgc -O3 -fastmath -nofastprecision -fastint` under Wine in Docker;
   each GXP is cached by a hash of compiler, options and source. Stages that
   fail at `-O3` are built at `-O2` (ten skinned mesh vertex programs in the
-  2026-10-05 bank); on arm64 build hosts `QEMU_CPU=core2duo` avoids crashes
+  current bank); on arm64 build hosts `QEMU_CPU=core2duo` avoids crashes
   of the i386 compiler under qemu-user [doc: shader bank].
 - Release builds have no runtime compiler: a miss stops the game.
   Development builds compile a miss with the on-device compiler
@@ -296,7 +302,7 @@ packs].
   per size and kept, with `scenesPerFrame` 8 [code: `device.cpp`]. The
   Alatreon fight has eight scenes per frame: the 3D scene (8.75-9.12 ms of 3D
   work), the scene capture, four glare passes, the 2D layers and the present
-  (0.61 ms) [devkit: GPU capture, 2026-10-05].
+  (0.61 ms) [devkit: GPU capture].
 - **One tap where filtering is exact.** A 2:1 box downsample that starts on
   a texel boundary averages each 2×2 block, which one bilinear sample at the
   block's shared corner does with the same weights: the glare's 160×112 and
@@ -461,3 +467,6 @@ render thread's time is mostly per-draw CPU work, which is what to cut:
    of waiting; flip from the display callback.
 7. Count draws per frame early; cull, merge and skin before micro-optimizing
    a draw.
+8. Keep every texture read non-dependent (coordinates straight from the
+   vertex program) and fragment colour math in `half`, without full 32-bit
+   conversions.

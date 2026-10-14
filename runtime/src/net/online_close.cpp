@@ -7,7 +7,7 @@
 // spins on 0x8041C7F4 for that: on the Wii the worker's I/O interrupt
 // preempts the spin, but guest threads here switch only at OS calls, so the
 // worker never ran again and the game hung when a connection error was
-// dismissed (the devkit, 2026-10-08). The port waits in
+// dismissed (the devkit). The port waits in
 // GuestThreads::BlockUntil, which runs the other guest threads and the
 // devices meanwhile.
 //

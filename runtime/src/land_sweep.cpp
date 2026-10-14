@@ -2,7 +2,7 @@
 // Mh3Listing disassembly): a sphere swept from one point to another against
 // the area's collision triangles. Hunters and monsters sweep their moves
 // every step; on Jhen Mohran's deck these translated functions were among
-// the game thread's hottest (devkit, 2026-10-06).
+// the game thread's hottest (devkit).
 //
 // The area's ground (0x806AE508 + area * 0x88, ground_hit.cpp) has two grids
 // of candidate lists, one per layer of triangles: layer 0 (+0x08 flag, origin
@@ -44,7 +44,7 @@
 //     from an edge (0x806AE4F8), the contact (0x806AE3C8) and, from an
 //     edge, the point on the plane (0x806AE440).
 //
-// Approximations (user, 2026-10-06: "uses neon with approximations that are
+// Approximations (user: "uses neon with approximations that are
 // good enough, we don't need to be exact"): NEON vector math (a scalar
 // fallback elsewhere) instead of the paired-single helpers' rounding; the
 // edge distances compared squared (no square root); the normalizing and

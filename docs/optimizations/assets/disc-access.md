@@ -54,8 +54,7 @@ title key from the ticket).
 ## Why
 
 - Extracting the partition first was slow: on the Pi 5, first start went from 8 min 42 s (decoding the 4.1 GiB
-  partition to the SD card) to 0.25 s
-  ([launcher](../../vita-launcher.md)).
+  partition to the SD card) to 0.25 s.
 - Reads and conversion on other threads keep the game thread drawing loading
   screens. Pi 5 cold Moga Woods: the longest loading-screen frame went from
   115 ms to 72-84 ms; warm, the loading screen takes 0.60 s instead of

@@ -200,8 +200,8 @@ namespace {
 // (get_now_areano 0x802AFCE8): 0 the base camp, -1 an area that has none.
 // The game keeps no such table. A map's art (04/map_mXXd_eng.brres) has no
 // numbers in it; the minimap draws them at places on the art. These were
-// read off the minimap in every area (--spawn exit:tour and --area runs,
-// 2026-10-07). The small maps number them in the game's order.
+// read off the minimap in every area (--spawn exit:tour and --area runs).
+// The small maps number them in the game's order.
 constexpr int8_t kDesertedIsland[] = {0, 1, 3, 2, 7, 5, 9, 11, 12, 6, 8, 4, 10};
 constexpr int8_t kSandyPlains[] = {0, 1, 2, 3, 4, 5, 8, 9, 10, 7, 11, 6};
 constexpr int8_t kFloodedForest[] = {0, 1, 3, 4, 5, 2, 8, 7, 6, 9, 10};

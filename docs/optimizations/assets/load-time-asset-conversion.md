@@ -14,8 +14,7 @@ and draw through display lists that GX decodes.
 
 Nothing the GPU reads comes from guest RAM. Each texture or model file is
 converted once into a native pack, on worker threads, the first time the
-game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`;
-[launcher](../../vita-launcher.md)):
+game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`):
 
 - **Textures** become one M3VT version 2 pack per file in
   `disc/cache/textures/`: BC1/BC3 for CMPR, and for the other formats the
@@ -65,8 +64,7 @@ game reads it (`AssetCache`, `runtime/src/asset_cache.cpp`;
 - Converting at load time instead of converting the whole disc once:
   booting into the Alatreon quest reads 146 files (60 MiB), about 0.35 s of
   conversion CPU on the Pi 5, against about 18 s for the whole disc; first
-  start went from 8 min 42 s to 0.25 s
-  ([launcher](../../vita-launcher.md)).
+  start went from 8 min 42 s to 0.25 s.
 - Reading packs on workers: a model pack read on the render thread at first
   draw held one packet 270 ms in the Alatreon fight; made resident during
   the load, the fight's longest render packets fell from 275 to at most

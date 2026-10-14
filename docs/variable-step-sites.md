@@ -7,7 +7,7 @@ amount follows the step's length) or **discrete** (the thing still happens on
 whole ticks only). The last sections list what is known to be left and where
 discrete handling may look lumpy at high frame rates.
 
-State as of 2026-10-05, with the native ports of the
+This covers the native ports of the
 ambient flutterer (0x803BC584), the sway chain solver (0x802AC4E8), the
 input path (section 7: pad repeats, the field camera and aiming) and the
 monster intros, roars, attacks and waits of the pattern sweep (sections 9
@@ -146,7 +146,7 @@ group of the commented entry before them.
 | Effects (spawner, effect life/age, debris, markers) | 11 | 2 Countup, 1 CountdownPastZero | 7 Advance, 1 PerStep | effect age 0x80308050, life 0x8030805C; debris gravity 0x80308A00 (PerStep), spin 0x80308A18 (−2185); marker bob/spin 0x8031F728/0x8031F734; online markers 0x803C37D4…0x803C3A34 |
 | Objects (generic, volcano, village, desert, stage, 0x8035AF48, the field actor 0x8038595C, the field object step 0x8032C574) | 20 | 8 Countdown, 5 CountdownPastZero, 7 Countup | — | 0x8010A538, volcano 0x8011D02C/0x8011D31C/0x8037F62C (up to 450), desert 0x80367920/0x80368ACC/0x80369360/0x80369BA8, stage 0x802B4BA8; the field actor's wander wait 0x803A451C (its turns: `field_actor.cpp`) |
 | Uncommented (in the field player range) | 3 | 2 Countdown, 1 CountdownPastZero | — | 0x8024ACD0, 0x8024C224 (limit 1), 0x8024C314 |
-| Hunter moves and timers (the 2026-10-11 sweep of every weapon's actions and the hunter's evades and moves) | 52 | 9 Countdown, 3 Countup, 1 CountdownPastZero, 1 CountupEvery | 32 PerStep, 6 Advance | pushes applied once a step in a frame window: the rolls' Evade Distance push 0x80247C44/0x8025A2F0, the weapon-drawn evades 0x80248D54…0x80248FD8 (by weapon kind), the lance's step 0x80289130, the bowguns' side steps (push 0x8028ADC4/0x8028B100, move angle ±364 a step 0x8028ADA0…0x8028B0EC, Advance), the switch axe's turn ±128 0x8034DCCC/0x8034DCF0; the attack lunges K · cos(90° · frame / N) of 0x802556F8, 0x80255A50, 0x80255EFC, 0x8025779C, 0x80257BE0 (by weapon kind), sword and shield 0x802839AC and long sword 0x80331DA8; carrying 0x8025CAC0/0x8025CCB0, swims 0x80254010/0x802545B8 (and the swim dash wait 0x802544D8), the ledge push 0x80247D58, 0x8025D7DC, the velocity move 0x8026A548 (0x8026A54C…) and the knockback 0x8027AF98 (steps +0xB4, velocity +0x9C…); timers: idle 0x80246C64, +0x3F4 0x802581F0, +0x34 0x8025C3B8, the bound hunter's escape 0x802587FC with its mash cooldown 0x802587B8 and shake every 32 0x80258588, the long sword actions' input cooldowns (+7) 0x803323B0…0x803342E8 |
+| Hunter moves and timers (the sweep of every weapon's actions and the hunter's evades and moves) | 52 | 9 Countdown, 3 Countup, 1 CountdownPastZero, 1 CountupEvery | 32 PerStep, 6 Advance | pushes applied once a step in a frame window: the rolls' Evade Distance push 0x80247C44/0x8025A2F0, the weapon-drawn evades 0x80248D54…0x80248FD8 (by weapon kind), the lance's step 0x80289130, the bowguns' side steps (push 0x8028ADC4/0x8028B100, move angle ±364 a step 0x8028ADA0…0x8028B0EC, Advance), the switch axe's turn ±128 0x8034DCCC/0x8034DCF0; the attack lunges K · cos(90° · frame / N) of 0x802556F8, 0x80255A50, 0x80255EFC, 0x8025779C, 0x80257BE0 (by weapon kind), sword and shield 0x802839AC and long sword 0x80331DA8; carrying 0x8025CAC0/0x8025CCB0, swims 0x80254010/0x802545B8 (and the swim dash wait 0x802544D8), the ledge push 0x80247D58, 0x8025D7DC, the velocity move 0x8026A548 (0x8026A54C…) and the knockback 0x8027AF98 (steps +0xB4, velocity +0x9C…); timers: idle 0x80246C64, +0x3F4 0x802581F0, +0x34 0x8025C3B8, the bound hunter's escape 0x802587FC with its mash cooldown 0x802587B8 and shake every 32 0x80258588, the long sword actions' input cooldowns (+7) 0x803323B0…0x803342E8 |
 | Grilling meat (PlGrillStep 0x8024AAB8) | 1 | 1 Countup | — | the cook time 0x8024AE74 (s16 +0x5B8) against the meat's raw/done/burnt steps |
 | Village and city NPCs | 4 | 1 Countdown, 2 Countup | 1 Advance (yaw +512) | 0x80201884, 0x80203744; the script's steps in an entry (s16 +0x20A, NpcScriptStep 0x801FFD04) 0x801FFE40/0x801FFE74. Their eased and timed turns are `npc_turn.cpp` (section 4) |
 | Talk windows (typing) | 2 | 2 Countup | — | the village talk (0x8021D258, VillageTalkTypeStep, 0x806ACC2C) and quest NPC talk (0x803C80F4, QuestNpcTalkStep, +0x10C) count steps and show steps / 2 + 1 letters (FontTypeText 0x8005CAC8) |
@@ -154,8 +154,8 @@ group of the commented entry before them.
 | Camera | 23 | 9 Countdown, 1 CountdownPastZero, 5 Countup | 7 EaseDivisor, 1 PerStep | field camera height eases 0x802B638C…0x802B6610 and ease timer 0x802B65BC/0x802B65FC (these 9 now act only on the translated original that port checks run: `field_camera.cpp` does the same itself); climb view countdowns 0x802B7960/0x802B799C (0x802B7880, run twice a step); collision camera (CameraCollide): ticks a correction is held 0x802B832C…0x802B8578 and its release blends 0x802B8850; scope zoom 0x802B99F0 (PerStep); aim view blend 0x802B9F50; zone camera blends 0x802BACE8/0x802BAF18 (the blends' curve 0x802BB0B0 reads the step's time, `field_camera.cpp`); script wait 0x802BCDC8; path hold 0x802BD878 and frame 0x802BD8B0 (evaluated continuously by `camera_script.cpp`) |
 | Area ambience (0x802E4CC0) | 3 | 3 Countup (cycle steps) | — | 0x802E4D60, 0x802E4DB4, 0x802E4E24 |
 | Creatures and fish | 29 | 7 Countdown, 5 CountdownPastZero, 7 Countup | 10 PerStep | fish (0x8033FF88's states): appear scale 0x803407D0…0x803407FC and steps 0x80340810, bait approach and lunge speeds 0x80341064…0x80341988, waits 0x803410AC…0x80341FB4 (their turns and the swim state: `fish_effects.cpp`); creature 0x80358BA4 frame hold 0x80358EB4; volcano creature colour fade / steps 0x80382498…0x803826EC |
-| Effect objects (the 2026-10-07 sweep of the callbacks live in Deserted Island area 10) | 45 | 7 Countdown, 14 CountdownPastZero, 16 Countup | 3 Advance, 5 PerStep | lives and end delays 0x803089C0, 0x80106608, 0x8010A310, 0x801E3EDC; hunter and weapon effect sparks 0x8010F760, 0x80109C70; colour key frames 0x8010920C, 0x801E36BC; a joint effect's spin 0x8010CC48 (PerStep, 2048); a proximity glow's alpha 0x8011A9F0/0x8011AA30/0x8011AA8C (Advance 13, −5, −3); glowing parts' pulse 0x802FA510 |
-| Effect objects of the Alatreon quest, the arena and the village (the second 2026-10-07 sweep, `MH3_TRACE=effect-objects`) | 36 | 4 Countdown, 9 CountdownPastZero, 17 Countup, 3 CountupEvery | 2 Advance, 1 PerStep | the hunter effects' switch 0x80113990 (by kind +2): ages for colour keys 0x80113A64…0x80114788, lives 0x80113BC8/0x80113C48/0x80114420, part waits 0x80113D04 and 0x801143E4 (every 30); Alatreon's pieces 0x802F2D14 (delay, wait, growth 0x802F3094, colour phases 0x802F30D4…0x802F3134) and curves 0x802F3420; monster effects 0x8030555C/0x803055E4; spins 0x80308748/0x8030889C (Advance 5461); village effects 0x80393FD4/0x80393FF8/0x80396700 |
+| Effect objects (the sweep of the callbacks live in Deserted Island area 10) | 45 | 7 Countdown, 14 CountdownPastZero, 16 Countup | 3 Advance, 5 PerStep | lives and end delays 0x803089C0, 0x80106608, 0x8010A310, 0x801E3EDC; hunter and weapon effect sparks 0x8010F760, 0x80109C70; colour key frames 0x8010920C, 0x801E36BC; a joint effect's spin 0x8010CC48 (PerStep, 2048); a proximity glow's alpha 0x8011A9F0/0x8011AA30/0x8011AA8C (Advance 13, −5, −3); glowing parts' pulse 0x802FA510 |
+| Effect objects of the Alatreon quest, the arena and the village (a second sweep, `MH3_TRACE=effect-objects`) | 36 | 4 Countdown, 9 CountdownPastZero, 17 Countup, 3 CountupEvery | 2 Advance, 1 PerStep | the hunter effects' switch 0x80113990 (by kind +2): ages for colour keys 0x80113A64…0x80114788, lives 0x80113BC8/0x80113C48/0x80114420, part waits 0x80113D04 and 0x801143E4 (every 30); Alatreon's pieces 0x802F2D14 (delay, wait, growth 0x802F3094, colour phases 0x802F30D4…0x802F3134) and curves 0x802F3420; monster effects 0x8030555C/0x803055E4; spins 0x80308748/0x8030889C (Advance 5461); village effects 0x80393FD4/0x80393FF8/0x80396700 |
 | Ambient creatures (0x803B9AE8, 0x803BB7F8, 0x803BB984, 0x803BBDA4) | 17 | 8 Countdown, 5 CountdownPastZero, 1 Countup, 1 CountupEvery | 1 Advance, 1 Rate | glow phase 0x803BB824 (−1024, Advance), glow pulse 0x803BB838 (Rate); sound every 32: 0x803BBB00. The flutterer 0x803BC584 is a native port (section 4) |
 | Online sync objects (the ten 60-byte objects at 0x806C1520, ObjectAgesUpdate 0x80345188) and the online quest load | 3 | 1 Countup (limit 899), 1 CountupEvery (32), 1 Countdown | — | 0x803440A8 (in 0x80343F50): steps since the object's last sync message (s16 +6); at 900 (30 s) it resyncs (state 8 sends one, 0x803385C8). It counted steps, so at 60 fps every 15 s |
 | Actor actions | 4 | 2 CountdownPastZero, 2 Countup | — | 0x803327A4, 0x8034E5EC |
@@ -196,8 +196,8 @@ The file is generated by `scripts/step_counter_sites.py` and has 299 entries:
   (damage-condition effects).
 - **2 of kind 0**, another `% N` use such as `< k`. They are read as the
   tick-count counter: 0x80214ACC (48) and 0x802E490C (32). The 12 equality
-  tests in quest_field's pl_effect_sub (0x808D15D4…0x808D56F4) were kind 0
-  until 2026-10-07: llvm-objdump prints their branches with a prediction
+  tests in quest_field's pl_effect_sub (0x808D15D4…0x808D56F4) were first
+  read as kind 0: llvm-objdump prints their branches with a prediction
   hint as `bc 13, 2` rather than `bt 2`, which the script did not read, so
   at steps without a tick they passed every step (kind 20 effects about 16
   times as often in the Alatreon quest).
@@ -298,7 +298,7 @@ The remaining files are infrastructure, not game logic:
   - the quest clock's OSGetTime doubles (806ce720/728) and an allocator pointer
     (8069af74);
   - the ambient hover phase near 0 or 0x8000.
-- **Online** (2026-10-08, Pi 5 arm32, a local MH3SP server: a poster and a joiner
+- **Online** (Pi 5 arm32, a local MH3SP server: a poster and a joiner
   through `MH3_ONLINE_AUTO`, the Tundra quest 10057, settle probes every
   ~1150 steps from the city to 4 minutes into the quest, writers named by
   `MH3_WRITE_WATCH` on the poster): the city NPCs' eased and timed turns and
@@ -334,8 +334,8 @@ Found since:
 | Scope zoom 1.75 a step (15..60) | ScopeCamera 0x802B988C (+0x1DC, +0x1E0) | fixed: PerStep site 0x802B99F0; unverified in play |
 | Aim view blend in (9 steps) and its side offset easing 6/64 a step | AimCamera 0x802B9C68 (+0x234; +0x23E toward +-0x800) | fixed: tick site 0x802B9F50; the offset by AimCameraPort (the gap shrunk by (58/64)^s); port check matches at the stock step; unverified in play |
 | Zone camera blends (the village's and the camps' fixed cameras, 0x805D4070's regions): the angle blend held between ticks, the point blend counted steps | 0x802BAC0C ZoneAngleBlend, 0x802BAE68 ZonePointBlend (zone +0x44 steps left) | fixed: tick site 0x802BAF18; CameraResetCurve 0x802BB0B0 reads the blends' steps left at the step's time. Village start blend 58.7 ticks variable / 58.0 fixed; the camp's point camera (kind 1, quest 1000) 48.0 ticks at both steps, moved on all 621 steps |
-| Monster effects 0x803048A4 kinds 1 and 103 ended about 10 ticks early at the variable step (Alatreon: 13 against 24 ticks), and kind 20 hunter effects (0x80107E40) 2.75 | 0x8030524C, 0x80108AD8 | no rate bug (2026-10-07, `MH3_TRACE=effect-states`, Pi 5 Alatreon area 1, 120 s each): neither has a counter; they live while the ef effect has particle managers (EffectMove 0x800F9984), and that part matched: kind 1 12.97 ticks variable / 13.00 fixed, kind 103 13.05 / 13.0, kind 176 50.6 / 51, kind 177 12.5 / 13. The rest of a life is the create, ending and release states, a step each (3 ticks at the fixed step, ~0.24 at 380 fps): kind 20's 19.00 / 16.24. The 24 ticks were the trace's: at the fixed step a slot released and taken again in one step kept its callback, so two or three lives counted as one; a state 0 after another state now starts a new life. Left: kinds 101 and 182 (sparks, 7 ticks) stay in state 1 1.2–1.4 ticks longer at the variable step (8.4 / 7.0–7.3); ef effects start and end on whole ticks while the object's states change on steps |
-| g3d animation frames set by game code | FrameCtrl::SetFrame 0x80061F28 | probed 2026-10-07 in Deserted Island area 10, the arena (9004), the village and Alatreon (19001): no calls; animation objects move by UpdateFrame at the scaled base rate (texture SRT: `MH3_TRACE=srt`), and AnmObjChrRes::SetFrame is native |
+| Monster effects 0x803048A4 kinds 1 and 103 ended about 10 ticks early at the variable step (Alatreon: 13 against 24 ticks), and kind 20 hunter effects (0x80107E40) 2.75 | 0x8030524C, 0x80108AD8 | no rate bug (`MH3_TRACE=effect-states`, Pi 5 Alatreon area 1, 120 s each): neither has a counter; they live while the ef effect has particle managers (EffectMove 0x800F9984), and that part matched: kind 1 12.97 ticks variable / 13.00 fixed, kind 103 13.05 / 13.0, kind 176 50.6 / 51, kind 177 12.5 / 13. The rest of a life is the create, ending and release states, a step each (3 ticks at the fixed step, ~0.24 at 380 fps): kind 20's 19.00 / 16.24. The 24 ticks were the trace's: at the fixed step a slot released and taken again in one step kept its callback, so two or three lives counted as one; a state 0 after another state now starts a new life. Left: kinds 101 and 182 (sparks, 7 ticks) stay in state 1 1.2–1.4 ticks longer at the variable step (8.4 / 7.0–7.3); ef effects start and end on whole ticks while the object's states change on steps |
+| g3d animation frames set by game code | FrameCtrl::SetFrame 0x80061F28 | probed in Deserted Island area 10, the arena (9004), the village and Alatreon (19001): no calls; animation objects move by UpdateFrame at the scaled base rate (texture SRT: `MH3_TRACE=srt`), and AnmObjChrRes::SetFrame is native |
 | Ambient hover phase bounce at 0 / 0x8000 | `ambient_hover.cpp` `Back()` | rests at the bound until the next whole tick (as the Wii's clamp does); built and played; not settle-probed |
 
 Found while writing this inventory (from reading the code; not verified at
@@ -563,71 +563,71 @@ callers), one-off counts (loops, hits), and anything reset every step.
 
 ## 9. Fix log
 
-Every variable-step change by commit (branch `arm32-gles`), with the pattern
-of section 8 it fixed.
+Every variable-step change by commit, with the pattern of section 8 it
+fixed.
 
-| Commit | Date | What | Pattern |
-|---|---|---|---|
-| 2aa1a181 | 09-28 | frame pacer on the host clock; ports of the fps-float timers (`fps_timers.cpp`), the reset fade and the movie frame draw | 12 |
-| 63f036c8 | 09-28 | the variable step (GameStep, `smBaseUpdateRate`); tick sites; step-counter hooks; ports of the player timers, stamina, player turning, swing props, root motion, camera script and paths, pulses, rumble, map sound, effects; `Share()` | 1, 3, 5, 6, 7, 14 |
-| 2e01d7ff | 09-28 | MHchar hit stop and hold spend exact partial ticks | 15 |
-| 557d0dfe | 09-28 | particles move by the step's game time | 6 |
-| 6b5aba20 | 09-28 | Now Loading letters once per tick (DrawHud ran them per frame) | 13 |
-| 0b20b408 | 09-28 | variable step on by default | — |
-| 80ab9120 | 09-29 | fps float stays 30; seconds-based counters (quest clock steps, quest counters, result screen, skill timers) count ticks; QuestClockTick subtracts game time | 1, 11, 12 |
-| 6a562877 | 09-29 | title idle timeout (900 steps), waits and PRESS A pulse (`Rate` kind) | 1, 5 |
-| 9c5a6134 | 09-29 | particle curves that jump at a tick (random picks, flipbooks) held for the tick | 9 |
-| df797dba | 09-29 | intro movie decodes the step's ticks of frames | 1, 13 |
-| 4ca32a3a | 09-29 | survey: enemy countdowns and ages, quest object countdowns, area ambience cycles, village NPC wait, camera shake, fish swim; ambient hover port | 1, 5, 9 |
-| 3e130479 | 09-29 | enemy turn damping (`Decay` kind) and turn add | 6, 7 |
-| df2dab1b | 09-30 | event demo clock counts ticks (the Alatreon intro raced); screen fades by the step | 1, 8 |
-| 1745f702 | 09-30 | player actions, enemy timers and periodic checks (`StepCounter::Every`), object ages, screen fades, texture scrolls; PLW+0x20 tests (kind 2); RSO overlay scan; PlChargeStep no longer charges faster | 1, 3, 5 |
-| d5bd714b | 09-30 | VelocityStep and the falls × s; spin motion-loop counts no longer add ticks per loop; spin steering `Share(192)` | 5, 6, 16 |
-| 5f9f4734 | 09-30 | 211 tick sites from a survey; `CountupEvery`/`CountdownEvery`; shells, VecAddInPlace by return address, VecMagWrapper budgets, enemy turning and blend, awareness gain, player tint | 1, 4, 5, 6 |
-| 699d916e | 09-30 | three enemy gauges from the per-step caller; small-monster timers and state steps | 1, 5 |
-| 53782903 | 09-30 | sandship anchored slide (`PerStep`) | 6 |
-| 2a630232 | 09-30 | desert object group shuttle port | 1, 6 |
-| d67aa8e8 | 09-30 | hit timers, flying-enemy glide, EnemyAddVelocity, flight AI vertical speed and countdown | 1, 6 |
-| c8d2081c | 09-30 | volcano creature fade (1/frames a step), ambient creature glow | 5, 8 |
-| 70f680b4 | 09-30 | ambient flutterer, sway chain solver; hover rests at a bound until the next tick | 5, 6, 7 |
-| 311cc5d6 | 10-03 | pad repeats, game-key locks, WPAD info wait; input lock and Classic chord window | 1 |
-| 93233749 | 10-03 | field camera turn, tilt, eases, settle and reset timers; climb view countdowns | 1, 5, 7 |
-| d0863beb | 10-03 | gunner aim (unverified in play) | 5 |
-| 6548750b | 10-03 | name-entry keyboard's open and close delays | 1 |
-| d5532692 | 10-03 | village run push × s, GlideTo in ticks, remote player's yaw ease | 5, 7 |
-| 9e9d645c | 10-05 | removed the tick site that scaled the enemy height offset (Jhen Mohran flicker) | 16 |
-| 44e1d5aa | 10-05 | Ceadeus's texture offset at counter + `Fraction()` | 14 |
-| 629246e1 | 10-05 | soft-reset fade by `Share()`; effect 45's random roll once per tick; loading letters' fractional hop | 8, 9, 13 |
-| 4136a621 | 10-05 | MHchar frame check over the step's advance; Ceadeus intro spray countdown in ticks and its demo-step `% 10` once per tick | 2, 3, 10 |
-| 12e4997d | 10-05 | DemoPose / DemoPoseAxes read the cutscene keyframes at the steps plus `Fraction()` | 14 |
-| d0cbd38e | 10-05 | Alatreon's intro action and meteor breath: breath effect every 8 ticks (3.5 times as many at 120 fps before), the intro's shells once per demo step (`alatreon_actions.cpp`, `enemy_work.h`) | 2, 3 |
-| f86c5c51 | 10-05 | port checks: the A: fuzz runs enemy actions on live monsters from made-up states (how the intros below, which only first-encounter demos reach, were checked) | — |
-| aa2f0f1f | 10-05 | kinds 1/2 spits' hiss every 8 ticks, em015 discharges' sparks every 3, the Ludroth spit's channel blend 0.1 a tick (`monster_attacks.cpp`) | 2 |
-| 13fd1d20 | 10-05 | eleven roars' steam every 8 ticks (`monster_roars.cpp`) | 2, 3 |
-| fe4912f0 | 10-05 | ten monster intros: cutscene poses by ticks (+ `Fraction()`), demo-step effects once per tick, roar steam every 8 ticks (`monster_intros.cpp`) | 1, 3, 14 |
-| 2bc9015e | 10-05 | thirteen waits and repeats: countdowns by ticks, sparks/steam/bursts every N ticks, em020's pitch turn by `Share()` (`monster_waits.cpp`) | 1, 2, 5, 17 |
-| 9693efd7 | 10-05 | Deviljho's tail spin (0x80133FB0, `enemy_turn.cpp`), found with a write watch on its yaw in the arena pit ([monster control](monster-control.md)) | 4 |
-| 3f2b2153, 310dc43f, 5b6ab8dd, e940cf13, d8a40aed | 10-05/06 | the watch pass of the monster sweep (count, yaw, x of the forced actions): Deviljho's charge limit, Rathian's wait, Rathian's and Rathalos' dive and flying charge, Qurupeco's move and backward hop: counts by ticks (`monster_waits.cpp`, `monster_attacks.cpp`) | 1 |
-| a49d44d6 | 10-06 | EnemyTurnWhile: the motion's advance per step, not per tick (`enemy_turn.cpp`) | 4 |
-| eef463d2 … d9c6b992, 5efed2fa | 10-06 | the watch pass over every large and small monster's forced actions (count, yaw, pitch, x): about 70 waits, sleeps, walks, swims and timed motions of 20 kinds counted by ticks (`monster_waits.cpp`, the `Timed` table), Gobul's spin by ticks and `Share()` (`monster_attacks.cpp`), the pitch and roll levelling of every monster (0x80137E34) by `Share()` (`enemy_turn.cpp`) | 1, 4 |
-| d5f96bfd | 10-06 | texture flipbooks (ResAnm keys a frame or less apart) hold the earlier key between frames at the variable step: Flooded Forest's underwater surface no longer slides through in-between rows several times too fast; found with `MH3_TRACE=srt` on the Pi 5 (the water's own scrolls were right) (`res_anm_keys.cpp`) | 3 |
-| aa4237b1 | 10-06 | the hunter's swim and drawn walk (Walk101 0x80252C78) moved a step's distance each step and the swim pitch (0x80252B50) turned 0x400 a step: in the water the hunter swam and dived about four times as fast at 120 steps a second ("swimming takes over the controls"); both by the step's share, found with a write watch on the hunter's x/z in Flooded Forest (`field_player_actions.cpp`) | 4, 5 |
-| 5262ca1a | 10-07 | the MHchar frame check's mode 0 window ahead (rate·`Scale()` past the frame) guessed the next step's advance from this one: at varying sub-tick steps consecutive windows overlapped or left gaps, so a walking hunter's footstep dust came two or three times in one tick and some footsteps had none (Deserted Island area 1, Pi 5 `MH3_TRACE=particles`); the windows now tile, each continuing where the channel's last one ended (`mhchar_motion.cpp`) | 10 |
-| e0f6defb | 10-07 | fish and effect objects (4.5): the fish's appear, bait and flee timers, speeds and scale changes and the effect objects live in Deserted Island area 10 (hunter and weapon effects, glows, debris, an enemy-attached model) counted their lives, waits, colour key frames and spark repeats per step: 64 tick sites; the fish's turn helper (0x8034027C) by `Share()` (`fish_effects.cpp`). Pi 5 area 10 at about 11 steps a tick: fish appear in 9.9 ticks (10.0 fixed), swim legs of 30.1 ticks (31.0) at 1.50 units a tick (1.50) | 1, 2, 5, 6, 8 |
-| b9cb201e | 10-07 | the fish swim state (0x803408B4, 4.5): its turn rate eased toward its goal by an eighth and its wobble flipped and halved once a step, so a swimming fish turned faster and a turning one slower at short steps; native port (with FishFindBait 0x8034048C, `fish_effects.cpp`): eases and wobble once a tick, the turn countdown by ticks, the speed and its fall by the step | 1, 6, 7 |
-| b9778960 | 10-07 | effect objects of the Alatreon quest, the arena and the village (4.5): hunter, monster, Alatreon and village effects counted their ages (colour keys, texture matrix curves), lives, waits between parts and colour phases per step, grew their pieces and spun per step: 36 tick sites; `MH3_TRACE=effect-objects` lists the live callbacks and kinds and their mean lives in ticks | 1, 4, 5, 6 |
-| 6f41ab3d | 10-07 | effects spawned on every step without a tick in the Alatreon quest (4.5): the 12 step-counter tests of quest_field's pl_effect_sub were kind 0, since llvm-objdump prints their hinted branches as `bc 13, 2` (kind 20 effects: 409 ended in 150 s at the variable step, now 71, at most one per 32 ticks); the quest object's countdown (+0x10, 0x808F7A7C) tested `% 10` for kind 123 is a CountdownEvery site (77 ended, now 9, as at the fixed step); the kind 7 fade 0x80308D64 ported (EffectFadeUpdate) | 3, 4 |
-| 1c3f9e27 | 10-07 | the hunter's weapon trail (0x80115AE4 HunterTrailUpdate, effect 0x801156C8): its six matrices of joint 7 were shifted on every step, so at 400 fps the trail spanned 5 steps (12 ms) instead of 5 ticks (167 ms); at a step without a tick the history is shifted back first, so only the head follows the joint; Pi 5 frame dumps of scripted sword-and-shield swings in the Alatreon quest: the variable step (~300 fps) draws arcs of a whole swing, as long as the fixed step's | 2 |
-| 3e4f522f | 10-07 | the camera's step counts (4.3): BindCamera (0x802B8ED0, a monster's hold of the hunter) ran its count and path once a step, 13 times as fast at 400 fps (Deviljho's grab in the arena pit now holds 181 ticks at count 180); the collision camera's hold and release counts, the scope zoom, the aim view's blend and side offset, and the zone cameras' angle and point blends counted steps (tick sites, `PerStep`, AimCameraPort); CameraResetCurve reads the blends' steps left at the step's time (`field_camera.cpp`); `MH3_TRACE=bind-camera,camera-blends` | 1, 5, 7, 14 |
-| 0e713dd9 | 10-07 | camera turns stuttered on the Vita: with the frame limit, frames are flipped a VBlank apart, but each step was the game thread's time between frame starts (12-44 ms, set by slot waits and the just-in-time start), so in a 10 s stick turn 158 of 555 flips showed the turn more than 10% off its speed (76 over 25%); the game's own yaw was smooth per game time. A shown frame's step is now the display's (`DisplayStep`, `frame_pacer.cpp`): 38 off, all at frames the display really repeated, and with the repeats paid back fading out 24 (7 over 25%) (`MH3_TRACE=camera-path,flips`) | — |
-| f215518f | 10-07 | the hold camera between ticks: BindCamera (0x802B8ED0) placed the eye and target once a tick, so a monster's hold moved the camera at 30 Hz; past the last tick it now runs once more for the next tick's place (its state put back) and the eye, target and field of view sit the step's fraction of the way there (`BindPlace`, `field_camera.cpp`): Deviljho's grab moved on 6863 of 6870 steps; port check matches | 14 |
-| 70d846b8 | 10-08 | online and town per-step work (8.3, step probes on an online Tundra quest between two Pi 5 instances): village and city NPCs eased their yaw (NpcYawTo callers, 1 - (1 - 1/d)^s), ran timed turns and counted script entries once a step (`npc_turn.cpp`, tick sites 0x801FFE40/74); the quest's field actor waited and turned once a step (`field_actor.cpp`, tick site 0x803A451C); a kind-8 monster's height rise at the quest's start (EnemyHeightAdd × s); shared objects counted steps to their 900-step resync message (tick site 0x803440A8) | 1, 5, 7 |
-| 70d846b8 | 10-08 | the online quest load's member sync every 32 steps (0x8028CB4C, `CountupEvery`), the 30-step input lock at an online quest's start (0x8028D064) and a field object's random 30..329-step wait (0x8032C5A8), named by a write watch on the joiner | 1, 4 |
-| c8dd3078 | 10-08 | item releases and monster senses timers (a paintball thrown at a frozen Deviljho in the arena pit): the throw (0x8024902C) and the whetstone (0x8024F264) check their release frame from two callers on the same frame, and the per-step mode-0 window left the second call empty when a step boundary fell between them, so the item never left the hand; windows now last until the character's next frame update (MHcharRootMotionPort). The paint timer (s16 +0x810, 18000 from EnemyPaint 0x80133678, 0x80133704) and 18 other timers of the senses step 0x801298E0, plus the grill cook time 0x8024AE74, counted once a step and are tick sites now | 1, 10 |
+| Commit | What | Pattern |
+|---|---|---|
+| 2aa1a181 | frame pacer on the host clock; ports of the fps-float timers (`fps_timers.cpp`), the reset fade and the movie frame draw | 12 |
+| 63f036c8 | the variable step (GameStep, `smBaseUpdateRate`); tick sites; step-counter hooks; ports of the player timers, stamina, player turning, swing props, root motion, camera script and paths, pulses, rumble, map sound, effects; `Share()` | 1, 3, 5, 6, 7, 14 |
+| 2e01d7ff | MHchar hit stop and hold spend exact partial ticks | 15 |
+| 557d0dfe | particles move by the step's game time | 6 |
+| 6b5aba20 | Now Loading letters once per tick (DrawHud ran them per frame) | 13 |
+| 0b20b408 | variable step on by default | — |
+| 80ab9120 | fps float stays 30; seconds-based counters (quest clock steps, quest counters, result screen, skill timers) count ticks; QuestClockTick subtracts game time | 1, 11, 12 |
+| 6a562877 | title idle timeout (900 steps), waits and PRESS A pulse (`Rate` kind) | 1, 5 |
+| 9c5a6134 | particle curves that jump at a tick (random picks, flipbooks) held for the tick | 9 |
+| df797dba | intro movie decodes the step's ticks of frames | 1, 13 |
+| 4ca32a3a | survey: enemy countdowns and ages, quest object countdowns, area ambience cycles, village NPC wait, camera shake, fish swim; ambient hover port | 1, 5, 9 |
+| 3e130479 | enemy turn damping (`Decay` kind) and turn add | 6, 7 |
+| df2dab1b | event demo clock counts ticks (the Alatreon intro raced); screen fades by the step | 1, 8 |
+| 1745f702 | player actions, enemy timers and periodic checks (`StepCounter::Every`), object ages, screen fades, texture scrolls; PLW+0x20 tests (kind 2); RSO overlay scan; PlChargeStep no longer charges faster | 1, 3, 5 |
+| d5bd714b | VelocityStep and the falls × s; spin motion-loop counts no longer add ticks per loop; spin steering `Share(192)` | 5, 6, 16 |
+| 5f9f4734 | 211 tick sites from a survey; `CountupEvery`/`CountdownEvery`; shells, VecAddInPlace by return address, VecMagWrapper budgets, enemy turning and blend, awareness gain, player tint | 1, 4, 5, 6 |
+| 699d916e | three enemy gauges from the per-step caller; small-monster timers and state steps | 1, 5 |
+| 53782903 | sandship anchored slide (`PerStep`) | 6 |
+| 2a630232 | desert object group shuttle port | 1, 6 |
+| d67aa8e8 | hit timers, flying-enemy glide, EnemyAddVelocity, flight AI vertical speed and countdown | 1, 6 |
+| c8d2081c | volcano creature fade (1/frames a step), ambient creature glow | 5, 8 |
+| 70f680b4 | ambient flutterer, sway chain solver; hover rests at a bound until the next tick | 5, 6, 7 |
+| 311cc5d6 | pad repeats, game-key locks, WPAD info wait; input lock and Classic chord window | 1 |
+| 93233749 | field camera turn, tilt, eases, settle and reset timers; climb view countdowns | 1, 5, 7 |
+| d0863beb | gunner aim (unverified in play) | 5 |
+| 6548750b | name-entry keyboard's open and close delays | 1 |
+| d5532692 | village run push × s, GlideTo in ticks, remote player's yaw ease | 5, 7 |
+| 9e9d645c | removed the tick site that scaled the enemy height offset (Jhen Mohran flicker) | 16 |
+| 44e1d5aa | Ceadeus's texture offset at counter + `Fraction()` | 14 |
+| 629246e1 | soft-reset fade by `Share()`; effect 45's random roll once per tick; loading letters' fractional hop | 8, 9, 13 |
+| 4136a621 | MHchar frame check over the step's advance; Ceadeus intro spray countdown in ticks and its demo-step `% 10` once per tick | 2, 3, 10 |
+| 12e4997d | DemoPose / DemoPoseAxes read the cutscene keyframes at the steps plus `Fraction()` | 14 |
+| d0cbd38e | Alatreon's intro action and meteor breath: breath effect every 8 ticks (3.5 times as many at 120 fps before), the intro's shells once per demo step (`alatreon_actions.cpp`, `enemy_work.h`) | 2, 3 |
+| f86c5c51 | port checks: the A: fuzz runs enemy actions on live monsters from made-up states (how the intros below, which only first-encounter demos reach, were checked) | — |
+| aa2f0f1f | kinds 1/2 spits' hiss every 8 ticks, em015 discharges' sparks every 3, the Ludroth spit's channel blend 0.1 a tick (`monster_attacks.cpp`) | 2 |
+| 13fd1d20 | eleven roars' steam every 8 ticks (`monster_roars.cpp`) | 2, 3 |
+| fe4912f0 | ten monster intros: cutscene poses by ticks (+ `Fraction()`), demo-step effects once per tick, roar steam every 8 ticks (`monster_intros.cpp`) | 1, 3, 14 |
+| 2bc9015e | thirteen waits and repeats: countdowns by ticks, sparks/steam/bursts every N ticks, em020's pitch turn by `Share()` (`monster_waits.cpp`) | 1, 2, 5, 17 |
+| 9693efd7 | Deviljho's tail spin (0x80133FB0, `enemy_turn.cpp`), found with a write watch on its yaw in the arena pit ([monster control](monster-control.md)) | 4 |
+| 3f2b2153, 310dc43f, 5b6ab8dd, e940cf13, d8a40aed | the watch pass of the monster sweep (count, yaw, x of the forced actions): Deviljho's charge limit, Rathian's wait, Rathian's and Rathalos' dive and flying charge, Qurupeco's move and backward hop: counts by ticks (`monster_waits.cpp`, `monster_attacks.cpp`) | 1 |
+| a49d44d6 | EnemyTurnWhile: the motion's advance per step, not per tick (`enemy_turn.cpp`) | 4 |
+| eef463d2 … d9c6b992, 5efed2fa | the watch pass over every large and small monster's forced actions (count, yaw, pitch, x): about 70 waits, sleeps, walks, swims and timed motions of 20 kinds counted by ticks (`monster_waits.cpp`, the `Timed` table), Gobul's spin by ticks and `Share()` (`monster_attacks.cpp`), the pitch and roll levelling of every monster (0x80137E34) by `Share()` (`enemy_turn.cpp`) | 1, 4 |
+| d5f96bfd | texture flipbooks (ResAnm keys a frame or less apart) hold the earlier key between frames at the variable step: Flooded Forest's underwater surface no longer slides through in-between rows several times too fast; found with `MH3_TRACE=srt` on the Pi 5 (the water's own scrolls were right) (`res_anm_keys.cpp`) | 3 |
+| aa4237b1 | the hunter's swim and drawn walk (Walk101 0x80252C78) moved a step's distance each step and the swim pitch (0x80252B50) turned 0x400 a step: in the water the hunter swam and dived about four times as fast at 120 steps a second ("swimming takes over the controls"); both by the step's share, found with a write watch on the hunter's x/z in Flooded Forest (`field_player_actions.cpp`) | 4, 5 |
+| 5262ca1a | the MHchar frame check's mode 0 window ahead (rate·`Scale()` past the frame) guessed the next step's advance from this one: at varying sub-tick steps consecutive windows overlapped or left gaps, so a walking hunter's footstep dust came two or three times in one tick and some footsteps had none (Deserted Island area 1, Pi 5 `MH3_TRACE=particles`); the windows now tile, each continuing where the channel's last one ended (`mhchar_motion.cpp`) | 10 |
+| e0f6defb | fish and effect objects (4.5): the fish's appear, bait and flee timers, speeds and scale changes and the effect objects live in Deserted Island area 10 (hunter and weapon effects, glows, debris, an enemy-attached model) counted their lives, waits, colour key frames and spark repeats per step: 64 tick sites; the fish's turn helper (0x8034027C) by `Share()` (`fish_effects.cpp`). Pi 5 area 10 at about 11 steps a tick: fish appear in 9.9 ticks (10.0 fixed), swim legs of 30.1 ticks (31.0) at 1.50 units a tick (1.50) | 1, 2, 5, 6, 8 |
+| b9cb201e | the fish swim state (0x803408B4, 4.5): its turn rate eased toward its goal by an eighth and its wobble flipped and halved once a step, so a swimming fish turned faster and a turning one slower at short steps; native port (with FishFindBait 0x8034048C, `fish_effects.cpp`): eases and wobble once a tick, the turn countdown by ticks, the speed and its fall by the step | 1, 6, 7 |
+| b9778960 | effect objects of the Alatreon quest, the arena and the village (4.5): hunter, monster, Alatreon and village effects counted their ages (colour keys, texture matrix curves), lives, waits between parts and colour phases per step, grew their pieces and spun per step: 36 tick sites; `MH3_TRACE=effect-objects` lists the live callbacks and kinds and their mean lives in ticks | 1, 4, 5, 6 |
+| 6f41ab3d | effects spawned on every step without a tick in the Alatreon quest (4.5): the 12 step-counter tests of quest_field's pl_effect_sub were kind 0, since llvm-objdump prints their hinted branches as `bc 13, 2` (kind 20 effects: 409 ended in 150 s at the variable step, now 71, at most one per 32 ticks); the quest object's countdown (+0x10, 0x808F7A7C) tested `% 10` for kind 123 is a CountdownEvery site (77 ended, now 9, as at the fixed step); the kind 7 fade 0x80308D64 ported (EffectFadeUpdate) | 3, 4 |
+| 1c3f9e27 | the hunter's weapon trail (0x80115AE4 HunterTrailUpdate, effect 0x801156C8): its six matrices of joint 7 were shifted on every step, so at 400 fps the trail spanned 5 steps (12 ms) instead of 5 ticks (167 ms); at a step without a tick the history is shifted back first, so only the head follows the joint; Pi 5 frame dumps of scripted sword-and-shield swings in the Alatreon quest: the variable step (~300 fps) draws arcs of a whole swing, as long as the fixed step's | 2 |
+| 3e4f522f | the camera's step counts (4.3): BindCamera (0x802B8ED0, a monster's hold of the hunter) ran its count and path once a step, 13 times as fast at 400 fps (Deviljho's grab in the arena pit now holds 181 ticks at count 180); the collision camera's hold and release counts, the scope zoom, the aim view's blend and side offset, and the zone cameras' angle and point blends counted steps (tick sites, `PerStep`, AimCameraPort); CameraResetCurve reads the blends' steps left at the step's time (`field_camera.cpp`); `MH3_TRACE=bind-camera,camera-blends` | 1, 5, 7, 14 |
+| 0e713dd9 | camera turns stuttered on the Vita: with the frame limit, frames are flipped a VBlank apart, but each step was the game thread's time between frame starts (12-44 ms, set by slot waits and the just-in-time start), so in a 10 s stick turn 158 of 555 flips showed the turn more than 10% off its speed (76 over 25%); the game's own yaw was smooth per game time. A shown frame's step is now the display's (`DisplayStep`, `frame_pacer.cpp`): 38 off, all at frames the display really repeated, and with the repeats paid back fading out 24 (7 over 25%) (`MH3_TRACE=camera-path,flips`) | — |
+| f215518f | the hold camera between ticks: BindCamera (0x802B8ED0) placed the eye and target once a tick, so a monster's hold moved the camera at 30 Hz; past the last tick it now runs once more for the next tick's place (its state put back) and the eye, target and field of view sit the step's fraction of the way there (`BindPlace`, `field_camera.cpp`): Deviljho's grab moved on 6863 of 6870 steps; port check matches | 14 |
+| 70d846b8 | online and town per-step work (8.3, step probes on an online Tundra quest between two Pi 5 instances): village and city NPCs eased their yaw (NpcYawTo callers, 1 - (1 - 1/d)^s), ran timed turns and counted script entries once a step (`npc_turn.cpp`, tick sites 0x801FFE40/74); the quest's field actor waited and turned once a step (`field_actor.cpp`, tick site 0x803A451C); a kind-8 monster's height rise at the quest's start (EnemyHeightAdd × s); shared objects counted steps to their 900-step resync message (tick site 0x803440A8) | 1, 5, 7 |
+| 70d846b8 | the online quest load's member sync every 32 steps (0x8028CB4C, `CountupEvery`), the 30-step input lock at an online quest's start (0x8028D064) and a field object's random 30..329-step wait (0x8032C5A8), named by a write watch on the joiner | 1, 4 |
+| c8dd3078 | item releases and monster senses timers (a paintball thrown at a frozen Deviljho in the arena pit): the throw (0x8024902C) and the whetstone (0x8024F264) check their release frame from two callers on the same frame, and the per-step mode-0 window left the second call empty when a step boundary fell between them, so the item never left the hand; windows now last until the character's next frame update (MHcharRootMotionPort). The paint timer (s16 +0x810, 18000 from EnemyPaint 0x80133678, 0x80133704) and 18 other timers of the senses step 0x801298E0, plus the grill cook time 0x8024AE74, counted once a step and are tick sites now | 1, 10 |
 
 ---
 
-## 10. Candidates from the pattern sweep (2026-10-05)
+## 10. Candidates from the pattern sweep
 
 Found by scanning Ghidra decompiles of the 588 DOL callers of
 `em_frame_check` (0x8012F980), `Pl_frame_check` (0x8026A378), the MHchar
@@ -641,7 +641,7 @@ variable step except where noted; a monster's attack is needed to reach most.
 Global step-counter tests in them (`system_w+0xC & 3` etc., 92 seen) are
 already hooked.
 
-**Status 2026-10-06.** The 121 enemy functions of this list that take ±1 from
+**Status.** The 121 enemy functions of this list that take ±1 from
 the action count (+0x20) were gone through by kind: about 100 are ported
 (`monster_waits.cpp`, `monster_attacks.cpp`, `monster_intros.cpp`; each
 checked with the A: fuzz on a live monster of its kind, 256 states). Left as
@@ -665,7 +665,7 @@ reads it.
 
 | Class (pattern) | Functions | Effect at short steps |
 |---|---|---|
-| Countdown waits per call (1) | 0x801B795C, 0x801B867C (em034 Kelbi hops: a 10-call hold after landing) | ported 2026-10-06 (`monster_waits.cpp`, counted by ticks); checked with the A: fuzz on the Kelbi of `--quest 1028 --area 1 --quest-small Kelbi` (256 states each). The organic callers come through 0x801B94B4, a dispatcher not of Kelbi variant 1 (kind 34's handler 3 is 0x801B6560) |
+| Countdown waits per call (1) | 0x801B795C, 0x801B867C (em034 Kelbi hops: a 10-call hold after landing) | ported (`monster_waits.cpp`, counted by ticks); checked with the A: fuzz on the Kelbi of `--quest 1028 --area 1 --quest-small Kelbi` (256 states each). The organic callers come through 0x801B94B4, a dispatcher not of Kelbi variant 1 (kind 34's handler 3 is 0x801B6560) |
 | Player counts in a reached range (1, 2) | 0x8010E30C (u8 +7 ×3), 0x801E1BCC, 0x8020FE7C (s16 0x806AD070+4), 0x80250E9C, 0x8025779C, 0x80257BE0 (u8 +6), 0x80262AC8, 0x803A2730 | short delays (1–2 ticks) end within a tick |
 | Other enemy-action ± 1 sites (1) | the rest of the 283 (list: rerun the scan, `scan_rmw`-style: `x = Read(r + off); x ± 1; Write(r + off, x)` in functions calling 0x8012F980/0x8012F9A0/0x8012F61C/0x8026A378) | to be classified: many are event counts (hits, loops) that must stay whole (pattern 16) |
 
@@ -680,7 +680,7 @@ Also found:
   variable step (~115-170 steps a second), with and without these ports. It
   comes through the enemy effect queue (callers 0x80304978, 0x800F8E74), so
   the action that queues it is not known; another count or test per call.
-  2026-10-05, the arena pit with Barroth (`--quest 9004 --quest-monster
+  In the arena pit with Barroth (`--quest 9004 --quest-monster
   Barroth`, `MH3_TRACE=actions,particles`): every lookup of the emitter came
   at ticks 27-57, before Barroth's first action (tick 74), one a frame: the
   quest start's effect set-up, not an emission of an action.

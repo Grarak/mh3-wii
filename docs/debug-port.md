@@ -46,4 +46,5 @@ when one is an error.
 Addresses are guest virtual addresses (0x80000000 up); others answer
 `error: no guest RAM`.
 
-The Vita build has no debug port yet (DebugPort::Step does nothing there).
+The debug port is compiled into development builds on Linux only; the Vita
+build has none.

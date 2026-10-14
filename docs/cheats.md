@@ -13,7 +13,7 @@ how a game function behaves. The published lists are for the US disc
 
 No Gecko code is interpreted at run time: the code is statically
 translated, so an instruction patch could not take effect. Each code is
-native code instead ([launcher](vita-launcher.md#custom-quests-and-cheats)):
+native code instead:
 
 - **Data codes** (`runtime/src/cheat_data.cpp`): the RAM writes and
   conditions as C, at the European addresses (heap data where the US disc

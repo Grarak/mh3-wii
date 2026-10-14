@@ -119,7 +119,7 @@ void display_callback(const void* data) {
   // queue no longer paces the GPU and the render thread (the newest frame at
   // each VBlank is shown; a buffer may be reused before scanout leaves it).
   // SCE_DISPLAY_SETBUF_IMMEDIATE fails from the display queue's callback
-  // (every flip, devkit 2026-10-06: a black screen); vita2d's no-vsync mode
+  // (every flip on the devkit: a black screen); vita2d's no-vsync mode
   // does the same as here.
   const bool vsync = g_vsync.load(std::memory_order_relaxed);
   const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);

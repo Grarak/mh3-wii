@@ -17,12 +17,12 @@ column says which.
 | `MH3_MSAA` | `2` or `4` renders the EFB with 2x or 4x multisampling (the Vita's GXM renderer, and the GL one where the driver offers it), `off` without, as the launcher's `MSAA` row does, for runs started without the launcher | development |
 | `MH3_STATS` | `0` turns off the once-per-second statistics lines (default on; [profiling](profiling.md#statistics-lines)); set to anything, it also prints the material-GPU counters | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
-| `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution (448·n rows); overrides the launcher's `Upscaling` ([launcher](vita-launcher.md)) | development |
+| `MH3_RENDER_SCALE` | `n`: render the EFB at n times the native resolution (448·n rows); overrides the launcher's `Upscaling` | development |
 | `MH3_THP_JPEG` | `off`: the Vita decodes the movies in software instead of on its hardware JPEG decoder, frames ahead ([movies](optimizations/assets/hardware-movie-decoding.md)) | development |
 | `MH3_AUDIO_NULL` | `1`: no playback device; the mix is consumed at 32 kHz | development |
-| `MH3_LAUNCHER_INPUT` | launcher input script, on the Vita and with `MH3 --launcher` on a host ([launcher](vita-launcher.md)) | development |
+| `MH3_LAUNCHER_INPUT` | a launcher input script, on the Vita and with `MH3 --launcher` on a host: lines `FRAME BUTTONS`, each holding its buttons (joined by `+`, `none`, or `SCE_CTRL` bits) from that launcher frame on; dialogs close after 2.5 s while it runs | development |
 | `MH3_VARIABLE_STEP` | `0`: the game's fixed 1/30 s steps instead of the variable step | development |
-| `MH3_GXM_SHADER_DUMP` | a directory: mirror runtime-compiled GXPs (development builds' bank misses) there with their Cg | Vita |
+| `MH3_GXM_SHADER_DUMP` | a directory: mirror runtime-compiled GXPs (development builds' bank misses) there with their Cg | Vita development |
 | `MH3_LANGUAGE` | `en`, `fr`, `de`, `it` or `es`: the game's language (the console's `IPL.LNG`), as the launcher's `Language` row does, for runs started without the launcher | all |
 | `MH3_ONLINE_SERVER` | `DOMAIN[:PORT]` or `IP[:PORT]`: the online server (default `mh3sp.com`), as the launcher's online server setting does ([online](online.md)) | all |
 | `MH3_ONLINE_SKIP_TLS` | `1`: TLS sessions pass their bytes through unencrypted (a local MH3SP with `UseSSL = OFF`; [online](online.md)) | all |
@@ -107,14 +107,7 @@ waits for each frame's draw ([pipelined draw](optimizations/threading/pipelined-
 | `census` | every 240 frames, the `MH3 draw census` lines: per frame, the model draws, the skinned palette-batch draws, the distinct index ranges and meshes (a mesh split into palette batches draws once per batch), runs of draws sharing program, material and asset, the ten assets with the most draws, and the sixteen programs (vertex+fragment stage names) with the most triangles, with their draws |
 
 Every item measures or reports (`sync` and `skip` change the timing or the
-render thread's work only to attribute time). The A/B items of paths every build now takes were removed (a
-stale one prints `MH3: MH3_PROFILE: '...' is ignored; it was removed`):
-`draw-inline` (the whole frame drawn on the game thread), `draw-thread` (the
-scene on the draw thread while the game thread waits), `serial-prepare` (the
-scene graph walk on the game thread), `serial-world` (the world matrix pass on
-the game thread alone; `MH3_PORT_CHECK` other than `ScnGroupCalcWorld` still
-keeps it there), `queue=N` (two packets waiting for the render thread) and
-`unpaced` (the launcher's `Framelimit: OFF` does the same; `MH3_FRAME_LIMIT=off` for runs started without the launcher).
+render thread's work only to attribute time).
 
 ### `MH3_INPUT`: scripted controller input
 
@@ -148,12 +141,11 @@ The debug port turns each item on and off while the game runs (`trace ITEM on|of
 
 ### `MH3_MONSTER_CONTROL`: drive a monster
 
-`MH3_MONSTER_CONTROL=PATH`: commands read from PATH while the game runs (`act MODE SUB`, `every TICKS MODE SUB`, `ai off`, `freeze on`, `face DEGREES`, `goto X Y Z`, `target N`, `wait TICKS`, `list`), one a line, each run once in order as it appears. With `--quest 9004 --quest-monster NAME` a chosen monster in the arena pit, `--quest 9000 --quest-small NAME` four small ones ([monster control](monster-control.md)).
+`MH3_MONSTER_CONTROL=PATH`: commands read from PATH while the game runs (`act MODE SUB`, `every TICKS MODE SUB`, `ai off`, `freeze on`, `face DEGREES`, `goto X Y Z`, `target N`, `wait TICKS`, `list`), one a line, each run once in order as it appears. With `--quest 9004 --quest-monster NAME` a chosen monster in the arena pit, `--quest 1028 --area 1 --quest-small NAME` a field area full of small ones ([monster control](monster-control.md)).
 
 ### `MH3_DEBUG_PORT`: drive the game over TCP
 
 `MH3_DEBUG_PORT=PORT` (127.0.0.1) or `ADDR:PORT`, Linux: a TCP line protocol for memory peeks and pokes, guest calls, cheats and frame dumps while the game runs, whose commands skip the menus (`scripts/dev/debug-port.py`, [debug port](debug-port.md)).
-
 
 ### `MH3_EFFECT_TOUCH_CHECK`: the guest worker's join points
 
@@ -163,6 +155,7 @@ effect pools only after it has joined the guest worker's effect calculation
 the join is a race with the calculation. Each function that makes one is
 reported once, and the pools open for the rest of that pass
 (`effect_step.cpp`); development builds only.
+
 ## Build-option tools
 
 These need a CMake option, which rebuilds the generated code.
@@ -198,9 +191,6 @@ PATH` symbolizes both into `PATH.report/`.
 | --- | --- | --- |
 | `MH3_NATIVE_MODEL_INDEX` | a converted model index to use instead of `native-models/models.index.bin` | all |
 | `MH3_NATIVE_MODEL_PACK` | one converted model pack instead of the index (not with `MH3_NATIVE_MODEL_INDEX`) | all |
-
-The model tests and the asset scripts (`vita-active-play.py`,
-`profile_native_host.py`, `capture_native_material_keys.py`) use them.
 
 ## Aurora
 

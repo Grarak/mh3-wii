@@ -12,7 +12,7 @@ FILE *__real___sfp(struct _reent *reent);
  * broke the other's stream. The render thread reads a mesh pack while the
  * asset workers write the converted packs of an area entered the first time:
  * its read ended early ("Native mesh payload is truncated or unreadable",
- * 2026-10-06; not on the next launch, the packs then converted). The
+ * not on the next launch, the packs then converted). The
  * reservation takes this lock; a close frees its FILE with a single store. */
 static int sfp_held;
 

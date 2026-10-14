@@ -19,7 +19,7 @@
 // SCE_JPEG_ERROR_NOT_PHY_CONTINUOUS_MEMORY (0x80650053). In main memory it
 // cleans the stream's and invalidates the planes' cache lines itself.
 //
-// Measured on the devkit (2026-10-08, MH3_THP_BENCH, removed since): a
+// Measured on the devkit (MH3_THP_BENCH, removed since): a
 // 640x480 frame takes the media engine 20 ms even when black and about
 // 30 ms in the opening movie, slower than the software decoder's 26 ms. The
 // engine runs at 166 MHz (vnz_wrapper); only the kernel sets its clock, and

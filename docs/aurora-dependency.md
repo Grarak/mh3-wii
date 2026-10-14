@@ -1,7 +1,7 @@
 # Aurora
 
 `aurora-main/` started as a source snapshot of Aurora taken from the
-WiiCompiled project on 2026-09-27 (parent commit
+WiiCompiled project (parent commit
 `85f250155f8f397c1c463dc51dd4dc2707371d06`). Aurora's MIT license is kept at
 `aurora-main/LICENSE`.
 
@@ -19,8 +19,7 @@ replays frame packets recorded by the game thread; backend tasks execute on
 it. No GX queue remains; GX compatibility APIs/FIFO routes panic. Native rendering
 reuses pure material equations and typed resource helpers from the tree,
 without restoring GX submission. See [GX replacement](optimizations/rendering/gx-replacement.md)
-for how the game's draws reach the renderer. The old
-build-time overlay scripts (`aurora-efb.cmake`, `patch_aurora_*.py`) are gone.
+for how the game's draws reach the renderer.
 
 `scripts/build-aurora.sh` configures the runtime against this tree (override
 with `AURORA_ROOT`). `scripts/aurora-compat.cmake` only fixes header-order

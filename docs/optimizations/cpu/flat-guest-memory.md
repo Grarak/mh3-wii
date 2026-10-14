@@ -63,7 +63,7 @@ Every translated load and store paid for the lookup. Before the flat
 mapping, an intermediate fix that only inlined the page-bias check for
 stack accesses noted that each stack store had been an out-of-line call,
 16% of the game thread in the field (commit "Read and write plain RAM
-inline under checked guest memory", 2026-09-29). The flat mapping removed
+inline under checked guest memory"). The flat mapping removed
 the tables, the slow paths and the deferred-read pages altogether; its own
 gain was not measured separately. It is also what lets a second host thread
 run guest code ([guest worker](../threading/guest-worker.md)): there is no per-thread

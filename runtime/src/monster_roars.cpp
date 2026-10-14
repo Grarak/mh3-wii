@@ -24,9 +24,9 @@
 // ... MH3_VARIABLE_STEP=0; the arena's Barroth 9002 and Lagiacrus 9005 roar
 // on sight, the others through the enemy fuzz's A: entries).
 //
-// The kinds (work +3) were relabeled on 2026-10-06 by the dispatcher that
-// reaches each function (docs/monster-control.md); the descriptions of what a
-// monster does were written under the earlier labels, wrong for kinds 1-12.
+// The kinds (work +3) are labeled by the dispatcher that reaches each
+// function (docs/monster-control.md); the descriptions of what a monster does
+// were written under earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"
 #include "guest_call.h"
