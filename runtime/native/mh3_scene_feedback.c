@@ -301,7 +301,7 @@ int mh3_scene_equipment_update(const mh3_scene_cpu_ops *o, uint32_t owner, uint3
         WC(work + offset + 0xf4, UINT32_MAX);
 
         if (slot < 7) {
-            CALL(0x8022315c, equipment);
+            CALL(0x8022315c, equipment, slot);
             WB(equipment + slot + 0x9c0, 0);
         } else {
             CALL(0x80223210, equipment, slot - 7);
@@ -371,8 +371,10 @@ int mh3_scene_equipment_update(const mh3_scene_cpu_ops *o, uint32_t owner, uint3
     if ((slot == 0 || slot > 6) && RB(work + slot + 0xb))
         CALL(0x8022431c, equipment);
 
+    /* Rebuilds part 4's or 5's sway chains (0x8b4, 0x674) for the new model;
+     * without the slot in r4 they kept the old piece's joints. */
     if (slot - 4 < 2)
-        CALL(0x802abf64, owner);
+        CALL(0x802abf64, owner, slot);
 
     WB(work + slot + 0xb, 0);
     WC(work + offset + 0x18, UINT32_MAX);
