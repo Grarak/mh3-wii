@@ -30,6 +30,7 @@ column says which.
 | `MH3_ONLINE_HOSTS` | `name=address[,...]` (`*.domain` for every host in it): answer these lookups without DNS ([online](online.md)) | Linux |
 | `MH3_ONLINE_PORTS` | `from=to[,...]`: connect to port `to` instead of `from` (a local account server instead of port 80; [online](online.md)) | Linux |
 | `MH3_ONLINE_ADDRESSES` | `from=to[,...]`: reach IPv4 address `from` at `to`, and read packets from `to` as from `from` (a server that names its ZeroTier address, reached from a Vita on the LAN; [online](online.md)) | Linux |
+| `MH3_ONLINE_NAME_TAG` | text in front of the hunter's name on the lobby server, which other players see (default `[PV]` on the Vita, none elsewhere; empty: none) ([online](online.md)) | all |
 | `MH3_ONLINE_AUTO` | `id=N,server=N,gate=N,city=N,post=QUEST[,members=N][,depart=N]` or `...,join=N`: the online autopilot takes a `--city` launch through the online screens into a quest without input (`city=-1`: it stays in the gate, Loc Lac's streets) (`runtime/src/net/online_auto.cpp`) | development |
 
 ## Development tools

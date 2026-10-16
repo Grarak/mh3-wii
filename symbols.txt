@@ -2324,3 +2324,4 @@
 80514500 ProcessPingPacket
 80514880 ProcessInitAckPacket
 80514a80 NNProcessData
+803fe8f4 SetUserObjectName
