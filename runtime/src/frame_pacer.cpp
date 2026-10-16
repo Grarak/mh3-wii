@@ -244,8 +244,18 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     Memory::Write32(at(kNextFrameBuffer), Memory::Read32(at(kFrameBuffers) + back * 4));
     os(SystemCall);
 
-    if (!variableStep)
-        sleepUntil(frameEnd);
+    if (!variableStep) {
+        if (Clock::now() < frameEnd) {
+            sleepUntil(frameEnd);
+        } else {
+            // Behind: no wait to yield in, so the other guest threads (the
+            // network's among them) get their moment as in a variable step.
+            const CpuContext frame = *ctx;
+            PumpDevices(ctx);
+            GuestThreads::Donate(ctx, kDonation);
+            *ctx = frame;
+        }
+    }
 
     pacedTicks += stepTicks;
     ++pacedFrames;
