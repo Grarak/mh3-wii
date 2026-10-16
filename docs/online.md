@@ -53,6 +53,7 @@ library (`sNetworkLibraryWii`, DWC, NHTTP, GameSpy). In order:
 | MH3SP data patches and `NNBeginNegotiationWithSocket` (0x80513940) port | `runtime/src/net/online_patches.cpp` |
 | GameSpy SDK (0x8050B170..0x80514D18): darray, hashtable, platform sockets and time, the availability check, GT2 peer connections, NAT negotiation, ported natively | `runtime/src/net/gamespy.h`, `gamespy_common.cpp`, `gamespy_gt2.cpp`, `gamespy_natneg.cpp` |
 | The Wii socket library (SO: startup, the IPC calls to `/dev/net/ip/top`, its allocator), NCD (network configuration) and NWC24 (user ID, scheduler, socket hand-over, RTC, shutdown), ported natively | `runtime/src/net/wii_so.cpp`, `wii_ncd.cpp`, `wii_nwc24.cpp` |
+| DWC (the account server login over NHTTP, its base64, allocators and friend code) and the SSL library over `/dev/net/ssl`, ported natively | `runtime/src/net/wii_dwc.cpp`, `wii_ssl.cpp` |
 | `/dev/net/ip/top`, `/dev/net/ssl`, `/dev/net/ncd/manage`, `/dev/net/kd/request` (once online play started; offline the game still finds no WiiConnect24) | `runtime/src/net/ios_net.cpp` |
 | Host sockets, name lookups, TLS (OpenSSL) behind `NetHost` | `runtime/src/net/net_host.h`, `net_host_posix.cpp` |
 | USB library's IOS open/close with timeout (0x804BC630, 0x804BC8C0); `/dev/usb/oh*` not found | `runtime/src/ios.cpp` |
