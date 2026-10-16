@@ -357,6 +357,9 @@ public sealed partial class CxxLinearCodeGenerator
                 }
                 EmitHoistedGqrPrologue(body, hoistedGqrIndices);
 
+                // Counts this body's entries in MH3_ENABLE_ENTRY_TRACE builds
+                // (MH3_ENTRY_TRACE); the macro is empty otherwise.
+                body.AppendLine($"    MKW_GUEST_ENTER(0x{entryPoint:X8}u);");
                 body.AppendLine($"    goto {labelNames[func.EntryLabel]};");
                 body.AppendLine();
 

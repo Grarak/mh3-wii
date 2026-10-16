@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.25)
 project(MH3Recompiled LANGUAGES C CXX ASM)
 option(MH3_ENABLE_GUEST_CALL_TRACE "Enable temporary guest call graph instrumentation" OFF)
 
+# Debug: every translated function counts its entries (MH3_ENTRY_TRACE=PATH).
+option(MH3_ENABLE_ENTRY_TRACE "Debug: count translated function entries" OFF)
+
+if(MH3_ENABLE_ENTRY_TRACE)
+  add_compile_definitions(MH3_ENABLE_ENTRY_TRACE=1)
+endif()
+
 # Debug: every host function the compiler can see calls the trace hooks
 # (MH3_CALL_TRACE=PATH,movie). Before Aurora, so its code is traced too.
 option(MH3_ENABLE_FUNCTION_TRACE "Debug: count every host function call during movies" OFF)
@@ -360,6 +367,9 @@ if(MH3_ENABLE_FUNCTION_TRACE)
   target_compile_definitions(MH3 PRIVATE MH3_ENABLE_FUNCTION_TRACE=1)
 endif()
 
+if(MH3_ENABLE_ENTRY_TRACE)
+  target_sources(MH3 PRIVATE src/guest_entry_trace.cpp)
+endif()
 if(MH3_ENABLE_GUEST_CALL_TRACE)
   target_sources(MH3 PRIVATE src/guest_call_trace.cpp)
   set(trace_manifest "${CMAKE_SOURCE_DIR}/../generated/build_shards/guest_trace_sources.cmake")

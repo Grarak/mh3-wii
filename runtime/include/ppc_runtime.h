@@ -13,6 +13,15 @@
 #include "isa/ppc_isa_float.h"
 #include "isa/ppc_isa_quantized.h"
 
+// MH3_ENABLE_ENTRY_TRACE builds: each translated function counts its entries
+// (MH3_ENTRY_TRACE=PATH, guest_entry_trace.cpp). Empty otherwise.
+#if defined(MH3_ENABLE_ENTRY_TRACE)
+extern "C" void MH3_TraceEntry(uint32_t address);
+#define MKW_GUEST_ENTER(address) MH3_TraceEntry(address)
+#else
+#define MKW_GUEST_ENTER(address) ((void)0)
+#endif
+
 // Guest lwz instructions listed in translation.load_hooks_path load through
 // the runtime (step_counter.cpp): base + offset is the guest address, pc the
 // instruction.

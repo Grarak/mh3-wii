@@ -185,6 +185,18 @@ calling threads; `PATH.seq.N` the game thread's calls and returns in order
 around movie N's last frame (its skip and cleanup). `scripts/function_trace.py
 PATH` symbolizes both into `PATH.report/`.
 
+### `MH3_ENTRY_TRACE`: translated function entries (`-DMH3_ENABLE_ENTRY_TRACE=ON`)
+
+`MH3_ENTRY_TRACE=PATH[,gate=FILE]`: every translated function counts its
+entries (the translator puts a probe at each body's start; the build must be
+translated with it). PATH gets each entered function's guest address, entry
+count and the order of its first entry, rewritten every 5 s; with `gate`,
+counting starts once FILE exists. A native port runs no translated body, so the
+traces of the same scenario in a build without a group of ports and one with
+them differ only where the ports' own calls differ:
+`scripts/dev/entry_trace_compare.py BEFORE AFTER --native ROOT...` lists those,
+leaving out the functions registered natively in each tree.
+
 ## Asset overrides
 
 | Variable | Effect | Builds |
