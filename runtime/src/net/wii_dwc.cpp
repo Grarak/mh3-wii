@@ -53,7 +53,7 @@ enum : uint32_t {
     GsiMemoryCallbacksSet = 0x8050CC00,
     NhttpStartup = 0x8051AB68,
     NhttpCleanupAsync = 0x8051ABF4,
-    NhttpGetError = 0x8051AC4C,
+    NhttpGetSslError = 0x8051AC4C,
     NhttpCreateRequest = 0x8051AF24,
     NhttpAddHeaderField = 0x8051AFA8,
     NhttpAddPostDataAscii = 0x8051B06C,
@@ -62,8 +62,8 @@ enum : uint32_t {
     NhttpDestroyResponse = 0x8051B1CC,
     NhttpGetBodyAll = 0x8051B250,
     NhttpGetResultCode = 0x8051B2B8,
-    NhttpSetProxyDefault = 0x8051B318,
-    NhttpSetVerifyOption = 0x8051B4E4,
+    NhttpSetVerifyOption = 0x8051B318,
+    NhttpSetProxyDefault = 0x8051B4E4,
     NhttpSetRootCaDefault = 0x8051B60C,
     NhttpSetClientCertDefault = 0x8051B66C,
     NcdGetCurrentIfConfig = 0x8051CBD4,
@@ -762,8 +762,8 @@ void SendAuthRequest(CpuContext* cpu, uint32_t mode, uint32_t ingamesn, uint32_t
         call.Call<OSPanic>({0x80630B94, 1037, 0x80630BD0});
     }
 
-    call.Call<NhttpSetVerifyOption>({request});
-    call.Call<NhttpSetProxyDefault>({request, 2});
+    call.Call<NhttpSetProxyDefault>({request});
+    call.Call<NhttpSetVerifyOption>({request, 2});
     call.Call<NhttpAddHeaderField>({request, 0x80630BF8, 0x80630C04}); // User-Agent: RVL SDK/1.0
     // Host: the URL's host, between "//" and the next '/'.
     const uint32_t host = call.Call<Strstr>({url, 0x807966D4});
@@ -924,7 +924,7 @@ void AuthAnswer(CpuContext* cpu, uint32_t result, uint32_t response) {
 
     if (result != 0) {
         if (result == 0xE)
-            Print(cpu, 0x1000000, 0x80630E30, {call.Call<NhttpGetError>()});
+            Print(cpu, 0x1000000, 0x80630E30, {call.Call<NhttpGetSslError>()});
 
         Print(cpu, 0x1000000, 0x80630E40, {result});
         Write(kAuthResult, uint32_t(-20100));
