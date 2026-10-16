@@ -3131,3 +3131,7 @@
 8041dc54 NetGsPeerSend
 8041dea4 NetGsPeerReceive
 8041e0bc NetGsPeerPut
+80046ce4 BootInit
+80049818 NewUserData
+80059648 BootTask
+800cef7c RanSuuNext

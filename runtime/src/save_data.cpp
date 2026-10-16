@@ -1,5 +1,10 @@
-// Save data, RMHP08. C ports of the save file read request and the character
-// load (decompiled from the translation).
+// Save data, RMHP08. C ports of the save file read request, the character
+// load, the new character and its store (decompiled from the translation).
+//
+// A character keeps the four random streams' seeds (ran_suu.cpp) at +0x3920:
+// UserDataStore writes the current ones there and LoadCharacterWork puts them
+// back, so a character's stream 1 (its charms) stays on the cycle it had
+// when it was created.
 //
 // The save manager (0x806D8710) reads one save file (data00..05, 0x14000
 // bytes) at a time into the system's save buffer (system_w+0x950):
@@ -48,8 +53,14 @@ constexpr int32_t kWorkingCharacterSda = -17824; // r13-relative copy of system_
 enum : uint32_t {
     Memcpy = 0x80004000,
     Memset = 0x80004350,
+    OSGetTime = 0x804D53D0,
     Strcpy = 0x8045FBD4
 };
+
+// The character's random seeds: 32 u16 at +0x3920, the first four the
+// streams' (system_w+0x18) when the character was stored.
+constexpr uint32_t kCharacterSeeds = 32;
+constexpr uint32_t kStreams = 4;
 
 // 0x80049F6C LoadCharacterWork(record): copies a character record into the
 // working character and takes a few of its fields into the system work.
@@ -67,7 +78,66 @@ void LoadCharacterWork(CpuContext* ctx, uint32_t record) {
     Memory::Write32(kSystem + kSystemCharacterId, Memory::Read32(work + kCharacterId));
 }
 
+// 0x80049818 NewUserData(): clears the working character and seeds it, and
+// the four random streams, from the low 16 bits of the time base. Only the
+// boot (0x80046CE4) calls it, and the boot task's first step (0x80059648)
+// sets the streams to 0x10 after it, so a new character stores those.
+void NewUserData(CpuContext* ctx) {
+    const uint32_t work = Memory::Read32(kSystem + kSystemCharacter);
+    Memory::Write32(ctx->gpr[13] + uint32_t(kWorkingCharacterSda), work);
+    uint16_t seed = 0;
+    {
+        GuestFrame frame{ctx, 16};
+        GuestCall game{ctx};
+        game.Call<Memset>({work, 0, SaveData::kCharacterSize});
+        game.Call<OSGetTime>();
+        seed = uint16_t(ctx->gpr[4]);
+    }
+
+    for (uint32_t i = 0; i < kCharacterSeeds; ++i)
+        Memory::Write16(work + kCharacterWords + 2 * i, seed);
+
+    for (uint32_t i = 0; i < kStreams; ++i)
+        Memory::Write16(kSystem + kSystemCharacterWords + 2 * i, Memory::Read16(work + kCharacterWords + 2 * i));
+}
+
+// 0x80049F00 UserDataStore(dest): the streams' seeds and system_w+0x890 back
+// into the working character, then the character to `dest`.
+void UserDataStore(CpuContext* ctx, uint32_t dest) {
+    const uint32_t work = Memory::Read32(kSystem + kSystemCharacter);
+    Memory::Write32(ctx->gpr[13] + uint32_t(kWorkingCharacterSda), work);
+
+    for (uint32_t i = 0; i < kStreams; ++i)
+        Memory::Write16(work + kCharacterWords + 2 * i, Memory::Read16(kSystem + kSystemCharacterWords + 2 * i));
+
+    Memory::Write32(work + kCharacterId, Memory::Read32(kSystem + kSystemCharacterId));
+    GuestFrame frame{ctx, 16};
+    GuestCall{ctx}(Memcpy, {dest, work, SaveData::kCharacterSize});
+}
+
 } // namespace
+
+// 0x80049818 NewUserData().
+extern "C" void func_80049818(CpuContext* ctx);
+static void NewUserDataPort(CpuContext* ctx) {
+    NewUserData(ctx);
+}
+
+extern "C" void MH3_NewUserData(CpuContext* ctx) {
+    PortCheck::Call(ctx, "NewUserData", func_80049818, NewUserDataPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80049818, MH3_NewUserData, "NewUserData");
+
+// 0x80049F00 UserDataStore(dest).
+extern "C" void func_80049F00(CpuContext* ctx);
+static void UserDataStorePort(CpuContext* ctx) {
+    UserDataStore(ctx, ctx->gpr[3]);
+}
+
+extern "C" void MH3_UserDataStore(CpuContext* ctx) {
+    PortCheck::Call(ctx, "UserDataStore", func_80049F00, UserDataStorePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80049F00, MH3_UserDataStore, "UserDataStore");
 
 // 0x80441AD8 SaveReadRequest(s8 file, s8 access) -> 1, or 0 without a buffer:
 // prepares the read of save file `file` into the save buffer (cleared).
