@@ -892,6 +892,7 @@
 803750e8 SeaSurfaceUpdate
 801a9274 Mat6ScrollUpdate
 8031ed54 ObjectListScrollUpdate
+800cef00 RandSeedAll
 800cef20 Rand
 # Screen fades and MHchar channel blend callees (screen_fade.cpp, mhchar_motion.cpp)
 800e1c98 AnmChannelSetAnim
@@ -1880,6 +1881,30 @@
 803191dc TalismanSkills
 8039899c RewardEquipBuild
 80398eac RewardEquipToBox
+8004b814 ItemBoxRoom
+800dbdf4 ResultSe
+802a8f24 MenuGrid
+802a8f60 MenuCursor
+802a8fb4 MenuPrompt
+80396c7c ResultListKind
+80396d10 ResultNextRow
+8039739c ResultRowSe
+803973a8 RewardPageStart
+80398264 RewardsAnimate
+803982b8 RewardsAny
+803985d0 RewardsPrompt
+803986f0 RewardsSell
+80398834 RewardsCursor
+80398930 RewardsSelected
+80398b58 RewardsEquipItem
+80398bf8 RewardsRecordAt
+80398c90 RewardsPouchSlot
+80398e04 RewardMarkTaken
+80398f88 RewardsTakenFlash
+80398fe0 RewardPages
+8039ce18 PouchTake
+8039cf38 PouchTaken
+8039d0cc PouchSet
 801eff34 EquipBoxMenuInit
 # Cheats in the monsters' functions (cheat_monsters.cpp)
 8011e6bc MonsterHealthAdd
