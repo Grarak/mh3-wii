@@ -167,8 +167,9 @@ inline const DevOptions& ProfileOptions() {
 // loading-screen frame's progress counters (load_progress.cpp), each effect
 // object update callback and kind the first time it runs (field_lists.cpp),
 // the network devices' requests, sockets, lookups and TLS sessions
-// (ios_net.cpp) and every guest thread switch (guest_threads.cpp).
-inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads", "demo", "movie"});
+// (ios_net.cpp), every guest thread switch (guest_threads.cpp) and how far
+// the game's random streams moved per tick (game_step.cpp).
+inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads", "demo", "movie", "rand"});
 
 inline const DevOptions& TraceOptions() {
     static const DevOptions options("MH3_TRACE", kTraceItems);

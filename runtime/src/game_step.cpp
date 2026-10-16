@@ -1,6 +1,12 @@
 #include "game_step.h"
 #include "memory.h"
 
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+
+#include <cstdio>
+#endif
+
 #include <cmath>
 
 namespace GameStep {
@@ -14,6 +20,66 @@ double clock = 0.0; // fraction of a tick carried to the next step
 uint32_t ticks = 1;
 double elapsed = 0.0;
 bool variable = false;
+
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=rand: how far the game's random streams moved per tick of game
+// time. Rand (0x800CEF20, also inlined into its callers) steps one of four
+// u16 seeds (0x8065AA78) to seed * 176 % 65363; each step's start finds how
+// many times each moved since the last by stepping the old seed to the new.
+// Every 300 ticks an `MH3 rand` line: the ticks and steps, each stream's
+// advances per tick, and the seeds that jumped (set, not stepped).
+void TraceRand(double ranTicks) {
+    static const TraceFlag on("rand");
+
+    if (!on)
+        return;
+
+    constexpr uint32_t kSeeds = 0x8065AA78;
+    static uint16_t last[4];
+    static bool primed;
+    static uint64_t advances[4], jumps[4], steps;
+    static double tickSum;
+    uint16_t now[4];
+
+    for (uint32_t i = 0; i < 4; ++i)
+        now[i] = Memory::Read16(kSeeds + 2 * i);
+
+    if (primed) {
+        for (uint32_t i = 0; i < 4; ++i) {
+            uint32_t seed = last[i], count = 0;
+
+            while (seed != now[i] && count < 65363) {
+                seed = (seed ? seed : 1) * 176 % 65363;
+                ++count;
+            }
+
+            if (seed == now[i])
+                advances[i] += count;
+            else
+                ++jumps[i];
+        }
+
+        tickSum += ranTicks;
+        ++steps;
+
+        if (tickSum >= 300.0) {
+            std::fprintf(stderr, "MH3 rand: %.1f ticks, %llu steps; per tick %.3f %.3f %.3f %.3f; jumps %llu %llu %llu %llu\n", tickSum,
+                         (unsigned long long)steps, advances[0] / tickSum, advances[1] / tickSum, advances[2] / tickSum, advances[3] / tickSum,
+                         (unsigned long long)jumps[0], (unsigned long long)jumps[1], (unsigned long long)jumps[2], (unsigned long long)jumps[3]);
+            tickSum = 0;
+            steps = 0;
+
+            for (uint32_t i = 0; i < 4; ++i)
+                advances[i] = jumps[i] = 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < 4; ++i)
+        last[i] = now[i];
+
+    primed = true;
+}
+#endif
 
 } // namespace
 
@@ -31,6 +97,9 @@ bool Variable() {
 }
 
 void Begin(double s) {
+#ifdef MH3_DEVELOPMENT
+    TraceRand(scale);
+#endif
     scale = s;
     Memory::WriteFloat32(kAnimationBaseRate, float(s));
     Memory::WriteFloat32(kFrameRate, float(variable ? 30.0 : 30.0 / s));

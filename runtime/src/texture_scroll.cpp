@@ -30,7 +30,9 @@
 //     [-11240, -11244). The byte at +5 counts passes; the list's s16 at +22 is
 //     the object index. The pass count and the random scale and +48 (the
 //     parts' flicker) are per tick: the count moves on by the step's whole
-//     ticks, and a step without one keeps each object's last roll.
+//     ticks, each object rolls once per whole tick (twice RNG 0 each, so the
+//     stream moves as at 30 Hz), a step without one keeps its last roll, and
+//     an object new between ticks shows the next roll without taking it.
 //
 // ResMatTexCoordGen (nw4r g3d): the handle's data (0x8006E310, 0x800878D4 its
 // null check) holds 8 texture coordinate entries of 52 bytes; +171 flags (bit
@@ -140,14 +142,14 @@ bool MaterialTexCoords(GuestCall& game, uint32_t resmat, uint32_t scratch, uint3
     return true;
 }
 
-// 0x800CEF20 for RNG 0: seed * 176 mod 65363 (a zero seed counts as 1).
+// 0x800CEF20's step: seed * 176 mod 65363 (a zero seed counts as 1).
+uint32_t NextRand(uint32_t seed) {
+    return (seed ? seed : 1) * 176 % 65363;
+}
+
+// 0x800CEF20 for RNG 0.
 uint32_t Rand() {
-    uint32_t seed = Memory::Read16(kRandSeed);
-
-    if (!seed)
-        seed = 1;
-
-    seed = seed * 176 % 65363;
+    const uint32_t seed = NextRand(Memory::Read16(kRandSeed));
     Memory::Write16(kRandSeed, uint16_t(seed));
     return seed;
 }
@@ -284,12 +286,21 @@ void ObjectListPort(CpuContext* ctx) {
         const auto kept = rolls.find(obj);
         Flicker roll;
 
-        if (ticks || kept == rolls.end()) {
-            roll.scale = scaleBase + scaleStep * float(int32_t(Rand() % 20));
-            roll.random = Rand();
+        if (ticks) {
+            for (uint32_t tick = 0; tick < ticks; ++tick) {
+                roll.scale = scaleBase + scaleStep * float(int32_t(Rand() % 20));
+                roll.random = Rand();
+            }
+
             rolls[obj] = roll;
-        } else
+        } else if (kept != rolls.end()) {
             roll = kept->second;
+        } else {
+            const uint32_t first = NextRand(Memory::Read16(kRandSeed));
+            roll.scale = scaleBase + scaleStep * float(int32_t(first % 20));
+            roll.random = NextRand(first);
+            rolls[obj] = roll;
+        }
 
         F(obj + 28, wide), F(obj + 32, wide), F(obj + 36, one);
         game.Call<VecScaleBy>({obj + 28}, {roll.scale});

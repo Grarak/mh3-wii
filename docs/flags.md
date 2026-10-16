@@ -123,7 +123,7 @@ render thread's work only to attribute time).
 
 ### `MH3_TRACE`: game state over game time
 
-`MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads][,demo][,movie]`
+`MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads][,demo][,movie][,rand]`
 
 The debug port turns each item on and off while the game runs (`trace ITEM on|off`, [debug port](debug-port.md)).
 
@@ -138,6 +138,7 @@ The debug port turns each item on and off while the game runs (`trace ITEM on|of
 | `threads` | every guest thread switch ([online](online.md#guest-threads)) |
 | `demo` | each event demo (in-engine cutscene): its start, then once a second of demo time and at its end the demo clock against the audio clock (the mixer's ticks since the demo's streams started) and the host's (`MH3 demo` lines, event_demo.cpp) |
 | `movie` | once a second of each movie: the video frame shown against its sound stream's time and against the frame a count of game ticks would show (`MH3 movie` lines, movie_draw.cpp) |
+| `rand` | every 300 ticks of game time, an `MH3 rand` line: the ticks and logic steps, how far each of the game's four random streams (Rand, 0x800CEF20, seeds at 0x8065AA78) moved per tick, inlined calls included, and the seeds that were set rather than stepped (game_step.cpp). Compares the streams at fixed and variable steps (`MH3_VARIABLE_STEP=0`) |
 | `effect-objects` | each effect object update callback and kind the first time it runs, and every 900 ticks (30 s of game time) each kind's mean life in ticks (`MH3 effect object lives`, field_lists.cpp) |
 
 ### `MH3_MONSTER_CONTROL`: drive a monster
