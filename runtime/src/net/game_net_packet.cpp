@@ -14,6 +14,10 @@
 #include "guest_call.h"
 #include "memory.h"
 
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
+
 #include <bit>
 #include <cmath>
 #include <initializer_list>
@@ -27,6 +31,7 @@ enum : uint32_t {
     Memmove = 0x8045BC18,
     Memcmp = 0x8045BD3C,
     Rand = 0x8045E620,
+    OSReport = 0x804CDCA0,
 };
 
 constexpr uint32_t kPlatformPtr = 0x80797180;
@@ -1258,6 +1263,55 @@ extern "C" void MH3_NetPlatform(CpuContext* cpu) {
     cpu->gpr[3] = Platform();
 }
 REGISTER_NATIVE_FUNCTION_AS(0x803C99D8, MH3_NetPlatform, "NetworkPlatform_get");
+
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=net: the platform's log hooks (empty on the Wii) print the net
+// library's messages through OSReport. The format and the arguments in
+// registers go along (floats stay in f1.. with CR bit 6 as the caller set
+// them); arguments the caller passed on the stack do not.
+bool TraceNetLog() {
+    static const TraceFlag trace("net");
+    return trace;
+}
+
+void ForwardLog(CpuContext* cpu, int format) {
+    if (!TraceNetLog())
+        return;
+
+    uint32_t args[6] = {};
+
+    for (int i = 0; i < 6 && format + i <= 10; ++i)
+        args[i] = cpu->gpr[format + i];
+
+    GuestCall{cpu}.Call<OSReport>({args[0], args[1], args[2], args[3], args[4], args[5]});
+}
+#endif
+
+// 0x80418F70 / 0x80418FC4 / 0x80419018 (platform virtuals 0xC, 0x10, 0x14):
+// info (level, format, ...), error and warning (format, ...).
+extern "C" void MH3_NetPlatformInfo(CpuContext* cpu) {
+#ifdef MH3_DEVELOPMENT
+    ForwardLog(cpu, 5);
+#endif
+    cpu->gpr[3] = 0;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80418F70, MH3_NetPlatformInfo, "NetworkPlatformWii_info");
+
+extern "C" void MH3_NetPlatformError(CpuContext* cpu) {
+#ifdef MH3_DEVELOPMENT
+    ForwardLog(cpu, 4);
+#endif
+    cpu->gpr[3] = 0;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80418FC4, MH3_NetPlatformError, "NetworkPlatformWii_error");
+
+extern "C" void MH3_NetPlatformWarning(CpuContext* cpu) {
+#ifdef MH3_DEVELOPMENT
+    ForwardLog(cpu, 4);
+#endif
+    cpu->gpr[3] = 0;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80419018, MH3_NetPlatformWarning, "NetworkPlatformWii_warning");
 
 extern "C" void MH3_NetBufferAttach(CpuContext* cpu) {
     BufferAttach(Arg(cpu, 3), Arg(cpu, 4), Arg(cpu, 5));
