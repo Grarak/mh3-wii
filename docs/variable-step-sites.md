@@ -24,8 +24,9 @@ the host time of the step that just ran. It calls `GameStep::Begin(s)`, where
 `s` is that time in ticks (half the elapsed retraces, capped by `kMaxStep`).
 The next step is assumed to be as long as this one. With the frame limit on
 the Vita (GXM, VSync) a shown frame's step is the display's instead
-(`DisplayStep`): one retrace, since the packet ring and display queue show
-frames a VBlank apart whenever the game thread started them, plus the VBlanks
+(`DisplayStep`): one retrace (two at the 30 fps limit), since the packet
+ring and display queue show frames a VBlank apart (two) whenever the game
+thread started them, plus the VBlanks
 the display kept a frame for because the next was late (`gxm::repeated_vblanks`,
 from `sceDisplayGetVcount` at each flip), paid back an eighth of what is owed
 a frame (fading out; past 4 retraces behind, the rest at once).

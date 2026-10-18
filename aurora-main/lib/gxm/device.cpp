@@ -37,8 +37,8 @@ std::atomic<uint64_t> g_pacedFlips{0}, g_pacingErrorMicros{0}, g_flipVblanks[4]{
 std::atomic<uint32_t> g_pacingErrorMaxMicros{0};
 std::atomic<int64_t> g_repeatedVblanks{0};
 
-// Flips wait for VBlank (set_vsync).
-std::atomic<bool> g_vsync{true};
+// The VBlanks each flip is shown for at least (set_flip_vblanks); 0: no VSync.
+std::atomic<uint32_t> g_flipInterval{1};
 std::atomic<uint64_t> g_latencyFlips{0}, g_latencyMicros[4]{};
 std::atomic<uint32_t> g_latencyMaxMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
@@ -112,16 +112,24 @@ void display_callback(const void* data) {
   frame.height = Device::Height;
 
   // VSync: flip at the next VBlank and wait for it, so the old buffer's sync
-  // is released only after scanout has moved on. This wait belongs to the
-  // display callback on core 3, never the game or render thread. Without
-  // VSync (the game thread limit off, set_vsync) the flip is still set for
-  // the next VBlank but the callback does not wait for it, so the display
-  // queue no longer paces the GPU and the render thread (the newest frame at
-  // each VBlank is shown; a buffer may be reused before scanout leaves it).
+  // is released only after scanout has moved on. At two VBlanks a flip (the
+  // 30 limit) the callback first waits until the frame shown had two, as the
+  // SDK's libgxm samples do (FLIP_MODE_VSYNC_2), so the flip is not queued
+  // before the second VBlank. These waits belong to the display callback on
+  // core 3, never the game or render thread. Without VSync (the game thread
+  // limit off, set_flip_vblanks) the flip is still set for the next VBlank but
+  // the callback does not wait for it, so the display queue no longer paces
+  // the GPU and the render thread (the newest frame at each VBlank is shown; a
+  // buffer may be reused before scanout leaves it).
   // SCE_DISPLAY_SETBUF_IMMEDIATE fails from the display queue's callback
   // (every flip on the devkit: a black screen); vita2d's no-vsync mode
   // does the same as here.
-  const bool vsync = g_vsync.load(std::memory_order_relaxed);
+  const uint32_t vblanks = g_flipInterval.load(std::memory_order_relaxed);
+  const bool vsync = vblanks != 0;
+
+  if (vblanks > 1)
+    sceDisplayWaitSetFrameBufMulti(vblanks);
+
   const int setResult = sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
   int waitResult = 0;
 
@@ -146,7 +154,7 @@ void display_callback(const void* data) {
     const uint32_t vcount = uint32_t(sceDisplayGetVcount());
 
     if (vsync && counted)
-      g_repeatedVblanks.fetch_add(int64_t(int32_t(vcount - lastVcount)) - 1, std::memory_order_relaxed);
+      g_repeatedVblanks.fetch_add(int64_t(int32_t(vcount - lastVcount)) - vblanks, std::memory_order_relaxed);
 
     lastVcount = vcount;
     counted = vsync;
@@ -454,9 +462,13 @@ bool Device::frame_pending() const noexcept {
   return m_frames.pending() || aurora::gpu_display_queue_full(g_displayQueued.load(std::memory_order_acquire), g_displayCompleted.load(std::memory_order_acquire));
 }
 
-void set_vsync(bool enabled) noexcept {
-  g_vsync.store(enabled, std::memory_order_relaxed);
-  std::fprintf(stderr, "Aurora GXM: VSync %s\n", enabled ? "on (flips at VBlank)" : "off (flips at VBlank, not waited for)");
+void set_flip_vblanks(uint32_t vblanks) noexcept {
+  g_flipInterval.store(vblanks, std::memory_order_relaxed);
+
+  if (vblanks)
+    std::fprintf(stderr, "Aurora GXM: VSync on (flips at VBlank, each shown for %u)\n", unsigned(vblanks));
+  else
+    std::fprintf(stderr, "Aurora GXM: VSync off (flips at VBlank, not waited for)\n");
 }
 
 bool gpu_frame_pending() noexcept {

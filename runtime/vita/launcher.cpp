@@ -734,6 +734,12 @@ void LoadSettings(const std::filesystem::path& base) {
             continue;
         }
 
+        // Saved as 60, 30 or off (on from before the 30 mode: 60).
+        if (key == "framelimit") {
+            SetFrameLimitSetting(value == "off" ? 0 : value == "30" ? 30 : 60);
+            continue;
+        }
+
         // Saved as off, 2x or 4x (on from before the 2x mode: 4x).
         if (key == "msaa") {
             SetMsaaSetting(value == "2x" ? 2 : value == "4x" || value == "on" ? 4 : 1);
@@ -749,8 +755,6 @@ void LoadSettings(const std::filesystem::path& base) {
             SetWidescreenSetting(on);
         else if (key == "upscaling")
             SetUpscalingSetting(on);
-        else if (key == "framelimit")
-            SetFrameLimitSetting(on);
         else if (key == "online_skip_tls")
             SetSkipTlsSetting(on);
     }
@@ -768,7 +772,7 @@ Status SaveSettings(const std::filesystem::path& base) {
     {
         std::ofstream file(temporary, std::ios::trunc);
         const auto onOff = [](bool on) { return on ? "on" : "off"; };
-        file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << onOff(FrameLimitSetting())
+        file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << (FrameLimitSetting() ? std::to_string(FrameLimitSetting()) : "off")
              << "\nmsaa=" << (MsaaSetting() == 1 ? "off" : MsaaSetting() == 2 ? "2x" : "4x")
              << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
         file.close();
@@ -846,7 +850,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
     // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
-    bool frameLimit = FrameLimitSetting();
+    uint32_t frameLimit = FrameLimitSetting();
     uint32_t msaa = MsaaSetting();
     std::string onlineServer = OnlineServerSetting();
     bool skipTls = SkipTlsSetting();
@@ -942,7 +946,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     "Cheats",
                     std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
                     std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
-                    std::string("Framelimit: ") + (frameLimit ? "ON" : "OFF"),
+                    "Framelimit: " + (frameLimit ? std::to_string(frameLimit) + " FPS" : std::string("OFF")),
                     std::string("MSAA: ") + (msaa == 1 ? "OFF" : msaa == 2 ? "2x" : "4x"),
                     std::string("Language: ") + languages[language].name,
                     "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
@@ -956,8 +960,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                                            "Gameplay toggles for this launch." + cheats,
                                            widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display.",
                                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
-                                           frameLimit ? "The game waits for each frame to be drawn before the next: every frame is shown."
-                                                      : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
+                                           frameLimit == 60   ? "60 fps: the game waits for each frame to be drawn before the next, and every frame is shown."
+                                           : frameLimit == 30 ? "30 fps: every frame stays on screen for two refreshes: steadier motion where the game cannot hold 60."
+                                                              : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
                                            msaa == 1   ? "No antialiasing. MSAA smooths edges but can reduce performance: about 5% fewer fps at 2x and 15% at 4x in big fights."
                                            : msaa == 2 ? "2x multisample antialiasing: smoother edges. Can reduce performance: about 5% fewer fps in big fights (4x: about 15%)."
                                                        : "4x multisample antialiasing: the smoothest edges. Can reduce performance: about 15% fewer fps in big fights (2x: about 5%).",
@@ -1313,6 +1318,15 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
             }
 
+            if (page == Page::Main && selected == 8 && (accept || direction)) {
+                constexpr uint32_t limits[] = {60, 30, 0};
+                const int index = frameLimit == 60 ? 0 : frameLimit == 30 ? 1 : 2;
+                frameLimit = limits[(index + 3 + (direction ? direction : 1)) % 3];
+                SetFrameLimitSetting(frameLimit);
+                Log("framelimit %u", unsigned(frameLimit));
+                return SaveSettings(base);
+            }
+
             if (page == Page::Main && selected == 9 && (accept || direction)) {
                 constexpr uint32_t modes[] = {1, 2, 4};
                 const int index = msaa == 1 ? 0 : msaa == 2 ? 1 : 2;
@@ -1394,14 +1408,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     upscaling = !upscaling;
                     SetUpscalingSetting(upscaling);
                     Log("upscaling %s", upscaling ? "on" : "off");
-                } else if (selected == 8) {
-                    frameLimit = !frameLimit;
-                    SetFrameLimitSetting(frameLimit);
-                    Log("framelimit %s", frameLimit ? "on" : "off");
                 } else
                     enter(Page::Online);
 
-                if (selected >= 6 && selected <= 8)
+                if (selected >= 6 && selected <= 7)
                     return SaveSettings(base);
 
                 break;

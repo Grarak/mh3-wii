@@ -341,9 +341,14 @@ bool synchronous = false;
 
 // The game thread limiter (the launcher's setting, FrameLimitSetting): at
 // most one published packet waits for the render thread; see
-// PaceNativeFramePacket. Latched at the render thread's start.
-bool frameLimit = true;
+// PaceNativeFramePacket. Latched at the render thread's start, with the
+// VBlanks each frame is shown for (FrameLimitVBlanks).
+uint32_t frameLimit = 60;
 bool paced = true;
+uint32_t flipVBlanks = 1;
+
+// A display retrace (VBlank) at 59.94 Hz.
+constexpr auto kRetrace = std::chrono::microseconds(16683);
 
 // Game thread: whether a loading screen drew the frame before the one being
 // paced, and when the next loading frame may start.
@@ -1029,14 +1034,14 @@ void WaitForGpuFrameSlot() {
     NoteGpuSlotWait(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()));
 }
 
-// Loading screens are drawn at most 60 times a second in either mode. Their
-// game frames run at up to 240 Hz (PaceNativeFramePacket): drawing each one
-// would spend the CPU the loading needs, and waiting to draw each held the
-// game thread back behind the slots, and the packets' tasks with it (a Jhen
-// Mohran load took 1.5 s instead of 0.65 on the Pi). A packet not due runs
-// only its tasks.
+// Loading screens are drawn at most 60 times a second (30 at the 30 limit,
+// which shows a frame for two VBlanks). Their game frames run at up to 240 Hz
+// (PaceNativeFramePacket): drawing each one would spend the CPU the loading
+// needs, and waiting to draw each held the game thread back behind the slots,
+// and the packets' tasks with it (a Jhen Mohran load took 1.5 s instead of
+// 0.65 on the Pi). A packet not due runs only its tasks.
 bool LoadingDrawDue() {
-    constexpr auto period = std::chrono::microseconds(16667);
+    const auto period = std::chrono::microseconds(16667) * std::max<uint32_t>(flipVBlanks, 1);
     const auto now = std::chrono::steady_clock::now();
 
     if (now < loadingDrawNext)
@@ -1504,12 +1509,16 @@ uint32_t NativeRenderPacketSlot() {
     return drawingSlot;
 }
 
-bool FrameLimitSetting() {
+uint32_t FrameLimitSetting() {
     return frameLimit;
 }
 
-void SetFrameLimitSetting(bool limit) {
-    frameLimit = limit;
+void SetFrameLimitSetting(uint32_t fps) {
+    frameLimit = fps;
+}
+
+uint32_t FrameLimitVBlanks() {
+    return frameLimit ? 60 / frameLimit : 0;
 }
 
 uint64_t NativeFramePacketsDone() {
@@ -1528,15 +1537,25 @@ void StartNativeRenderThread() {
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
 
-    // MH3_FRAME_LIMIT=off: the launcher's `Framelimit: OFF` for runs
-    // started without it (benchmarks).
-    if (const char* limit = std::getenv("MH3_FRAME_LIMIT"); limit && std::strcmp(limit, "off") == 0)
-        frameLimit = false;
+    // MH3_FRAME_LIMIT=60, 30 or off: the launcher's `Framelimit` row for runs
+    // started without it (off: benchmarks).
+    if (const char* limit = std::getenv("MH3_FRAME_LIMIT")) {
+        const std::string_view value = limit;
 
-    paced = frameLimit;
+        if (value == "off" || value == "60" || value == "30")
+            frameLimit = value == "off" ? 0 : value == "30" ? 30 : 60;
+        else
+            std::fprintf(stderr, "MH3: MH3_FRAME_LIMIT=%s is not 60, 30 or off; the limit stays %u\n", limit, unsigned(frameLimit));
+    }
+
+    if (frameLimit != 0 && frameLimit != 30)
+        frameLimit = 60;
+
+    paced = frameLimit != 0;
+    flipVBlanks = FrameLimitVBlanks();
 #ifdef AURORA_GXM
     // The limit off lets the displayed rate go past the VBlank's too.
-    aurora::gxm::set_vsync(frameLimit);
+    aurora::gxm::set_flip_vblanks(flipVBlanks);
 #endif
 #ifdef MH3_DEVELOPMENT
     renderCounters.thread.store(-1, std::memory_order_relaxed);
@@ -1772,8 +1791,9 @@ void PaceNativeFramePacket() {
     const auto ready = [&] { return released() && SlotFree(next); };
 
     // The slack the render thread measured (WaitForGpuFrameSlot), less a 2 ms
-    // margin for the frame's variation, at most 12 ms: the frame starts and
-    // reads its input that much later, still in time for its GPU slot.
+    // margin for the frame's variation, at most 12 ms (and a retrace more for
+    // each further VBlank a frame is shown for): the frame starts and reads its
+    // input that much later, still in time for its GPU slot.
     const auto startJustInTime = [unpaced] {
         if (unpaced)
             return;
@@ -1783,7 +1803,8 @@ void PaceNativeFramePacket() {
         if (slack <= 2000)
             return;
 
-        const uint32_t delay = std::min<uint32_t>(slack - 2000, 12000);
+        const uint32_t most = 12000 + (flipVBlanks - 1) * uint32_t(kRetrace.count());
+        const uint32_t delay = std::min<uint32_t>(slack - 2000, most);
 #ifdef MH3_DEVELOPMENT
         justInTimeUs += delay;
         pacingWaitTotalNs += uint64_t(delay) * 1000;

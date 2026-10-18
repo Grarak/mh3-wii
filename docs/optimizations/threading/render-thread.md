@@ -57,9 +57,15 @@ a render thread draws it:
   `runtime/include/spin_signal.h`): on the Vita a kernel semaphore, which
   counts its signals, elsewhere a condition variable. The park re-checks
   at least every 100 ms.
-- **With the frame limit off** (the launcher's `Framelimit` row) the game
-  thread waits only for its slot, the render thread takes the newest packet
-  and skips older ones, and the Vita turns VSync off.
+- **At 30 fps** (the launcher's `Framelimit` row: 60, the default, 30 or
+  off) the Vita's display callback waits until the shown frame had two
+  VBlanks (`sceDisplayWaitSetFrameBufMulti(2)`, as the SDK's libgxm samples'
+  `FLIP_MODE_VSYNC_2` does) before it sets the next, which paces the ring the
+  same way. The just-in-time start may then wait a retrace longer, and
+  loading screens draw at 30. GL has no VSync: there 30 runs as 60.
+- **With the frame limit off** the game thread waits only for its slot, the
+  render thread takes the newest packet and skips older ones, and the Vita
+  turns VSync off.
 - **Loading screens** run their frames at up to 240 Hz without the limiter,
   and the render thread draws them at 60 Hz: part of a load is counted in
   frames.

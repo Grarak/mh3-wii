@@ -46,15 +46,16 @@ struct DisplayStatistics {
 
 DisplayStatistics display_statistics() noexcept;
 
-// With VSync: the VBlanks between flips beyond one each (a frame the display
-// kept for more VBlanks because the next was late), summed since the start.
-// Any thread.
+// With VSync: the VBlanks between flips beyond the set_flip_vblanks each (a
+// frame the display kept for more VBlanks because the next was late), summed
+// since the start. Any thread.
 int64_t repeated_vblanks() noexcept;
 
-// VSync on (the default): flips at VBlank and waits; off: flips at VBlank
-// without waiting (the display queue no longer paces the render thread),
-// for the game thread limit off.
-void set_vsync(bool enabled) noexcept;
+// VSync with `vblanks` 1 (the default) or 2: flips at VBlank and waits until
+// the frame was shown for that many (60 or 30 frames a second); 0: flips at
+// VBlank without waiting (the display queue no longer paces the render
+// thread), for the game thread limit off.
+void set_flip_vblanks(uint32_t vblanks) noexcept;
 
 // Owns native libgxm objects and bounded backing allocations. All calls belong
 // to the render owner. The display callback is pinned to the workers' core 3.
