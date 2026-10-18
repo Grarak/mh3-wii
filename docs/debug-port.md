@@ -38,7 +38,7 @@ when one is an error.
 | `cheat NAME[=VALUE]` | turns on an integrated cheat (as `--cheat`) |
 | `movie skip` | ends the open movie: its player sees it finished at its next check (once no frame is pending, as the game's own Movie_cut) and closes it as at its last frame, also where a button can't skip it (the opening after character creation, the Loc Lac movie); `error: no movie is open` otherwise |
 | `trace` | the `MH3_TRACE` items that can be switched, each `=on` or `=off` |
-| `trace ITEM on\|off` | turns a trace item on or off ([flags](flags.md#mh3_trace-game-state-over-game-time)) |
+| `trace ITEM on\|off` | turns a trace item on or off ([flags](flags.md#development-tools)) |
 | `online [state]` | online: the network state and sub-state, the menu command, whether the hunter leads, the joined circle (quest group), members present and standing, the gate and city names |
 | `online post QUEST [MEMBERS]`, `join [N]`, `ready`, `unready`, `depart`, `accept [QUEST]`, `circles` | posts a quest, joins the Nth posted one, readies, departs, accepts a quest at the counter, counts the posted quests (the game's own calls; `online_auto.cpp`) |
 | `online auto SPEC` | starts the online autopilot with an `MH3_ONLINE_AUTO` spec ([online](online.md)) |
