@@ -1,11 +1,13 @@
 # Controls
 
 The game always sees one Wii Remote with a Classic Controller (RVL-005, not
-the Pro) on channel 0, and plays fully on it: no pointer, motion or Nunchuk
-prompts ([controller input](optimizations/system/controller-input.md)). The
-PS Vita's controls, SDL gamepads and the keyboard are mapped onto that
-controller. Recordings, playback and the control file (`MH3_INPUT`) hold the
-resulting Classic report, so they replay the same on every host.
+the Pro) on channel 0, and plays fully on it: no motion or Nunchuk prompts
+([controller input](optimizations/system/controller-input.md)). The PS
+Vita's controls, SDL gamepads and the keyboard are mapped onto that
+controller, and the front touch screen (the mouse elsewhere) is the remote's
+pointer. Recordings, playback and the control file (`MH3_INPUT`) hold the
+resulting Classic report, so they replay the same on every host; the pointer
+stays live during playback.
 
 ## PS Vita
 
@@ -34,13 +36,31 @@ so both styles work as the game's help screens show them.
   as in the PSP games. The launcher's own menus keep the system convention
   (× selects).
 - **L/R are the Classic L/R triggers**, reported fully pressed.
-- **No touch input**: the front and rear panels are not read. The handheld
-  has no control for ZL, ZR or HOME; a PS TV controller has them on L2/R2
-  and L3 + R3.
+- **Touch**: the front screen is the Wii Remote's pointer (below); the rear
+  panel is not read. The handheld has no control for ZL, ZR or HOME; a PS TV
+  controller has them on L2/R2 and L3 + R3.
 - **System menus**: while the quick menu (a long press of PS) or a
   notification's menu is over the game, the game sees a neutral controller.
 - **Button prompts** show the Vita's buttons: the Classic's a, b, y, + and −
   draw as ○, ×, □, START and SELECT (`runtime/src/button_glyphs.cpp`).
+
+### Pointer
+
+In the village and the field the game lets the hunter point the Wii Remote
+at a monster and drag it onto the log on the HUD, which notes it in the
+save (online, a hunter's entry goes into a list the same way). On the Wii
+the remote's B shows the cursor, A over a target takes it, and A held drags
+it. With the touch screen:
+
+1. Touch a monster on the screen: the cursor opens under the finger (B).
+2. Keep the finger down: once the cursor has opened (under a second) and
+   rests on the monster, it takes it (A).
+3. Drag it onto the log and lift the finger.
+
+A target that can't be taken plays a refusal sound until the finger lifts.
+Code: `runtime/src/wpad_services.cpp` (the remote's B and A, the sensor bar
+dots), `runtime/src/pad_pointer.cpp` (the game's KPAD and cursor) and
+`runtime/src/log_pointer.cpp` (the pointing).
 
 ### Sticks
 
@@ -89,3 +109,6 @@ Keyboard, while the window has focus:
 Keyboard and gamepad sticks combine per stick (a held key wins). There is no
 remapping yet: the tables live in `mh3_classic_map.c` (Vita) and
 `controller_host.cpp` (SDL, keyboard).
+
+The mouse is the pointer: the left button held over the game's picture is a
+finger on the Vita's screen ([pointer](#pointer)).

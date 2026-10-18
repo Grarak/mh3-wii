@@ -35,6 +35,7 @@
 #endif
 
 #include <atomic>
+#include <bit>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -428,6 +429,17 @@ void write_frame_capture(const FrameCapture& capture, const gpu::PresentSource& 
 
 std::atomic<uint64_t> g_presentedFrames{0};
 
+// The last present's rectangle (left, top / width, height as float pairs) and
+// drawable size, for aurora_present_rect. A reader may pair fields of two
+// presents while the window resizes.
+std::atomic<uint64_t> g_presentOrigin{0};
+std::atomic<uint64_t> g_presentExtent{0};
+std::atomic<uint64_t> g_presentSurface{0};
+
+uint64_t pack_floats(float a, float b) noexcept {
+  return uint64_t(std::bit_cast<uint32_t>(a)) << 32 | std::bit_cast<uint32_t>(b);
+}
+
 // Render thread: letterbox the present source into the window and swap.
 void present_frame(const gpu::PresentSource& source) {
   const auto [width, height] = gl::drawable_size();
@@ -440,6 +452,9 @@ void present_frame(const gpu::PresentSource& source) {
 
   gl::present(source.texture, static_cast<int32_t>(viewport.left), static_cast<int32_t>(viewport.top),
               static_cast<int32_t>(viewport.width), static_cast<int32_t>(viewport.height));
+  g_presentOrigin.store(pack_floats(viewport.left, viewport.top), std::memory_order_relaxed);
+  g_presentExtent.store(pack_floats(viewport.width, viewport.height), std::memory_order_relaxed);
+  g_presentSurface.store(uint64_t(width) << 32 | height, std::memory_order_relaxed);
   record_successful_present(false, 0, {}, {}, {}, {}, {}, {}, false, 0, {});
   g_presentedFrames.fetch_add(1, std::memory_order_relaxed);
 }
@@ -745,6 +760,29 @@ uint64_t aurora_skipped_frame_count() {
 
 uint64_t aurora_presented_frame_count() {
   return aurora::g_presentedFrames.load(std::memory_order_relaxed);
+}
+
+bool aurora_present_rect(AuroraPresentRect* rect) {
+#ifdef AURORA_ENABLE_GX
+  const uint64_t surface = aurora::g_presentSurface.load(std::memory_order_relaxed);
+
+  if (surface == 0) {
+    return false;
+  }
+
+  const uint64_t origin = aurora::g_presentOrigin.load(std::memory_order_relaxed);
+  const uint64_t extent = aurora::g_presentExtent.load(std::memory_order_relaxed);
+  rect->left = std::bit_cast<float>(uint32_t(origin >> 32));
+  rect->top = std::bit_cast<float>(uint32_t(origin));
+  rect->width = std::bit_cast<float>(uint32_t(extent >> 32));
+  rect->height = std::bit_cast<float>(uint32_t(extent));
+  rect->surfaceWidth = uint32_t(surface >> 32);
+  rect->surfaceHeight = uint32_t(surface);
+  return rect->width > 0.f && rect->height > 0.f;
+#else
+  (void)rect;
+  return false;
+#endif
 }
 
 void aurora_wait_for_gpu_idle() {

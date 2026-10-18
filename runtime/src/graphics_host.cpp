@@ -1,4 +1,5 @@
 #include "gx_host.h"
+#include "controller_host.h"
 #include "fatal.h"
 #include "gx_panic.h"
 #include "native_graphics.h"
@@ -434,6 +435,17 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
 
 float NativeWidescreenAspect() {
     return float(DisplayWidth) / float(DisplayHeight);
+}
+
+bool PointOnPicture(float x, float y, float& pictureX, float& pictureY) {
+    AuroraPresentRect rect;
+
+    if (!aurora_present_rect(&rect))
+        return false;
+
+    pictureX = (x - rect.left) / rect.width;
+    pictureY = (y - rect.top) / rect.height;
+    return pictureX >= 0.0f && pictureX <= 1.0f && pictureY >= 0.0f && pictureY <= 1.0f;
 }
 
 bool UpscalingSetting() {

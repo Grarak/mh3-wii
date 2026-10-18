@@ -405,6 +405,27 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         return "";
     }
 
+    if (word == "point") {
+        if (in >> arg && arg == "off") {
+            SetPointerTestSample(std::nullopt);
+            return "ok";
+        }
+
+        double ticks = 30;
+        const float x = float(std::strtod(arg.c_str(), nullptr));
+        float y = -1;
+
+        if (!(in >> y) || x < 0 || x > 1 || y < 0 || y > 1)
+            return "error: point X Y [TICKS] (0..1 across and down the picture) or point off";
+
+        in >> ticks;
+        SetPointerTestSample(std::make_pair(x, y));
+        s.busy = true;
+        s.until = GameStep::Elapsed() + ticks;
+        s.steps = 0;
+        return "";
+    }
+
     if (word == "shot") {
         if (!(in >> arg))
             return "error: shot PATH";

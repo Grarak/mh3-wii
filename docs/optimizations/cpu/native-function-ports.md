@@ -58,6 +58,7 @@ where they are described:
 | Everything that used GX | scene queue, UI, HUD, effects, scene feedback | [GX replacement](../rendering/gx-replacement.md) |
 | Collision and land queries | ground candidate lists, the land sweep, hit spheres | [compact native data](compact-native-data.md) |
 | Step-length dependent logic | shells, enemy turning, player actions, timers | [variable step](../simulation/variable-step.md) |
+| Wii Remote pointer | the game's copy of KPAD (0x800450AC..0x800468A0), the pointer and cursor (0x80043C10..0x80044DDC), pointing at monsters for the log (0x802DB354) | `runtime/src/pad_pointer.cpp`, `log_pointer.cpp`, [controller input](../system/controller-input.md) |
 | Cheats | wrappers that change arguments or results | [cheats](../../cheats.md) |
 
 ## Why

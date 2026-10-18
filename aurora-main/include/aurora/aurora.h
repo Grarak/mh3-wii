@@ -233,6 +233,16 @@ void aurora_set_frameskip(bool enabled);
 uint64_t aurora_skipped_frame_count();
 uint64_t aurora_presented_frame_count();
 
+// Where the last frame was presented: its rectangle inside the drawable (the
+// window, or the Vita's screen) and the drawable's size, in pixels. Any thread;
+// false before the first present.
+typedef struct {
+  float left, top, width, height;
+  uint32_t surfaceWidth, surfaceHeight;
+} AuroraPresentRect;
+
+bool aurora_present_rect(AuroraPresentRect* rect);
+
 void aurora_set_log_level(AuroraLogLevel level);
 void aurora_set_pause_on_focus_lost(bool value);
 void aurora_set_background_input(bool value);

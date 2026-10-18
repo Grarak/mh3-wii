@@ -4,6 +4,11 @@
 #include <iostream>
 #include <stdexcept>
 
+// The game's picture is not drawn here: the mouse never points at it.
+bool PointOnPicture(float, float, float&, float&) {
+    return false;
+}
+
 namespace {
 void Check(bool ok, const char* message) {
     if (!ok)

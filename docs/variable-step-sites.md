@@ -339,6 +339,8 @@ Found since:
 | Monster effects 0x803048A4 kinds 1 and 103 ended about 10 ticks early at the variable step (Alatreon: 13 against 24 ticks), and kind 20 hunter effects (0x80107E40) 2.75 | 0x8030524C, 0x80108AD8 | no rate bug (`MH3_TRACE=effect-states`, Pi 5 Alatreon area 1, 120 s each): neither has a counter; they live while the ef effect has particle managers (EffectMove 0x800F9984), and that part matched: kind 1 12.97 ticks variable / 13.00 fixed, kind 103 13.05 / 13.0, kind 176 50.6 / 51, kind 177 12.5 / 13. The rest of a life is the create, ending and release states, a step each (3 ticks at the fixed step, ~0.24 at 380 fps): kind 20's 19.00 / 16.24. The 24 ticks were the trace's: at the fixed step a slot released and taken again in one step kept its callback, so two or three lives counted as one; a state 0 after another state now starts a new life. Left: kinds 101 and 182 (sparks, 7 ticks) stay in state 1 1.2–1.4 ticks longer at the variable step (8.4 / 7.0–7.3); ef effects start and end on whole ticks while the object's states change on steps |
 | g3d animation frames set by game code | FrameCtrl::SetFrame 0x80061F28 | probed in Deserted Island area 10, the arena (9004), the village and Alatreon (19001): no calls; animation objects move by UpdateFrame at the scaled base rate (texture SRT: `MH3_TRACE=srt`), and AnmObjChrRes::SetFrame is native |
 | Ambient hover phase bounce at 0 / 0x8000 | `ambient_hover.cpp` `Back()` | rests at the bound until the next whole tick (as the Wii's clamp does); built and played; not settle-probed |
+| Wii Remote pointer: the IR camera's switch-off wait (300 steps), the cursor's ease (a quarter of the gap a step) | PadPointerTimeout 0x80044C68 (small-data s32 0x80796CF8), PadPointerSmooth 0x80043D1C | fixed: the wait counts whole ticks, the cursor closes 1 − (3/4)^s of its gap (`pad_pointer.cpp`) |
+| Pointing at monsters for the log: the cursor's animation counters, its 23-step opening before it takes a target, the IR wait, the cursor's trail, the d-pad cursor's speed | PointerLogUpdate 0x802DB354 (work 0x806BFE88), 0x802DCDBC, 0x802DCB60, 0x802DBB84 | fixed: whole ticks, the d-pad cursor by `GameStep::Share` of its speed; a blink sound plays when a tick reaches its frame (`log_pointer.cpp`) |
 
 Found while writing this inventory (from reading the code; not verified at
 runtime):
@@ -353,7 +355,6 @@ Found with the input work (section 7), not changed:
 
 | Item | Where | Why |
 |---|---|---|
-| WPAD DPD switch-off wait | 0x80044C68, small-data s32 0x80796CF8 (300 from 0x800440BC) | counted once per step: the IR camera of a Wii Remote is turned off after 300 steps. The host has no IR, so nothing visible |
 | Accelerometer history | `pad_input.cpp`, Psw+0x2A4 | one sample a step (16 kept); swing checks read the last 4. The host's remote is stationary, so the history is constant |
 | Camera follow lag | `camera_input.cpp` CameraAngleEase | the stock ease (`+= gap >> 2` after the target moved) trails a turning target by 3·v; the continuous ease (1 − (3/4)^s) trails by v / ln(4/3) ≈ 3.5·v at short steps and by ≈ 2.4·v at 2.5-tick steps. Measured: 3102 units after a full-speed turn at the stock step, 3365–3579 variable, 2458 at 2.5-tick steps. The static gap closes at the Wii's rate |
 | 0x803C87F8 wait (+0x109) | quest/online UI helper | counts down once per call; not traced to what it gates |
@@ -443,8 +444,9 @@ since the last line) and `MH3_INPUT=playback=` in Moga area 1
    `PadReadWii`, `PadReadGc` and `PadGameKeys` turn the reports into button
    sets, presses, releases, **repeats** and the game keys with their
    **locks**. The stick directions (0x80042FDC, 0x800432C0) are stateless:
-   angle, tilt (dead zone 30, no hysteresis) and direction bits. KPAD is not
-   used by the game; there is no IR pointer and no motion on the host.
+   angle, tilt (dead zone 30, no hysteresis) and direction bits. The game's
+   own copy of KPAD reads the IR samples for the pointer (`pad_pointer.cpp`);
+   there is no motion on the host.
 4. **Player input** (0x8026AF6C PlReadInput, from the player update): the
    game keys and sticks become PLW+0xB8.. and command bits (+0xDC, +0xE0..):
    edges and levels, no amounts. Step counts in it: the input lock +0x352

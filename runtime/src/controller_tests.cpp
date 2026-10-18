@@ -2,7 +2,10 @@
 #include "fatal.h"
 #include "abi_bridge.h"
 #include "ios_host.h"
+#include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <utility>
 #include <stdexcept>
 extern "C" void MH3_WPADProbe(CpuContext*);
 extern "C" void MH3_WPADSetDataFormat(CpuContext*);
@@ -93,10 +96,52 @@ void RunControllerSelfTests(CpuContext* cpu) {
     cpu->gpr[4] = 1;
     cpu->gpr[5] = 0x800010F0;
     MH3_WPADControlDpd(cpu);
-    const auto unsupported = TakeIosCompletion();
+    const auto enabled = TakeIosCompletion();
 
-    if (int32_t(cpu->gpr[3]) != -4 || !unsupported || int32_t(unsupported->argument) != -4)
-        MH3_THROW(std::runtime_error("WPAD accepted unsupported IR enable"));
+    if (cpu->gpr[3] || !enabled || enabled->argument || Memory::Read32(block + 0x838) != 1)
+        MH3_THROW(std::runtime_error("WPAD IR enable failed"));
+
+    // The pointer in the picture's middle: B held, two level dots of a sensor
+    // bar above the screen around the camera's middle (KPAD as KpadInit sets
+    // it up).
+    constexpr uint32_t kpad = 0x8065D310, distMax = 0x80793378;
+    const std::pair<uint32_t, float> kpadSetup[] = {
+        {kpad + 0xD4, 0.0f},   {kpad + 0xD8, -1.0f},     {kpad + 0xDC, 1.0f},     {kpad + 0xE0, 0.0f},  {kpad + 0xE4, 0.0f},
+        {kpad + 0xE8, -0.2f},  {kpad + 0xEC, 2.272727f}, {kpad + 0x1A0, 0.521f},  {kpad + 0x1A4, 0.521f}, {distMax, 4.0f},
+    };
+
+    uint32_t kpadSaved[std::size(kpadSetup)];
+
+    for (size_t i = 0; i < std::size(kpadSetup); ++i) {
+        kpadSaved[i] = Memory::Read32(kpadSetup[i].first);
+        Memory::WriteFloat32(kpadSetup[i].first, kpadSetup[i].second);
+    }
+
+    sample.pointing = true;
+    sample.pointX = sample.pointY = 0.5f;
+    SetControllerTestSample(sample);
+    cpu->gpr[3] = 0;
+    cpu->gpr[4] = output;
+    MH3_WPADRead(cpu);
+    const int32_t left = int16_t(Memory::Read16(output + 8)), right = int16_t(Memory::Read16(output + 16));
+
+    if (Memory::Read16(output) != 0x0400 || !Memory::Read16(output + 12) || !Memory::Read16(output + 20) || Memory::Read16(output + 28) ||
+        Memory::Read16(output + 10) != Memory::Read16(output + 18) || right <= left || std::abs(left + right - 1023) > 1 || Memory::Read16(output + 10) != 281)
+        MH3_THROW(std::runtime_error("WPAD pointer report failed"));
+
+    for (size_t i = 0; i < std::size(kpadSetup); ++i)
+        Memory::Write32(kpadSetup[i].first, kpadSaved[i]);
+
+    sample.pointing = false;
+    SetControllerTestSample(sample);
+    cpu->gpr[3] = 0;
+    cpu->gpr[4] = 0;
+    cpu->gpr[5] = 0x800010F0;
+    MH3_WPADControlDpd(cpu);
+    const auto disabled = TakeIosCompletion();
+
+    if (cpu->gpr[3] || !disabled || Memory::Read32(block + 0x838) != 0)
+        MH3_THROW(std::runtime_error("WPAD IR disable failed"));
 
     sample.connected = false;
     SetControllerTestSample(sample);

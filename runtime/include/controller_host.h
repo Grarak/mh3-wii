@@ -1,12 +1,19 @@
 #pragma once
 #include <cstdint>
 #include <optional>
+#include <utility>
 struct CpuContext;
 struct ClassicControllerSample {
     bool connected = false;
     uint16_t buttons = 0;
     int16_t leftX = 0, leftY = 0, rightX = 0, rightY = 0;
     uint8_t triggerL = 0, triggerR = 0;
+
+    // The Wii Remote's pointer: the Vita's front touch screen, the mouse's
+    // left button elsewhere. While held, where on the game's picture, 0..1
+    // across and down (wpad_services.cpp).
+    bool pointing = false;
+    float pointX = 0, pointY = 0;
 };
 
 // The host input as the game sees it (after MH3_INPUT playback / record).
@@ -31,5 +38,13 @@ ClassicControllerSample ReadLiveController();
 ClassicControllerSample ReadVitaController();
 #endif
 void SetControllerTestSample(std::optional<ClassicControllerSample> sample);
+
+// Holds the pointer at (x, y) on the game's picture (0..1), or lets the host
+// pointer through again (debug port `point`).
+void SetPointerTestSample(std::optional<std::pair<float, float>> point);
+
+// A point on the window (the Vita's screen), in drawable pixels, as a point on
+// the game's picture: false outside it or before the first frame.
+bool PointOnPicture(float x, float y, float& pictureX, float& pictureY);
 void ServiceHostController(CpuContext* cpu, bool force = false);
 void RunControllerSelfTests(CpuContext* cpu);

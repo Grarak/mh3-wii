@@ -16,6 +16,7 @@
 #endif
 namespace {
 std::optional<ClassicControllerSample> testSample;
+std::optional<std::pair<float, float>> testPointer;
 uint64_t inputFrame = 0;
 bool playbackHeld = false;
 
@@ -144,6 +145,10 @@ void SetControllerTestSample(std::optional<ClassicControllerSample> sample) {
     testSample = sample;
 }
 
+void SetPointerTestSample(std::optional<std::pair<float, float>> point) {
+    testPointer = point;
+}
+
 void SetInputFrame(uint64_t frame) {
     inputFrame = frame;
 }
@@ -153,16 +158,29 @@ void HoldInputPlayback(bool hold) {
 }
 
 ClassicControllerSample ReadHostController() {
-    if (testSample)
-        return *testSample;
+    ClassicControllerSample sample;
 
-    if (auto played = PlaybackInput()) {
-        RecordInput(*played);
-        return *played;
+    if (testSample) {
+        sample = *testSample;
+    } else if (auto played = PlaybackInput()) {
+        // The logs hold the Classic report: the pointer stays live.
+        const ClassicControllerSample live = ReadLiveController();
+        sample = *played;
+        sample.pointing = live.pointing;
+        sample.pointX = live.pointX;
+        sample.pointY = live.pointY;
+        RecordInput(sample);
+    } else {
+        sample = ReadLiveController();
+        RecordInput(sample);
     }
 
-    const ClassicControllerSample sample = ReadLiveController();
-    RecordInput(sample);
+    if (testPointer) {
+        sample.pointing = true;
+        sample.pointX = testPointer->first;
+        sample.pointY = testPointer->second;
+    }
+
     return sample;
 }
 
@@ -284,6 +302,14 @@ ClassicControllerSample ReadLiveController() {
 
     if (sample.buttons & MH3_CL_R)
         sample.triggerR = 255;
+
+    // The mouse's left button over the game's picture is the pointer.
+    float x = 0, y = 0;
+
+    if (SDL_Window* window = SDL_GetMouseFocus(); window && (SDL_GetMouseState(&x, &y) & SDL_BUTTON_LMASK)) {
+        const float density = SDL_GetWindowPixelDensity(window);
+        sample.pointing = PointOnPicture(x * density, y * density, sample.pointX, sample.pointY);
+    }
 #endif
     return sample;
 }

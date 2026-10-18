@@ -19,14 +19,20 @@ about 90..187 along an axis change the result ([controls](../../vita-controls.md
   supplies probe results, data-format changes, controller information,
   deferred callbacks, raw Classic reports, and a 5 ms feed into the SDK's
   auto-sampling ring (WPAD bridge). The game's own
-  button and stick processing runs unchanged. Motion, IR, speaker and
-  rumble are not implemented; IR enable requests return an error, and the
-  game carries on with the Classic Controller.
+  button and stick processing runs unchanged. Motion, speaker and rumble
+  are not implemented.
+- **The pointer**: the Vita's front touch screen (the mouse's left button
+  on other hosts) is the Wii Remote's IR pointer. While a finger is down
+  the reports carry two dots of a sensor bar, placed by inverting the
+  game's own copy of KPAD (`pad_pointer.cpp`) so its cursor lands under the
+  finger (the picture's place on the screen from `aurora_present_rect`),
+  and the remote's own B and A buttons for the one feature that reads
+  them: pointing at monsters for the log ([controls](../../vita-controls.md#pointer)).
 - **Host mappings** (`runtime/native/mh3_classic_map.c` for the Vita,
   `runtime/src/controller_host.cpp` for SDL gamepads and the keyboard): face
   buttons by position, the Classic L/R triggers on the shoulders; on a PS TV
-  controller L2/R2 are ZL/ZR and L3 + R3 is HOME. The touch panels are not
-  read: a hand gripping the rear panel never reaches the game
+  controller L2/R2 are ZL/ZR and L3 + R3 is HOME. The rear touch panel is
+  not read: a hand gripping it never reaches the game
   ([controls](../../vita-controls.md)).
 - **A stick curve** spreads the game's narrow input window over the host
   stick's travel: a radial dead zone, then the game's threshold rising
@@ -39,9 +45,11 @@ about 90..187 along an axis change the result ([controls](../../vita-controls.md
 
 ## Why
 
-The hosts have no Wii Remote, pointer or motion sensors, and the game is
-fully playable with the Classic Controller. Supplying it at the WPAD level
-keeps the game's input code, menus and help screens as they are. The stick
+The hosts have no Wii Remote or motion sensors, and the game is fully
+playable with the Classic Controller; only pointing at monsters for the log
+needs the remote's pointer, which a touch screen or mouse stands in for.
+Supplying it at the WPAD level keeps the game's input code, menus and help
+screens as they are. The stick
 curve fixes a real problem: a linear mapping (as the SDL path first did) put
 the game's whole input window into 18-37% of the Vita stick's travel, so a
 slight tilt jumped from standing to running ([controls](../../vita-controls.md)).
@@ -73,8 +81,11 @@ for any game that reads WPAD; the host mappings and the curve function take
 a curve per device.
 
 Game-specific: which extension the game supports well without pointer or
-motion. Games built around the pointer or motion controls need an
-emulated pointer or gesture mapping, which this port does not have. Find
+motion. The sensor bar dots need the game's KPAD settings (sensor bar
+place, scale, distances) to land the cursor where the player touched; a
+game on the SDK's KPAD keeps them in its KPADInsideStatus as this one does.
+Motion controls would need a gesture mapping, which this port does not
+have. Find
 the game's own stick reader and its thresholds (here 30 and 127 after the
 clamp), and set the curve so that the game's window covers most of the host
 stick's travel.

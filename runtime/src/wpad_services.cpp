@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 
@@ -53,7 +54,81 @@ int32_t ControllerStatus(uint32_t channel, const ClassicControllerSample& sample
     return channel == 0 && sample.connected ? 0 : -1;
 }
 
-std::array<uint8_t, 0x36> Report(const ClassicControllerSample& sample, int32_t status) {
+// The Wii Remote itself, under the Classic Controller: the touch screen (the
+// mouse) is its pointer, with B and A shaped for the game's pointing in the
+// village and the field (log_pointer.cpp). The original holds B to show the
+// cursor, then presses A over a monster (a hunter online) and drags it with A
+// held onto the log on the HUD. Here a finger down holds B, and A goes down
+// once the game reports the cursor over a target (state 2) and stays down
+// until the finger lifts: touch a monster, drag it to the log, let go. B
+// outlasts the finger by a moment, as the drop is only seen while B is held.
+constexpr uint16_t kRemoteB = 0x0400, kRemoteA = 0x0800;
+constexpr uint32_t kPointingState = 0x806BFE89; // u8: 2 over a target, 4 dragging one
+constexpr auto kDropHold = std::chrono::milliseconds(150);
+
+struct RemotePointer {
+    uint16_t buttons = 0;
+    bool aiming = false; // the dots are in view
+    float x = 0, y = 0;  // KPAD's pos, -1..1
+};
+
+RemotePointer Pointer(const ClassicControllerSample& sample) {
+    using Clock = std::chrono::steady_clock;
+    static bool touching = false, grabbing = false;
+    static Clock::time_point lifted{};
+    static float x = 0, y = 0;
+    const auto now = Clock::now();
+
+    if (sample.pointing) {
+        touching = true;
+        x = sample.pointX * 2.0f - 1.0f;
+        y = sample.pointY * 2.0f - 1.0f;
+    } else if (touching) {
+        touching = false;
+        lifted = now;
+    }
+
+    grabbing = touching && (grabbing || Memory::Read8(kPointingState) == 2);
+    RemotePointer pointer;
+    pointer.aiming = touching || (lifted != Clock::time_point{} && now - lifted < kDropHold);
+    pointer.buttons = (pointer.aiming ? kRemoteB : 0) | (grabbing ? kRemoteA : 0);
+    pointer.x = x;
+    pointer.y = y;
+    return pointer;
+}
+
+// The IR camera's view of a sensor bar for KPAD's pos (x, y), through the
+// game's copy of KPAD at 0x8065D310 (pad_pointer.cpp), inverted: two dots
+// level, as far apart as a remote half way into the distances it accepts.
+bool SensorBarDots(float x, float y, int16_t dots[2][2]) {
+    constexpr uint32_t kp = 0x8065D310;
+    const auto f = [](uint32_t a) {
+        return Memory::ReadFloat32(a);
+    };
+
+    const float rx = f(kp + 0xD4), ry = f(kp + 0xD8); // screen rotation
+    const float sx = f(kp + 0xDC), sy = f(kp + 0xE0); // sensor rotation
+    const float scale = f(kp + 0xEC);
+    const float distance = (f(kp + 0x1A4) + f(0x80793378)) * 0.5f; // between the nearest and farthest
+
+    if (!(scale > 0.0f) || !(distance > 0.0f))
+        return false; // before KpadInit
+
+    const float bx = -ry * x - rx * y, by = rx * x - ry * y;
+    const float u = f(kp + 0xE4) - bx / scale, v = f(kp + 0xE8) - by / scale;
+    const float mx = sx * u + sy * v, my = -sy * u + sx * v;
+
+    // Camera units: x 0..1023, y 0..767; KPAD's -1..1 is 512 of them.
+    const int32_t apart = int32_t(std::lround(f(kp + 0x1A0) / distance * 512.0f));
+    const int32_t left = int32_t(std::lround((mx + 1023.0f / 1024.0f) * 512.0f - apart * 0.5f));
+    const int32_t row = int32_t(std::lround((my + 767.0f / 1024.0f) * 512.0f));
+    dots[0][0] = int16_t(left);
+    dots[1][0] = int16_t(left + apart);
+    dots[0][1] = dots[1][1] = int16_t(row);
+    return true;
+}
+
+std::array<uint8_t, 0x36> Report(const ClassicControllerSample& sample, int32_t status, bool irOn) {
     std::array<uint8_t, 0x36> bytes{};
     const auto word = [&](size_t offset, uint16_t value) {
         bytes[offset] = uint8_t(value >> 8);
@@ -66,12 +141,22 @@ std::array<uint8_t, 0x36> Report(const ClassicControllerSample& sample, int32_t 
     if (status)
         return bytes;
 
+    const RemotePointer pointer = Pointer(sample);
+    word(0, pointer.buttons);
     word(2, 512);
     word(4, 512);
     word(6, 612); // stationary remote, one g on Z
     for (unsigned i = 0; i < 4; ++i) {
         word(8 + i * 8, 0x3FF);
         word(10 + i * 8, 0x3FF);
+    }
+
+    if (int16_t dots[2][2]; irOn && pointer.aiming && SensorBarDots(pointer.x, pointer.y, dots)) {
+        for (unsigned i = 0; i < 2; ++i) {
+            word(8 + i * 8, uint16_t(dots[i][0]));
+            word(10 + i * 8, uint16_t(dots[i][1]));
+            word(12 + i * 8, 2); // the dot's size: seen
+        }
     }
 
     word(0x2A, sample.buttons);
@@ -98,6 +183,11 @@ void CopyReport(uint32_t address, const std::array<uint8_t, 0x36>& report, uint3
     auto* destination = Memory::GetPointer(address, size);
     RecompMod::CheckExecutableWrite(address, size, 0);
     std::memcpy(destination, report.data(), size);
+}
+
+// WPADIsDpdEnabled's flag (the remote's status report sets it).
+bool IrOn(uint32_t block) {
+    return Memory::Read32(block + 0x838) != 0;
 }
 
 void CompleteController(uint32_t callback, uint32_t channel, int32_t result) {
@@ -143,7 +233,7 @@ extern "C" void MH3_WPADRead(CpuContext* cpu) {
     const auto status = ControllerStatus(channel, sample);
     const auto block = ControlBlock(channel);
     const auto size = status || !block ? 0x2Au : ReportSize(Memory::Read32(block + 0x8B8));
-    CopyReport(cpu->gpr[4], Report(sample, status), size);
+    CopyReport(cpu->gpr[4], Report(sample, status, block && IrOn(block)), size);
 }
 REGISTER_NATIVE_FUNCTION(0x804EF9D0, MH3_WPADRead);
 
@@ -168,9 +258,23 @@ extern "C" void MH3_WPADGetInfoAsync(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION(0x804EF3C0, MH3_WPADGetInfoAsync);
 
-// Classic input has no IR camera or remote speaker. Disable requests succeed;
-// enabling hardware that the host bridge does not supply returns invalid.
+// The IR camera (the pointer, from the touch screen or mouse) switches on and
+// off. There is no remote speaker: disabling it succeeds, enabling returns
+// invalid.
 extern "C" void MH3_WPADControlDpd(CpuContext* cpu) {
+    const auto channel = cpu->gpr[3];
+    const auto status = ControllerStatus(channel, ReadGameController());
+
+    if (!status)
+        if (const auto block = ControlBlock(channel))
+            Memory::Write32(block + 0x838, cpu->gpr[4] != 0);
+
+    CompleteController(cpu->gpr[5], channel, status);
+    cpu->gpr[3] = status;
+}
+REGISTER_NATIVE_FUNCTION(0x804F1B20, MH3_WPADControlDpd);
+
+extern "C" void MH3_WPADControlSpeaker(CpuContext* cpu) {
     const auto channel = cpu->gpr[3];
     auto status = ControllerStatus(channel, ReadGameController());
 
@@ -179,10 +283,6 @@ extern "C" void MH3_WPADControlDpd(CpuContext* cpu) {
 
     CompleteController(cpu->gpr[5], channel, status);
     cpu->gpr[3] = status;
-}
-REGISTER_NATIVE_FUNCTION(0x804F1B20, MH3_WPADControlDpd);
-extern "C" void MH3_WPADControlSpeaker(CpuContext* cpu) {
-    MH3_WPADControlDpd(cpu);
 }
 REGISTER_NATIVE_FUNCTION(0x804EFF80, MH3_WPADControlSpeaker);
 
@@ -216,7 +316,7 @@ void ServiceHostController(CpuContext* cpu, bool force) {
         wasConnected = sample.connected;
     }
 
-    const auto report = Report(sample, sample.connected ? 0 : -1);
+    const auto report = Report(sample, sample.connected ? 0 : -1, IrOn(block));
     const auto size = ReportSize(Memory::Read32(block + 0x8B8));
     const auto buffer = Memory::Read32(block + 0x8AC), count = Memory::Read32(block + 0x8B4);
 
