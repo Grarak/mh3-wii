@@ -11,8 +11,11 @@
 #include <malloc.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <string>
 
 namespace VitaIo {
 constexpr size_t BufferAlign = 64, OffsetAlign = 512, BounceBytes = 512u << 10;
@@ -66,5 +69,37 @@ inline int64_t Pread(SceUID fd, uint8_t* out, size_t count, uint64_t at) {
     }
 
     return int64_t(done);
+}
+
+// A suspend (the PS button, or the power button's standby) invalidates the
+// descriptors of files open under ux0:data: after the resume every operation
+// on them but sceIoClose fails with ENODEV (0x80010013, Sony's Development
+// Process Overview, "Invalidation of File Descriptors"). A reader that keeps
+// a file open for the session reads through this: a failed read opens `path`
+// again in place of `fd` (once per stale descriptor, under `lock`, for the
+// threads that share it) and is retried once.
+inline int64_t PreadReopening(std::atomic<int>& fd, std::mutex& lock, const std::string& path, uint8_t* out, size_t count, uint64_t at) {
+    const int stale = fd.load(std::memory_order_acquire);
+    const int64_t n = Pread(stale, out, count, at);
+
+    if (n >= 0)
+        return n;
+
+    {
+        std::lock_guard guard(lock);
+
+        // Another reader may have opened it again already.
+        if (fd.load(std::memory_order_relaxed) == stale) {
+            const int file = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
+
+            if (file < 0)
+                return n;
+
+            sceIoClose(stale);
+            fd.store(file, std::memory_order_release);
+        }
+    }
+
+    return Pread(fd.load(std::memory_order_acquire), out, count, at);
 }
 } // namespace VitaIo

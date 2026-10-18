@@ -283,7 +283,7 @@ private:
   public:
     uint64_t size = 0;
 
-    File(File&& other) noexcept : size(other.size), m_path(std::move(other.m_path)), m_fd(std::exchange(other.m_fd, -1)) {}
+    File(File&& other) noexcept : size(other.size), m_path(std::move(other.m_path)), m_fd(other.m_fd.exchange(-1)) {}
     explicit File(const std::string& path) : m_path(path) {
 #ifdef __vita__
       m_fd = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
@@ -325,11 +325,25 @@ private:
         fail("read past the end of");
 
       auto* p = static_cast<uint8_t*>(out);
+#ifdef __vita__
+      bool reopened = false;
+#endif
 
       for (size_t done = 0; done < bytes;) {
         const size_t amount = std::min<size_t>(bytes - done, 1u << 20);
 #ifdef __vita__
-        const int n = sceIoPread(m_fd, p + done, amount, offset + done);
+        const int fd = m_fd.load(std::memory_order_acquire);
+        const int n = sceIoPread(fd, p + done, amount, offset + done);
+
+        // A suspend invalidates the descriptors of files open under ux0:data
+        // (ENODEV after the resume, Sony's Development Process Overview): open
+        // the pack again once and retry.
+        if (n < 0 && !reopened) {
+          reopened = true;
+
+          if (reopen(fd))
+            continue;
+        }
 #else
         const auto n = ::pread(m_fd, p + done, amount, off_t(offset + done));
 
@@ -344,9 +358,30 @@ private:
     }
 
   private:
+#ifdef __vita__
+    // Replaces `stale` with a new descriptor, unless another reader already
+    // did; false when the pack cannot be opened again.
+    bool reopen(int stale) const {
+      static std::mutex lock;
+      std::lock_guard guard(lock);
+
+      if (m_fd.load(std::memory_order_relaxed) != stale)
+        return true;
+
+      const int fd = sceIoOpen(m_path.c_str(), SCE_O_RDONLY, 0);
+
+      if (fd < 0)
+        return false;
+
+      sceIoClose(stale);
+      m_fd.store(fd, std::memory_order_release);
+      return true;
+    }
+#endif
+
     [[noreturn]] void fail(const char* what) const { AURORA_THROW(std::runtime_error(std::string("Cannot ") + what + " native texture pack " + m_path)); }
     std::string m_path;
-    int m_fd = -1;
+    mutable std::atomic<int> m_fd{-1};
   };
 
   mutable std::mutex m_lock;

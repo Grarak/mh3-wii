@@ -145,17 +145,21 @@ std::string MiB(uint64_t bytes) {
     return std::to_string((bytes + (1u << 19)) >> 20) + " MiB";
 }
 
-// Write to a temporary name, then publish: a file under its final name is complete.
+// Write to a temporary name, then publish: a file under its final name is
+// complete. A failed write is written again once: on the Vita a suspend
+// invalidates the descriptors of files open under ux0:data, a write it cut
+// among them (VitaIo::PreadReopening).
 Status Publish(const std::filesystem::path& path, std::span<const uint8_t> bytes) {
     const auto temporary = std::filesystem::path(path.string() + ".tmp");
-    {
+    const auto write = [&] {
         std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
         out.close();
+        return bool(out);
+    };
 
-        if (!out)
-            return Status::Error("Cannot write " + path.string() + " (not enough space?)");
-    }
+    if (!write() && !write())
+        return Status::Error("Cannot write " + path.string() + " (not enough space?)");
 
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -835,11 +839,16 @@ struct AssetCache::Impl {
             Put64(record, patch);
 
         Put32(record, Fnv(record.data(), record.size()));
-        std::ofstream out(cache / "index.log", std::ios::binary | std::ios::app);
-        out.write(reinterpret_cast<const char*>(record.data()), std::streamsize(record.size()));
-        out.close();
 
-        if (!out)
+        // Appended again once when a suspend cut the write (Publish).
+        const auto append = [&] {
+            std::ofstream out(cache / "index.log", std::ios::binary | std::ios::app);
+            out.write(reinterpret_cast<const char*>(record.data()), std::streamsize(record.size()));
+            out.close();
+            return bool(out);
+        };
+
+        if (!append() && !append())
             return Status::Error("Cannot append the asset cache index (not enough space?)");
 
         return {};
@@ -1041,16 +1050,23 @@ struct AssetCache::Impl {
             const char* kind = job.kind == Kind::Textures ? "textures" : "models";
             step.Set(job.kind == Kind::Textures ? "converting textures" : "converting models", s.file.path.c_str());
 #endif
-            Status converted;
+            const auto convert = [&] {
+                if (job.kind == Kind::Textures)
+                    return ConvertTextures(s, data);
 
-            if (job.kind == Kind::Textures)
-                converted = ConvertTextures(s, data);
-            else {
                 if (!converter)
                     converter = std::make_unique<ModelConverter>();
 
-                converted = ConvertModels(s, *data, *converter, usable);
-            }
+                return ConvertModels(s, *data, *converter, usable);
+            };
+
+            // A failed conversion runs again once: a suspend that cut the
+            // writes of its pack fails them (Publish), and the pack is
+            // written again whole.
+            Status converted = convert();
+
+            if (!converted.ok())
+                converted = convert();
 
             if (!converted.ok())
                 failure = s.file.path + ": " + converted.message();

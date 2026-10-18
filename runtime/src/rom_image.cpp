@@ -7,6 +7,7 @@
 #include <chrono>
 #include <climits>
 #include <cstdio>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include "../vita/rom_decoder.h"
@@ -26,6 +27,8 @@
 #endif
 
 namespace {
+// Kept open for the session; on the Vita its reads reopen it after a suspend
+// (VitaIo::PreadReopening).
 class File {
   public:
     uint64_t size = 0;
@@ -33,7 +36,8 @@ class File {
 
     Status Open(const std::filesystem::path& path) {
 #ifdef __vita__
-        fd = sceIoOpen(path.string().c_str(), SCE_O_RDONLY, 0);
+        name = path.string();
+        fd = sceIoOpen(name.c_str(), SCE_O_RDONLY, 0);
         SceIoStat st{};
         const int result = fd < 0 ? -1 : sceIoGetstatByFd(fd, &st);
 #else
@@ -65,7 +69,7 @@ class File {
 
         while (done < count) {
 #ifdef __vita__
-            const auto n = VitaIo::Pread(fd, bytes + done, count - done, at + done);
+            const auto n = VitaIo::PreadReopening(fd, reopenLock, name, bytes + done, count - done, at + done);
 #else
             const auto n = pread(fd, bytes + done, count - done, at + done);
 
@@ -90,16 +94,26 @@ class File {
 #endif
 
   private:
+#ifdef __vita__
+    std::string name;
+    mutable std::atomic<int> fd{-1};
+    mutable std::mutex reopenLock;
+#else
     int fd = -1;
+#endif
     void Close() {
+#ifdef __vita__
+        const int file = fd.exchange(-1);
+
+        if (file >= 0)
+            sceIoClose(file);
+#else
         if (fd < 0)
             return;
-#ifdef __vita__
-        sceIoClose(fd);
-#else
+
         ::close(fd);
-#endif
         fd = -1;
+#endif
     }
 };
 
