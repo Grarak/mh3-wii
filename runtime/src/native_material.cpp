@@ -1006,7 +1006,7 @@ void ReportMaterialGpu() {
 #endif
 #ifdef MH3_DEVELOPMENT
 // MH3_PROFILE=fill: screen area that material geometry (effects, particles,
-// layouts) covers per fragment program and blend, every 300 rendered frames,
+// layouts) and compact quads cover per fragment program and blend, every 300 rendered frames,
 // for attributing the GPU's fragment time. Areas are in screens (the clip
 // square), clipped to w > 0 and the viewport; depth and scissor are ignored.
 struct FillCount {
@@ -1112,24 +1112,22 @@ std::string BasicStructure(const mh3_shade_material& shading) {
     return out;
 }
 
-void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderVariant& variant, const mh3_shade_material& shading) {
+// The draw's entry (prefix: quad for compact quads), null unless counting.
+FillCount* FillEntry(const char* prefix, const NativeShaderVariant& variant, const mh3_shade_material& shading) {
     static const bool enabled = ProfileOptions().Has("fill");
 
     if (!enabled)
-        return;
+        return nullptr;
 
     const auto& raster = GetNativeDrawState(NativeOwner::Render).raster;
     char blend[32];
     std::snprintf(blend, sizeof blend, " b%u:%u:%u%s", raster.blend_mode, raster.src_factor, raster.dst_factor, raster.depth_test ? "" : " nodepth");
-    auto& count = fillCounts[NativeShaderFragmentName(variant) + blend + (shading.model == MH3_SHADE_BASIC ? BasicStructure(shading) : std::string())];
+    auto& count = fillCounts[prefix + NativeShaderFragmentName(variant) + blend + (shading.model == MH3_SHADE_BASIC ? BasicStructure(shading) : std::string())];
     ++count.draws;
+    return &count;
+}
 
-    for (uint32_t i = 0; i + 2 < geometry.index_count; i += 3) {
-        const auto& v = geometry.vertices;
-        count.screens += ClippedScreens(v[geometry.indices[i]].position, v[geometry.indices[i + 1]].position, v[geometry.indices[i + 2]].position);
-        ++count.triangles;
-    }
-
+void ReportFill() {
     const uint32_t frame = aurora::gfx::current_frame();
 
     if (!fillFrame)
@@ -1156,6 +1154,51 @@ void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderV
                      sorted[i].second.triangles / frames, sorted[i].first.c_str());
     fillCounts.clear();
     fillFrame = frame;
+}
+
+void CountFill(const AuroraNativeMaterialGeometry& geometry, const NativeShaderVariant& variant, const mh3_shade_material& shading) {
+    auto* count = FillEntry("", variant, shading);
+
+    if (!count)
+        return;
+
+    for (uint32_t i = 0; i + 2 < geometry.index_count; i += 3) {
+        const auto& v = geometry.vertices;
+        count->screens += ClippedScreens(v[geometry.indices[i]].position, v[geometry.indices[i + 1]].position, v[geometry.indices[i + 2]].position);
+        ++count->triangles;
+    }
+
+    ReportFill();
+}
+
+// Compact quads: the corners through the Quad block's position rows and
+// projection (GlslQuadVertex), two triangles a quad.
+void CountQuadFill(const AuroraNativeQuadVertex* vertices, uint32_t quads, const float position[12], const float projection[16], const NativeShaderVariant& variant,
+                   const mh3_shade_material& shading) {
+    auto* count = FillEntry("quad ", variant, shading);
+
+    if (!count)
+        return;
+
+    for (uint32_t q = 0; q < quads; ++q) {
+        float clip[4][4];
+
+        for (unsigned corner = 0; corner < 4; ++corner) {
+            const float* in = vertices[q * 4 + corner].position;
+            float view[4] = {0, 0, 0, 1};
+
+            for (unsigned row = 0; row < 3; ++row)
+                view[row] = position[row * 4] * in[0] + position[row * 4 + 1] * in[1] + position[row * 4 + 2] * in[2] + position[row * 4 + 3];
+
+            for (unsigned row = 0; row < 4; ++row)
+                clip[corner][row] = projection[row * 4] * view[0] + projection[row * 4 + 1] * view[1] + projection[row * 4 + 2] * view[2] + projection[row * 4 + 3] * view[3];
+        }
+
+        count->screens += ClippedScreens(clip[0], clip[1], clip[2]) + ClippedScreens(clip[0], clip[2], clip[3]);
+        count->triangles += 2;
+    }
+
+    ReportFill();
 }
 #endif
 #ifdef MH3_DEVELOPMENT
@@ -1684,6 +1727,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
 
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
+    CountQuadFill(vertices, count, draw.position, draw.projection, variant, shading);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
     aurora::gl::draw_shaded_quads(vertices, count, program, *blocks, units);
