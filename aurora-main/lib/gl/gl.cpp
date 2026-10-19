@@ -214,6 +214,9 @@ GLuint g_materialVao = 0, g_materialVertexBuffer = 0, g_materialIndexBuffer = 0,
 // Fixed shading programs: per-draw Draw+Shade and Palette blocks, Scene on revision.
 GLuint g_shadeMeshVao = 0, g_shadeGeometryVao = 0, g_shadeGeometryVertexBuffer = 0, g_shadeGeometryIndexBuffer = 0;
 GLuint g_shadeQuadVao = 0, g_shadeQuadVertexBuffer = 0, g_shadeQuadIndexBuffer = 0;
+
+// Quads with their own base and slope: the quad buffers plus the lerp stream.
+GLuint g_shadeLerpQuadVao = 0, g_shadeQuadLerpBuffer = 0;
 GLuint g_shadeDrawBuffer = 0, g_shadeSceneBuffer = 0, g_shadeViewBuffer = 0;
 std::array<uint8_t, 3> g_shadeGeometryCoordinates{};
 uint64_t g_shadeSceneRevision = UINT64_MAX, g_shadeViewRevision = UINT64_MAX;
@@ -443,18 +446,19 @@ void shutdown() noexcept {
       glDeleteBuffers(1, &g_materialUniformBuffer);
 
     g_materialVao = g_materialVertexBuffer = g_materialIndexBuffer = g_materialUniformBuffer = 0;
-    const GLuint shadeVaos[] = {g_shadeMeshVao, g_shadeGeometryVao, g_shadeQuadVao};
+    const GLuint shadeVaos[] = {g_shadeMeshVao, g_shadeGeometryVao, g_shadeQuadVao, g_shadeLerpQuadVao};
 
     for (GLuint vao : shadeVaos)
       if (vao)
         glDeleteVertexArrays(1, &vao);
-    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeQuadVertexBuffer, g_shadeQuadIndexBuffer, g_shadeDrawBuffer, g_shadeSceneBuffer,
+    const GLuint shadeBuffers[] = {g_shadeGeometryVertexBuffer, g_shadeGeometryIndexBuffer, g_shadeQuadVertexBuffer, g_shadeQuadIndexBuffer, g_shadeQuadLerpBuffer, g_shadeDrawBuffer, g_shadeSceneBuffer,
                                    g_shadeViewBuffer, g_uniformBlockBuffer, g_streamedMaterial.buffer, g_streamedAnimated.buffer};
     for (GLuint buffer : shadeBuffers)
       if (buffer)
         glDeleteBuffers(1, &buffer);
     g_shadeMeshVao = g_shadeGeometryVao = g_shadeGeometryVertexBuffer = g_shadeGeometryIndexBuffer = 0;
     g_shadeQuadVao = g_shadeQuadVertexBuffer = g_shadeQuadIndexBuffer = 0;
+    g_shadeLerpQuadVao = g_shadeQuadLerpBuffer = 0;
     g_shadeDrawBuffer = g_shadeSceneBuffer = g_shadeViewBuffer = 0;
     g_shadeSceneRevision = g_shadeViewRevision = UINT64_MAX;
     g_uniformBlockBuffer = 0;
@@ -1839,12 +1843,19 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
   glBindVertexArray(g_state.emptyVao);
 }
 
-void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept {
+void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, const AuroraNativeQuadLerp* lerp, uint32_t quads, GLuint program, const ShadedBlocks& blocks,
+                       const std::array<uint8_t, 3>& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
     return;
 
   use_program(program);
   bind_shaded_samplers(program, textureUnits);
+  const auto corners = [] {
+    for (unsigned location = 0; location < 3; ++location) {
+      glVertexAttribPointer(location, 3, GL_FLOAT, false, sizeof(AuroraNativeQuadVertex), reinterpret_cast<void*>(size_t(location) * 12));
+      glEnableVertexAttribArray(location);
+    }
+  };
 
   // One VAO and one static index buffer: every quad is (0 1 2) (0 2 3).
   if (!g_shadeQuadVao) {
@@ -1853,12 +1864,7 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, G
     glGenBuffers(1, &g_shadeQuadIndexBuffer);
     glBindVertexArray(g_shadeQuadVao);
     glBindBuffer(GL_ARRAY_BUFFER, g_shadeQuadVertexBuffer);
-
-    for (unsigned location = 0; location < 3; ++location) {
-      glVertexAttribPointer(location, 3, GL_FLOAT, false, sizeof(AuroraNativeQuadVertex), reinterpret_cast<void*>(size_t(location) * 12));
-      glEnableVertexAttribArray(location);
-    }
-
+    corners();
     std::vector<uint16_t> indices(size_t(MaxNativeQuads) * 6);
 
     for (uint32_t q = 0; q < MaxNativeQuads; ++q) {
@@ -1869,11 +1875,34 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, G
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_shadeQuadIndexBuffer);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * 2, indices.data(), GL_STATIC_DRAW);
-  } else
-    glBindVertexArray(g_shadeQuadVao);
+  }
 
+  // The lerp VAO: the same corners and indices, base and slope at 3 and 4.
+  if (lerp && !g_shadeLerpQuadVao) {
+    glGenVertexArrays(1, &g_shadeLerpQuadVao);
+    glGenBuffers(1, &g_shadeQuadLerpBuffer);
+    glBindVertexArray(g_shadeLerpQuadVao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_shadeQuadVertexBuffer);
+    corners();
+    glBindBuffer(GL_ARRAY_BUFFER, g_shadeQuadLerpBuffer);
+
+    for (unsigned location = 3; location < 5; ++location) {
+      glVertexAttribPointer(location, 4, GL_FLOAT, false, sizeof(AuroraNativeQuadLerp), reinterpret_cast<void*>(size_t(location - 3) * 16));
+      glEnableVertexAttribArray(location);
+    }
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_shadeQuadIndexBuffer);
+  }
+
+  glBindVertexArray(lerp ? g_shadeLerpQuadVao : g_shadeQuadVao);
   glBindBuffer(GL_ARRAY_BUFFER, g_shadeQuadVertexBuffer);
   glBufferData(GL_ARRAY_BUFFER, size_t(quads) * 4 * sizeof(AuroraNativeQuadVertex), vertices, GL_STREAM_DRAW);
+
+  if (lerp) {
+    glBindBuffer(GL_ARRAY_BUFFER, g_shadeQuadLerpBuffer);
+    glBufferData(GL_ARRAY_BUFFER, size_t(quads) * 4 * sizeof(AuroraNativeQuadLerp), lerp, GL_STREAM_DRAW);
+  }
+
   bind_shaded_blocks(blocks);
   glDrawElements(GL_TRIANGLES, GLsizei(quads * 6), GL_UNSIGNED_SHORT, nullptr);
   capture_native_draw("shaded-quads", quads * 4, quads * 6);

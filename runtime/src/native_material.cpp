@@ -327,10 +327,13 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 }
 
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
-    const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 1 | uint64_t(variant.lights) << 3 | uint64_t(variant.model) << 7 | uint64_t(variant.textures) << 8 |
-                         uint64_t(variant.overlay) << 10 | uint64_t(variant.alpha_test) << 11 | uint64_t(variant.fog) << 12 | uint64_t(variant.texgen[0]) << 13 | uint64_t(variant.texgen[1]) << 16 |
-                         uint64_t(variant.texgen[2]) << 19 | uint64_t(variant.linear_fog) << 22 | uint64_t(variant.pure_modulate) << 23 | uint64_t(variant.target_alpha_one) << 24 |
-                         uint64_t(variant.material_gpu) << 25 | uint64_t(variant.dynamic) << 26 | uint64_t(variant.basic_lerp) << 27 | uint64_t(variant.skinned) << 28 | uint64_t(variant.raster_product) << 29;
+    // Every field in its own bits: vertex and lighting 2, lights 4, model and
+    // textures 2, texgens 3 each.
+    const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 2 | uint64_t(variant.lights) << 4 | uint64_t(variant.model) << 8 | uint64_t(variant.textures) << 10 |
+                         uint64_t(variant.overlay) << 12 | uint64_t(variant.alpha_test) << 13 | uint64_t(variant.fog) << 14 | uint64_t(variant.texgen[0]) << 15 | uint64_t(variant.texgen[1]) << 18 |
+                         uint64_t(variant.texgen[2]) << 21 | uint64_t(variant.linear_fog) << 24 | uint64_t(variant.pure_modulate) << 25 | uint64_t(variant.target_alpha_one) << 26 |
+                         uint64_t(variant.material_gpu) << 27 | uint64_t(variant.dynamic) << 28 | uint64_t(variant.basic_lerp) << 29 | uint64_t(variant.skinned) << 30 |
+                         uint64_t(variant.raster_product) << 31 | uint64_t(variant.vertex_lerp) << 32;
 
     if (shade.lastProgram && key == shade.lastProgramKey)
         return *shade.lastProgram;
@@ -1645,12 +1648,18 @@ struct ShadeQuad {
 
 static_assert(sizeof(ShadeQuad) == 160, "the Quad block of native_shader_source.cpp");
 
-void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
+// lerp (one per vertex): a BASIC_LERP material's base and slope per quad
+// (DrawNativeQuadRun), read by the vertex_lerp programs.
+void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const AuroraNativeQuadLerp* lerp = nullptr) {
     const auto& entry = ShadeMaterial();
     const auto& shading = entry.shading;
     RequireEarlyDepth(shading);
     const auto* baked = RecordBlock(entry);
     const bool gpu = baked != nullptr;
+
+    if (lerp && !gpu)
+        return;
+
     AuroraNativeUniforms memory{};
     mh3_shade_draw* block = nullptr;
     mh3_shade_vertex* vertexBlock;
@@ -1692,6 +1701,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     float bias[4];
     const auto units = ShadeTextures(shading, bias);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Quad, lighting);
+    variant.vertex_lerp = lerp != nullptr;
 
     if (NativeShaderFoldsFog(variant))
         vertex.channel[3] |= kFoldFog;
@@ -1707,8 +1717,9 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
         for (auto& role : srt)
             mh3_shade_gpu_srt_identity(&role);
 
+        // With lerp the program reads no coefficient: the baked block serves.
         const auto animatedBlock = ShadeAnimated(entry, bias, srt, 0);
-        const auto materialBlock = animatedBlock ? ShadeMaterialBlock(entry, *baked, animated.values[animated.last]) : std::nullopt;
+        const auto materialBlock = !animatedBlock ? std::nullopt : lerp ? std::optional(*baked) : ShadeMaterialBlock(entry, *baked, animated.values[animated.last]);
 
         if (!materialBlock)
             return;
@@ -1730,7 +1741,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     CountQuadFill(vertices, count, draw.position, draw.projection, variant, shading);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
-    aurora::gl::draw_shaded_quads(vertices, count, program, *blocks, units);
+    aurora::gl::draw_shaded_quads(vertices, lerp, count, program, *blocks, units);
 }
 } // namespace
 
@@ -2258,6 +2269,52 @@ void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
 
 void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
     SubmitShadedQuads(vertices, count, normal, color);
+}
+
+bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const NativeQuadRunPart> parts, const float normal[3], const uint8_t color[4]) {
+    const auto& entry = ShadeMaterial();
+
+    // BASIC_LERP with a baked block: base and slope are all the colours change.
+    if (!BasicLerp(entry.shading) || !entry.shading.textures || !RecordBlock(entry))
+        return false;
+
+    uint32_t quads = 0;
+
+    for (const auto& part : parts)
+        quads += part.quads;
+
+    AuroraNativeUniforms memory{};
+
+    if (!aurora_allocate_native_uniforms(quads * 4 * sizeof(AuroraNativeQuadLerp), &memory))
+        return false;
+
+    auto* out = static_cast<AuroraNativeQuadLerp*>(memory.data);
+    mh3_native_material_state material = Mat(render);
+    mh3_shade_gpu_animated values{};
+    float first[4], range[4];
+
+    for (size_t i = 0; i < parts.size(); ++i) {
+        ApplyNativeColorSnapshot(material, *parts[i].colors);
+        mh3_shade_gpu_palette(&material, &values);
+
+        // The draw has one alpha comparison.
+        if (entry.shading.alpha_test) {
+            mh3_shade_gpu_alpha_range(material.pixel.values, i ? range : first);
+
+            if (i && std::memcmp(range, first, sizeof range))
+                return false;
+        }
+
+        // Built here and stored per corner: the frame memory is CDRAM on the Vita.
+        AuroraNativeQuadLerp lerp;
+        mh3_shade_gpu_lerp(&entry.material, &values, lerp.base, lerp.slope);
+
+        for (uint32_t corner = 0; corner < parts[i].quads * 4; ++corner)
+            *out++ = lerp;
+    }
+
+    SubmitShadedQuads(vertices, quads, normal, color, static_cast<const AuroraNativeQuadLerp*>(memory.data));
+    return true;
 }
 
 NativeMaterialGpuStatistics ReadNativeMaterialGpuStatistics() {

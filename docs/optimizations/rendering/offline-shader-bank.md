@@ -20,13 +20,13 @@ The Vita build ships every program it can bind, compiled by Sony's
   enumerate every value of every field. The bank is that whole domain plus
   the fixed GLSL programs (texture copy and palette conversion, depth peek,
   scene feedback), translated to Cg by the runtime's own converter, and 8
-  hand-written utility programs: 4,211 vertex and 658 fragment stages in
+  hand-written utility programs: 4,222 vertex and 898 fragment stages in
   all (the skinned variants doubled the mesh vertex programs).
 - `cmake/GxmShaderBank.cmake` builds a host generator that writes the Cg,
   compiles each stage with `psp2cgc` under Wine in Docker (cached by a hash
   of compiler, options and source), and packs the result: a zstd
   dictionary trained on the bank, then one zstd frame per program. The
-  4,869-stage bank is about 28 MB of GXP, embedded as 2.1 MB (the build's
+  5,120-stage bank is about 28 MB of GXP, embedded as 2.1 MB (the build's
   `shader_bank.json`). A program is decompressed the first time it is bound.
 - Release builds link no shader compiler; a miss stops the game.
   Development builds report a miss and fall back to the runtime compiler
@@ -56,7 +56,7 @@ A new variant field must reach the key domain; the compiler enforces it
 
 ```cpp
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 19, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 20, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 ```
 
 The fragment domain is a loop over every model, texture count and flag

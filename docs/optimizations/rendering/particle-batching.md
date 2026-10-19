@@ -27,6 +27,26 @@ colour is a new TEV register write in the same stream.
   arenas. The result is one triangle list in submission order, so blending,
   depth and alpha test see the same primitives in the same order: merging
   adjacent same-state draws is exact. Up to 65,536 vertices per draw.
+- **Particles of different colours drawn as one**: particles that fade on
+  their own set their own colour registers, so each recorded a draw of its
+  own (the base camp waterfall's spray: 138 particle draws a frame). On the
+  render thread, consecutive quad records that differ only in their colour
+  snapshots (the same draw, material, lighting and texture snapshots, normal
+  and colour, the vertices following on) draw as one when the material is a
+  one-texture lerp (BASIC with constant a, b and d and c from texture role 0,
+  the particles' colour ramps). Each quad's base and slope
+  (`mh3_shade_gpu_lerp`, what the `_lerp` program computed from uniforms once
+  per draw) go with its vertices in a second stream (`AuroraNativeQuadLerp`,
+  32 bytes a corner), and the `_vlerp` fragment program takes them from there:
+  `clamp(base + slope · texel)`. The run binds the baked Material block
+  instead of a resolved copy per particle, so per particle the render thread
+  writes 128 bytes instead of an Animated block, a resolved Material block and
+  the Quad and Draw blocks (about 1.7 KiB, CDRAM on the Vita), and makes no
+  draw call. Primitive order is unchanged; a run whose parts differ in their
+  alpha comparison draws record by record (`DrawNativeQuadRun`,
+  `QuadRunEnd`). On the Vita the `basic_t1_vlerp_gpu` fragment program takes
+  6 cycles against `basic_t1_lerp_gpu`'s 7 (psp2shaderperf), and the quad
+  vertex program 87 against 83, run four times a quad.
 - **Colours as their own component**: the TEV colour registers, konst
   colours and alpha references (108 bytes, `NATIVE_STATE_COLORS`) change
   without touching the 1.3 KiB material snapshot, so a particle with new
@@ -75,6 +95,16 @@ The draw-side changes, measured on the Vita in the village:
 | Free-strategy matrices | effect draw 5.40 ms a frame | 5.07 ms |
 | Blocks built before CDRAM | `DrawNativeQuads` 13.3% of the render thread, 16.44 ms a packet | 11.0%, 16.20 ms |
 
+Particles of different colours drawn as one, on the Pi 5 (arm32 Cortex-A9
+build, frame limit off) in the Deserted Island base camp facing the
+waterfall: 138 particle draws a frame became 21 (146 quad records in 19
+runs a packet); the render thread's CPU went from 7.28 to 5.61 ms a packet
+(from 99% to 69% busy, perf), less than looking away from the waterfall
+before (6.13 ms), and the frames drawn from 89 to 93.5 a second. The game and
+draw threads did not change. The waterfall had cost the render thread 1.15 ms
+more than the view away, nearly all of it in the driver and buffer uploads
+of the separate draws; its particles cover only 0.7 screens (`MH3_PROFILE=fill`).
+
 ## Example
 
 The merge condition, from
@@ -83,8 +113,8 @@ the previous one when both are material geometry with the same draw,
 material, colour, lighting and texture snapshots, and the new vertices and
 indices follow the previous ones in the packet's arenas. Pre-transformed
 geometry reads no post texture matrices, so those are neither compared nor
-captured for it. Particles whose colours differ still draw separately;
-batching those would need the colour registers per vertex.
+captured for it. Particles whose colours differ join at replay instead, when
+their material is a lerp: their colours become each quad's base and slope.
 
 ## Applying it to another Wii game
 

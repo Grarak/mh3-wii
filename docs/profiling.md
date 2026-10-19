@@ -28,6 +28,7 @@ unless `MH3_STATS=0`. On the Vita they go to the console's TTY.
 | `MH3 frame split:` | the game frame timed as logic (input, scene update, tasks, timers) and draw (DrawScene, fonts, fade, HUD, movie) |
 | `MH3 draw split:`, `MH3 scene split:` | the draw pass by family (traverse, model, effect, ..., the 2D layers and UI sprites around the scene) and DrawScene's setup, buckets and post effects |
 | `MH3 packet snapshots:` | records per frame and state snapshots captured/stored per component |
+| `MH3 quad runs:` | per drawn packet: runs of particle quads that differ only in their colours drawn as one, the quad records they drew, and runs refused ([particle batching](optimizations/rendering/particle-batching.md)) |
 | `MH3 scene cull:`, `MH3 model cull:` | scene models culled on the game thread, mesh draws culled on the render thread |
 | `MH3 native draw memory:`, `MH3 native CDRAM:`, `MH3 Vita free:` / `MH3 Vita budget:` | per-frame GPU memory peaks, texture/model residency, free memory partitions |
 | `MH3 audio: native mixer` | the mixer's CPU time, ticks per second, output padded while the game is behind, active voices, thread and core |

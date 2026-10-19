@@ -763,6 +763,44 @@ struct DepthLivenessScope {
     ~DepthLivenessScope() { aurora::gl::set_depth_liveness(0, true, true); }
 };
 
+#ifdef MH3_DEVELOPMENT
+// Render thread: drawn packets, quad runs drawn as one, the records they
+// joined, and runs DrawNativeQuadRun refused (drawn record by record).
+std::atomic<uint32_t> quadRunPackets{0}, quadRuns{0}, quadRunRecords{0}, quadRunsRefused{0};
+#endif
+// Render thread: the parts of the quad run being drawn.
+std::vector<NativeQuadRunPart> quadRunParts;
+
+// The end of the quad records from `first` on that only their colour
+// snapshots tell apart: the same draw, material, lighting and texture
+// snapshots, normal and colour, each one's vertices following the last's.
+uint32_t QuadRunEnd(const Packet& p, uint32_t first) {
+    const auto& head = p.records[first];
+    const auto& quads = p.quads[head.payload];
+    const AuroraNativeQuadVertex* next = quads.vertices + 4 * quads.count;
+    uint32_t total = quads.count, end = first + 1;
+
+    for (; end < p.records.size(); ++end) {
+        const auto& record = p.records[end];
+
+        if (record.kind != Kind::Quads || record.state[NATIVE_STATE_DRAW] != head.state[NATIVE_STATE_DRAW] ||
+            record.state[NATIVE_STATE_MATERIAL] != head.state[NATIVE_STATE_MATERIAL] || record.state[NATIVE_STATE_LIGHTING] != head.state[NATIVE_STATE_LIGHTING] ||
+            record.state[NATIVE_STATE_TEXTURES] != head.state[NATIVE_STATE_TEXTURES])
+            break;
+
+        const auto& part = p.quads[record.payload];
+
+        if (part.vertices != next || total + part.count > aurora::gl::MaxNativeQuads || std::memcmp(part.normal, quads.normal, sizeof quads.normal) ||
+            std::memcmp(part.color, quads.color, sizeof quads.color))
+            break;
+
+        total += part.count;
+        next += 4 * part.count;
+    }
+
+    return end;
+}
+
 uint32_t drawingSlot = 0;
 
 void Draw(const Packet& p) {
@@ -797,8 +835,19 @@ void Draw(const Packet& p) {
 
     forget();
     bool afterModel = false;
+#ifdef MH3_DEVELOPMENT
+    quadRunPackets.fetch_add(1, std::memory_order_relaxed);
+#endif
+    // Records a quad run before them drew already.
+    uint32_t joined = 0;
 
     for (uint32_t index = 0; const auto& record : p.records) {
+        if (joined) {
+            --joined;
+            ++index;
+            continue;
+        }
+
         MH3_RENDER_STAGE(RenderStage::Draw, index << 8 | uint32_t(record.kind));
         MH3_RENDER_PART(Feedback);
 
@@ -878,6 +927,29 @@ void Draw(const Packet& p) {
         case Kind::Quads: {
             MH3_RENDER_PART(MaterialGeometry);
             const auto& quads = p.quads[record.payload];
+
+            // Particles fading on their own differ only in their colours:
+            // drawn as one, leaving the last one's state applied.
+            if (const uint32_t end = QuadRunEnd(p, index - 1); end > index) {
+                quadRunParts.clear();
+
+                for (uint32_t k = index - 1; k < end; ++k)
+                    quadRunParts.push_back({p.quads[p.records[k].payload].count, &p.colors.items[p.records[k].state[NATIVE_STATE_COLORS]]});
+
+                if (DrawNativeQuadRun(quads.vertices, quadRunParts, quads.normal, quads.color)) {
+                    joined = end - index;
+                    Restore(p, p.records[end - 1].state, applied);
+#ifdef MH3_DEVELOPMENT
+                    quadRuns.fetch_add(1, std::memory_order_relaxed);
+                    quadRunRecords.fetch_add(end - index + 1, std::memory_order_relaxed);
+#endif
+                    break;
+                }
+#ifdef MH3_DEVELOPMENT
+                quadRunsRefused.fetch_add(1, std::memory_order_relaxed);
+#endif
+            }
+
             DrawNativeQuads(quads.vertices, quads.count, quads.normal, quads.color);
             break;
         }
@@ -1718,6 +1790,13 @@ void TakeNativePacingWait(uint64_t& ns, uint32_t& waits) {
     pacingWaitNs = 0;
     pacingWaits = 0;
     justInTimeUs = 0;
+}
+
+void TakeNativeQuadRunCounts(uint32_t& packets, uint32_t& runs, uint32_t& records, uint32_t& refused) {
+    packets = quadRunPackets.exchange(0, std::memory_order_relaxed);
+    runs = quadRuns.exchange(0, std::memory_order_relaxed);
+    records = quadRunRecords.exchange(0, std::memory_order_relaxed);
+    refused = quadRunsRefused.exchange(0, std::memory_order_relaxed);
 }
 
 void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32_t unmerged[6]) {

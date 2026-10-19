@@ -415,6 +415,13 @@ out vec2 v_uv0;
 out vec2 v_uv1;
 out vec2 v_uv2;
 out vec4 v_fog;
+#ifdef LERP
+// The quad's BASIC_LERP base and slope (mh3_shade_gpu_lerp), the same at its corners.
+layout(location=3) in vec4 a_base;
+layout(location=4) in vec4 a_slope;
+out vec4 v_base;
+out vec4 v_slope;
+#endif
 vec2 affine(vec3 uv) { return uv.z != 0.0 ? uv.xy / uv.z : uv.xy; }
 vec2 coordinate(int source) { return source == 0 ? affine(a_uv0) : source == 1 ? affine(a_uv1) : vec2(0.0); }
 void main() {
@@ -427,6 +434,10 @@ void main() {
     v_uv0 = coordinate(quad.mode.x);
     v_uv1 = coordinate(quad.mode.y);
     v_uv2 = coordinate(quad.mode.z);
+#ifdef LERP
+    v_base = a_base;
+    v_slope = a_slope;
+#endif
     gl_Position = vec4(p.x, -p.y, p.z, p.w);
 }
 )GLSL";
@@ -472,6 +483,10 @@ in vec2 v_uv0;
 in vec2 v_uv1;
 in vec2 v_uv2;
 in vec4 v_fog;
+#ifdef VERTEX_LERP
+in vec4 v_base;
+in vec4 v_slope;
+#endif
 uniform sampler2D u_texture0;
 uniform sampler2D u_texture1;
 uniform sampler2D u_texture2;
@@ -585,6 +600,9 @@ void main() {
     sum += (v * shade.kv[2] + shade.kc[2]) * t2;
 #endif
     vec4 result = clamp(clamp(sum * shade.s, 0.0, 1.0) * (v * shade.mv + shade.mc), 0.0, 1.0);
+#elif BASIC_LERP && defined(VERTEX_LERP)
+    // The quad's base and slope came with its vertices.
+    vec4 result = clamp(v_base + v_slope * vec4(mix(t0.rgb, t0.aaa, LERP_SWIZZLE), t0.a), 0.0, 1.0);
 #elif BASIC_LERP
     // Constant inputs are their offsets; only c (texture role 0) varies, so
     // the whole equation is affine in it: base + slope * texel, both from
@@ -981,6 +999,9 @@ uniform Quad quad : BUFFER[2];
 float2 affine(float3 uv) { return uv.z != 0.0f ? uv.xy / uv.z : uv.xy; }
 float2 coordinate(int source, float3 uv0, float3 uv1) { return source == 0 ? affine(uv0) : source == 1 ? affine(uv1) : float2(0.0f, 0.0f); }
 void main(float3 a_position, float3 a_uv0, float3 a_uv1,
+#ifdef LERP
+          float4 a_base, float4 a_slope, float4 out v_base : TEXCOORD4, float4 out v_slope : TEXCOORD5,
+#endif
           float4 out v_position : POSITION, float4 out v_color0 : COLOR0,
           float2 out v_uv0 : TEXCOORD0, float2 out v_uv1 : TEXCOORD1, float2 out v_uv2 : TEXCOORD2, float4 out v_fog : TEXCOORD3) {
     float3 view = mul(float4(a_position, 1.0f), quad.position);
@@ -992,6 +1013,10 @@ void main(float3 a_position, float3 a_uv0, float3 a_uv1,
     v_uv0 = coordinate(quad.mode.x, a_uv0, a_uv1);
     v_uv1 = coordinate(quad.mode.y, a_uv0, a_uv1);
     v_uv2 = coordinate(quad.mode.z, a_uv0, a_uv1);
+#ifdef LERP
+    v_base = a_base;
+    v_slope = a_slope;
+#endif
     v_position = p;
 }
 )CG";
@@ -1079,6 +1104,9 @@ real alpha_input(int i, real4 t0, real4 t1, real4 t2, real4 v) {
 #endif
 #endif
 real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, real4 v_fog : TEXCOORD3,
+#ifdef VERTEX_LERP
+            real4 v_base : TEXCOORD4, real4 v_slope : TEXCOORD5,
+#endif
             uniform sampler2D u_texture0 : TEXUNIT0, uniform sampler2D u_texture1 : TEXUNIT1, uniform sampler2D u_texture2 : TEXUNIT2) : COLOR {
     real4 t0 = real4(1.0h, 1.0h, 1.0h, 1.0h), t1 = t0, t2 = t0;
 #if TEXTURES > 0
@@ -1138,6 +1166,9 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     real4 result;
     result.rg = saturate(saturate(sum_rg * shade.s.rg) * (v.rg * shade.mv.rg + shade.mc.rg));
     result.ba = saturate(saturate(sum_ba * shade.s.ba) * (v.ba * shade.mv.ba + shade.mc.ba));
+#elif BASIC_LERP && defined(VERTEX_LERP)
+    // The quad's base and slope came with its vertices.
+    real4 result = saturate(v_base + v_slope * real4(lerp(t0.rgb, t0.aaa, real(LERP_SWIZZLE)), t0.a));
 #elif BASIC_LERP
     // Constant inputs are their offsets; only c (texture role 0) varies.
     // Affine in the texture (as the GLSL): psp2shaderperf basic_t1_lerp_gpu
@@ -1225,7 +1256,7 @@ std::string TexgenOutputs(const NativeShaderVertexKey& key, bool cg) {
 }
 
 std::string VertexDefines(const NativeShaderVertexKey& key) {
-    return Define("LIT", int(key.lighting)) + Define("LIGHTS", key.lights) + Define("MATERIAL_GPU", key.material_gpu) + Define("SKINNED", key.skinned);
+    return Define("LIT", int(key.lighting)) + Define("LIGHTS", key.lights) + Define("MATERIAL_GPU", key.material_gpu) + Define("SKINNED", key.skinned) + (key.lerp ? Define("LERP", 1) : "");
 }
 
 bool PureModulate(const NativeShaderVariant& variant) {
@@ -1246,7 +1277,7 @@ bool Dynamic(const NativeShaderVariant& variant) {
 std::string FragmentDefines(const NativeShaderFragmentKey& key) {
     return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("LAYERS", key.model == NativeShaderModel::Layers) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
            Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
-           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product);
+           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product) + (key.vertex_lerp ? Define("VERTEX_LERP", 1) : "");
 }
 
 std::string GlslVertex(const NativeShaderVertexKey& key) {
@@ -1278,6 +1309,7 @@ NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant
     }
 
     key.skinned = variant.vertex == NativeShaderVertex::Mesh && variant.skinned;
+    key.lerp = variant.vertex == NativeShaderVertex::Quad && variant.material_gpu && variant.vertex_lerp;
 
     if (variant.vertex == NativeShaderVertex::Mesh)
         for (unsigned role = 0; role < 3; ++role) {
@@ -1310,6 +1342,7 @@ NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& var
     key.dynamic = Dynamic(variant);
     key.basic_lerp = variant.basic_lerp && variant.model == NativeShaderModel::Basic && variant.textures > 0 && !variant.overlay;
     key.raster_product = variant.raster_product && variant.model == NativeShaderModel::Basic && !variant.overlay;
+    key.vertex_lerp = variant.vertex_lerp && key.basic_lerp && variant.material_gpu;
 
     // LAYERS has no Material block (mh3_shade_gpu_bake) and no overlay.
     if (variant.model == NativeShaderModel::Layers)
@@ -1328,7 +1361,7 @@ std::vector<NativeShaderVertexKey> NativeShaderVertexKeys() {
     for (unsigned vertex = 0; vertex < NativeShaderVertexCount; ++vertex)
         for (unsigned lighting = 0; lighting < NativeShaderLightingCount; ++lighting)
             for (unsigned lights = 0; lights <= NativeShaderMaxLights; ++lights)
-                for (unsigned flags = 0; flags < 4; ++flags)
+                for (unsigned flags = 0; flags < 8; ++flags)
                     for (unsigned t0 = 0; t0 < NativeShaderTexgenCount; ++t0)
                         for (unsigned t1 = 0; t1 < NativeShaderTexgenCount; ++t1)
                             for (unsigned t2 = 0; t2 < NativeShaderTexgenCount; ++t2) {
@@ -1337,6 +1370,7 @@ std::vector<NativeShaderVertexKey> NativeShaderVertexKeys() {
                                 v.lights = uint8_t(lights);
                                 v.material_gpu = flags & 1;
                                 v.skinned = flags & 2;
+                                v.vertex_lerp = flags & 4;
                                 v.texgen[0] = NativeShaderTexgen(t0);
                                 v.texgen[1] = NativeShaderTexgen(t1);
                                 v.texgen[2] = NativeShaderTexgen(t2);
@@ -1359,7 +1393,7 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
 
     for (unsigned model = 0; model < NativeShaderModelCount; ++model)
         for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
-            for (unsigned flags = 0; flags < 1024; ++flags) {
+            for (unsigned flags = 0; flags < 2048; ++flags) {
                 v.model = NativeShaderModel(model);
                 v.textures = uint8_t(textures);
                 v.overlay = flags & 1;
@@ -1372,6 +1406,7 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
                 v.dynamic = flags & 128;
                 v.basic_lerp = flags & 256;
                 v.raster_product = flags & 512;
+                v.vertex_lerp = flags & 1024;
                 const auto key = NativeShaderFragmentKeyOf(v);
 
                 if (seen.insert(key).second)
@@ -1421,7 +1456,7 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
         light += std::to_string(key.lights);
 
     if (key.vertex != NativeShaderVertex::Mesh)
-        return (key.vertex == NativeShaderVertex::Quad ? "quad" : "geometry") + light + (key.material_gpu ? "_gpu" : "");
+        return (key.vertex == NativeShaderVertex::Quad ? "quad" : "geometry") + light + (key.material_gpu ? "_gpu" : "") + (key.lerp ? "_lerp" : "");
 
     std::string name = "mesh" + light + "_";
 
@@ -1435,7 +1470,7 @@ std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
     static constexpr const char* models[NativeShaderModelCount] = {"basic", "modulate", "layers"};
     return std::string(models[unsigned(key.model)]) + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
-           (key.basic_lerp ? "_lerp" : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
+           (key.basic_lerp ? (key.vertex_lerp ? "_vlerp" : "_lerp") : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }
 
 std::string NativeShaderVertexName(NativeShaderVariant variant) {

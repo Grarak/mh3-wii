@@ -1496,6 +1496,23 @@ void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_g
     mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OVERLAY, out->overlay);
 }
 
+void mh3_shade_gpu_lerp(const mh3_shade_gpu_material *m, const mh3_shade_gpu_animated *a, float base[4], float slope[4]) {
+    float c0[4], c1[4], c2[4], c3[4], scale[4];
+    mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET, c0);
+    mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET + 1, c1);
+    mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET + 2, c2);
+    mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_OFFSET + 3, c3);
+    mh3_shade_gpu_coefficient(m, a, MH3_SHADE_GPU_BASIC_SCALE + 2, scale);
+
+    /* Lanes 0..2 take the colour equation, lane 3 the alpha one. */
+    for (unsigned i = 0; i < 4; ++i) {
+        const float *e = m->equation[i == 3];
+        const float range = c1[i] - c0[i];
+        slope[i] = range * scale[i] * (e[2] * e[1]);
+        base[i] = (c3[i] + e[0] + e[2] * (c0[i] + range * c2[i])) * e[1];
+    }
+}
+
 void mh3_shade_fog(uint32_t type, const mh3_shader_fog *fog, mh3_shade_scene *scene) {
     const uint32_t kind = type & 7;
 

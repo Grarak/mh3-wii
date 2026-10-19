@@ -350,6 +350,12 @@ struct FrameSplit {
         std::printf("MH3 geometry batch: %.1f material geometry submissions/frame, %.1f joined the draw before them; apart after another kind %.1f, "
                     "differing draw %.1f material %.1f lighting %.1f textures %.1f colors %.1f\n",
                     per(geometry), per(merged), per(unmerged[0]), per(unmerged[1]), per(unmerged[2]), per(unmerged[3]), per(unmerged[4]), per(unmerged[5]));
+        uint32_t packets, runs, runRecords, refused;
+        TakeNativeQuadRunCounts(packets, runs, runRecords, refused);
+
+        if (packets)
+            std::printf("MH3 quad runs: %.1f per drawn packet drew %.1f quad records as one; %.1f refused\n", double(runs) / packets, double(runRecords) / packets,
+                        double(refused) / packets);
         std::memset(splitCalls, 0, sizeof splitCalls);
         std::memset(splitFamilies, 0, sizeof splitFamilies);
         std::memset(splitScopes, 0, sizeof splitScopes);

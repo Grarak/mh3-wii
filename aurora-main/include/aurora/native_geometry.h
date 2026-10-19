@@ -36,6 +36,13 @@ typedef struct AuroraNativeQuadVertex {
   float position[3], texcoord[2][3];
 } AuroraNativeQuadVertex;
 
+/* A quad vertex's second stream when quads of different colours draw as one:
+ * the quad's BASIC_LERP base and slope (mh3_shade_gpu_lerp), the same at its
+ * four corners. */
+typedef struct AuroraNativeQuadLerp {
+  float base[4], slope[4];
+} AuroraNativeQuadLerp;
+
 typedef struct AuroraNativeMaterialGeometry {
   AuroraNativeMaterialVertex* vertices;
   uint16_t* indices;

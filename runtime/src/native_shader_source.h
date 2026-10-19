@@ -90,6 +90,11 @@ struct NativeShaderVariant {
     // closing prev * ras stage, mh3_shade_material::raster_product).
     bool raster_product = false;
 
+    // Quad only, a basic_lerp material with material uniforms: each quad's
+    // base and slope (mh3_shade_gpu_lerp) come with its vertices, so quads
+    // whose colours differ draw as one (effect particles, DrawNativeQuadRun).
+    bool vertex_lerp = false;
+
     // Mesh only: GPU skinning (docs/optimizations/rendering/gpu-skinning.md), four palette rows and
     // weights per vertex instead of the GX matrix selectors.
     bool skinned = false;
@@ -97,7 +102,7 @@ struct NativeShaderVariant {
 };
 
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 19, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 20, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
 // the GXM shader bank holds one program per key (docs/optimizations/rendering/offline-shader-bank.md).
@@ -109,6 +114,7 @@ struct NativeShaderVertexKey {
     NativeShaderTexgen texgen[3] = {}; // Mesh only
     bool material_gpu = false;
     bool skinned = false; // Mesh only
+    bool lerp = false;    // Quad with material_gpu only: a_base and a_slope to v_base and v_slope
     auto operator<=>(const NativeShaderVertexKey&) const = default;
 };
 
@@ -125,6 +131,7 @@ struct NativeShaderFragmentKey {
     bool dynamic = false;          // only material_gpu Modulate, not pure
     bool basic_lerp = false;       // only Basic with textures, no overlay
     bool raster_product = false;   // only Basic, no overlay
+    bool vertex_lerp = false;      // only basic_lerp with material_gpu
     auto operator<=>(const NativeShaderFragmentKey&) const = default;
 };
 

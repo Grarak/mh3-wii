@@ -20,6 +20,7 @@ for the cycles (last column):
 | Identity/Affine texgen | the post matrix is exactly identity | no matrix product and divide | yes |
 | `_pure` | MODULATE with one texture, literal zero offsets and one scales | `t0 · v` directly | yes |
 | `_lerp` | BASIC with constant a, b and d and c from texture 0 (the effect particles) | base and slope from uniforms, which GXM's secondary program evaluates once per draw; one multiply-add per fragment | the same equation rearranged; GLES frames of the Alatreon fight within 3 levels |
+| `_vlerp` (with `quad_*_lerp`) | a run of `_lerp` particle quads that differ only in their colours | each quad's base and slope from its vertices; one draw for the run | the same base and slope, computed on the CPU in single precision |
 | `_a1` (GXM) | an unblended RGB-only draw to a target certified to hold alpha 1 everywhere | writes A=1 with a full RGBA mask, which keeps hidden-surface removal on | yes |
 | half-precision colours (GXM) | all Cg fragment programs except the ones with dynamic picks | 11 significant bits instead of 24 | at most one 8-bit step |
 | Fog per vertex | every fogged draw | the vertex stage computes the whole fog amount (clamped distance, curve, clamp); the fragment blends by it | exact for linear curves where a triangle's corners are all inside the fog range; across its ends the clamp is taken at the corners |

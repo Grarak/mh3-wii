@@ -177,6 +177,10 @@ uint64_t NativePacingWaitTotalNs();
 // before them (same state, adjacent in draw order) since the last call.
 void TakeNativeGeometryBatchCounts(uint32_t& submitted, uint32_t& merged, uint32_t unmerged[6]);
 
+// Render thread, since the last call: drawn packets, quad runs drawn as one,
+// the quad records they drew and the runs refused (DrawNativeQuadRun).
+void TakeNativeQuadRunCounts(uint32_t& packets, uint32_t& runs, uint32_t& records, uint32_t& refused);
+
 // Game thread, once per statistics interval: names the render thread's stage,
 // packet and record when it made no progress since the last two calls.
 void ReportNativeRenderThreadStall();

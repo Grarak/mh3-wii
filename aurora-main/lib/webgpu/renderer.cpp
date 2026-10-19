@@ -2255,7 +2255,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 }
 
 // The web build records no compact quads (runtime: MH3 effect quads).
-void draw_shaded_quads(const AuroraNativeQuadVertex*, uint32_t, GLuint, const ShadedBlocks&, const std::array<uint8_t, 3>&) noexcept {}
+void draw_shaded_quads(const AuroraNativeQuadVertex*, const AuroraNativeQuadLerp*, uint32_t, GLuint, const ShadedBlocks&, const std::array<uint8_t, 3>&) noexcept {}
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
                           const std::array<uint8_t, 3>& textureUnits) noexcept {

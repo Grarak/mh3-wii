@@ -584,6 +584,43 @@ static void color_mapped_text(void) {
   check(&m, &s, 1, 3, tex, tint, 0.75f * 0.5f);
 }
 
+/* Effect particles' colour ramp: colour mix(c0, c1, texc) (or texa), alpha
+ * a0 * texa. Its BASIC_LERP base and slope give the general BASIC result. */
+static void particle_lerp(void) {
+  for (unsigned replicate = 0; replicate < 2; ++replicate) {
+    mh3_native_material_state s;
+    base(&s);
+    stage(&s, 0, pass(2, 4, replicate ? 9 : 8, 15, 0, 0), pass(7, 1, 4, 7, 0, 0), 0, 0, 12, 0);
+    const uint8_t c0[4] = {200, 220, 240, 100}, c1[4] = {50, 60, 70, 255};
+
+    for (unsigned i = 0; i < 4; ++i) {
+      s.color[1].rgba[i] = c0[i];
+      s.color[2].rgba[i] = c1[i];
+    }
+
+    mh3_shade_material m;
+    assert(mh3_shade_classify(&s, &m) & MH3_SHADE_EXACT);
+    assert(m.model == MH3_SHADE_BASIC && m.textures == 1 && !m.overlay);
+    mh3_shade_gpu_material baked;
+    mh3_shade_gpu_animated animated;
+    uint8_t dynamic = 0;
+    assert(mh3_shade_gpu_bake(&m, &baked, &dynamic) && dynamic);
+    memset(&animated, 0, sizeof animated);
+    mh3_shade_gpu_palette(&s, &animated);
+    float lerp_base[4], slope[4];
+    mh3_shade_gpu_lerp(&baked, &animated, lerp_base, slope);
+    assert(baked.swizzle[2] == (replicate ? 1.f : 0.f));
+    const float tex[3][4] = {{0.25f, 0.5f, 0.75f, 0.4f}}, ras[4] = {1.f, 1.f, 1.f, 1.f};
+
+    for (unsigned k = 0; k < 4; ++k) {
+      const float t = k < 3 && !replicate ? tex[0][k] : tex[0][3];
+      const float expect = k < 3 ? (c0[k] + (c1[k] - c0[k]) * t) / 255.f : c0[3] / 255.f * tex[0][3];
+      near(lerp_base[k] + slope[k] * t, expect);
+      check(&m, &s, k == 3, k, tex, ras, expect);
+    }
+  }
+}
+
 int main(void) {
   /* std140 layouts of the material-GPU blocks (Material, Animated) */
   assert(sizeof(mh3_shade_gpu_pick) == 48);
@@ -614,6 +651,7 @@ int main(void) {
   konst_and_register();
   folded_multiply();
   color_mapped_text();
+  particle_lerp();
   overlay_family();
   overlay_alpha_map();
   layers();

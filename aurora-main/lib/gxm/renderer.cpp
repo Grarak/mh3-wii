@@ -2058,7 +2058,8 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
   });
 }
 
-void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) noexcept {
+void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, const AuroraNativeQuadLerp* lerp, uint32_t quads, GLuint program, const ShadedBlocks& blocks,
+                       const std::array<uint8_t, 3>& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
     return;
 
@@ -2084,13 +2085,20 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, uint32_t quads, G
       return pattern;
     }();
 
-    constexpr uint16_t stride = sizeof(AuroraNativeQuadVertex);
+    // lerp: the quads' base and slope, a second stream read in place too.
+    constexpr uint16_t stride = sizeof(AuroraNativeQuadVertex), lerpStride = sizeof(AuroraNativeQuadLerp);
     const VertexInput inputs[]{{"a_position", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, position), stride, 0},
                                {"a_uv0", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, texcoord), stride, 0},
-                               {"a_uv1", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, texcoord) + 12, stride, 0}};
+                               {"a_uv1", SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, offsetof(AuroraNativeQuadVertex, texcoord) + 12, stride, 0},
+                               {"a_base", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, offsetof(AuroraNativeQuadLerp, base), lerpStride, 1},
+                               {"a_slope", SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, offsetof(AuroraNativeQuadLerp, slope), lerpStride, 1}};
     auto& native = r.programs.at(program);
-    r.prepare_shaded(native, r.shaded_program(native, inputs), blocks, textureUnits);
+    r.prepare_shaded(native, r.shaded_program(native, std::span(inputs, lerp ? 5 : 3)), blocks, textureUnits);
     check(sceGxmSetVertexStream(r.device.context(), 0, vertices), "bind shaded quad attributes");
+
+    if (lerp)
+      check(sceGxmSetVertexStream(r.device.context(), 1, lerp), "bind shaded quad base and slope");
+
     check(sceGxmDraw(r.device.context(), SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, indices, quads * 6), "draw shaded quads");
     r.capture_draw("shaded-quads", program, quads * 4, quads * 6, 1, nullptr, 0, native.preservesTargetAlphaOne);
   });

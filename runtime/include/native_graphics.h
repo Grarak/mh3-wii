@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <span>
 #include "../native/mh3_draw_state.h"
 #include "native_owner.h"
 
@@ -98,6 +99,20 @@ void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 
 // Render thread: compact effect quads of one record (frame packet Kind::Quads).
 void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]);
+
+// Render thread: consecutive quad records that differ only in their colour
+// snapshots (effect particles fading on their own), with the first record's
+// state applied and their vertices following on, as one draw: each quad's
+// BASIC_LERP base and slope from its own colours go with its vertices. False,
+// drawing nothing, unless the material is such a lerp with a baked block and
+// (alpha testing) the parts share one alpha comparison.
+struct NativeColorSnapshot;
+struct NativeQuadRunPart {
+    uint32_t quads;
+    const NativeColorSnapshot* colors;
+};
+
+bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const NativeQuadRunPart> parts, const float normal[3], const uint8_t color[4]);
 
 // Render thread: direct compact resident mesh boundary. The caller supplies
 // the Render owner's material; immutable vertex/index payloads remain in their

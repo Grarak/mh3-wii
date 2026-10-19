@@ -328,6 +328,12 @@ void mh3_shade_gpu_coefficient(const mh3_shade_gpu_material *baked, const mh3_sh
  * coefficients mh3_shade_fill would write, from the baked and animated
  * blocks. Writes overlay, alpha_range, texture_bias and the shading union. */
 void mh3_shade_gpu_resolve(const mh3_shade_material *material, const mh3_shade_gpu_material *baked, const mh3_shade_gpu_animated *animated, mh3_shade_fragment *out);
+/* BASIC with constant a, b and d inputs and c from texture role 0 (the
+ * BASIC_LERP programs) is affine in the texel: result = saturate(base + slope
+ * * texel), the texel's colour replicating its alpha when the material's
+ * swizzle.z is set. Its base and slope from the baked block and a palette,
+ * as the program computes them from uniforms. */
+void mh3_shade_gpu_lerp(const mh3_shade_gpu_material *baked, const mh3_shade_gpu_animated *animated, float base[4], float slope[4]);
 #ifdef __cplusplus
 }
 #endif
