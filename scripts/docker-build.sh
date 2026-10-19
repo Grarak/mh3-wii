@@ -15,6 +15,6 @@ if [[ -t 0 && -t 1 ]]; then tty_args=(-it); fi
 exec docker run --rm "${tty_args[@]}" -u "$(id -u):$(id -g)" \
   -e HOME="$PWD/build/.docker-home" -e MH3_ARCH="${MH3_ARCH:-arm32}" \
   -e DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
-  -e BUILD_JOBS -e MH3_BUILD_DIR \
+  -e BUILD_JOBS -e MH3_BUILD_DIR -e MH3_EXTRA_CMAKE_ARGS \
   -e MH3_CLANG -e MH3_ARM32_CPU -e MH3_ARM32_FPU \
   -v "$PWD:$PWD" -w "$PWD" "$image" "$@"
