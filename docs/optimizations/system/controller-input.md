@@ -41,7 +41,15 @@ about 90..187 along an axis change the result ([controls](../../vita-controls.md
   game sees the stick's real direction.
 - **Scripted input** (development builds): `MH3_INPUT=record=,playback=`
   logs and replays the resulting Classic report indexed by game time, so a
-  recording replays the same on every host and frame rate.
+  recording replays the same on every host and frame rate. The time is in
+  30 Hz frames with a fraction: a log keeps changes closer together than a
+  frame, as a high frame rate reads them, instead of rounding them to the
+  frame (logs with whole frames still play).
+- **Sampling**: the game reads the controller every logic step, from the
+  report the host writes into WPAD's sampling ring at most every 5 ms (the
+  Wii's 200 Hz); nothing in the input path waits for a 30 Hz tick. Counts
+  the game keeps in steps (held-button repeat, key locks) count whole ticks
+  instead, so they keep the Wii's timing ([variable step](../simulation/variable-step.md)).
 
 ## Why
 

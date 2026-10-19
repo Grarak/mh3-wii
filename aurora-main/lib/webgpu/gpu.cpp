@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string_view>
 
@@ -21,6 +22,7 @@ wgpu::Queue g_queue;
 wgpu::Surface g_surface;
 wgpu::TextureFormat g_surfaceFormat = wgpu::TextureFormat::Undefined;
 wgpu::Limits g_limits;
+bool g_compatibility = false;
 
 namespace {
 constexpr const char* CanvasSelector = "#canvas";
@@ -44,18 +46,31 @@ void request_device() {
   wgpu::SupportedFeatures supportedFeatures;
   g_adapter.GetFeatures(&supportedFeatures);
 
+  // The adapter was asked for at the compatibility level: the device takes
+  // the core features and limits wherever the adapter has them, and stays at
+  // the compatibility level only where it has not (WebGPU on OpenGL ES, such
+  // as the Raspberry Pi 5's V3D) or MH3_WEBGPU_COMPAT=1 keeps it there.
+  const char* keepCompatibility = std::getenv("MH3_WEBGPU_COMPAT");
+  g_compatibility = true;
+
   for (size_t i = 0; i < supportedFeatures.featureCount; ++i) {
     const auto feature = supportedFeatures.features[i];
 
     if (feature == wgpu::FeatureName::Float32Filterable)
       requiredFeatures.push_back(feature);
+
+    if (feature == wgpu::FeatureName::CoreFeaturesAndLimits && !(keepCompatibility && std::strcmp(keepCompatibility, "1") == 0)) {
+      requiredFeatures.push_back(feature);
+      g_compatibility = false;
+    }
   }
 
   wgpu::Limits supportedLimits{};
   g_adapter.GetLimits(&supportedLimits);
 
-  // The renderer needs the default limits, a 16 KiB uniform binding per block
-  // and the adapter's largest textures.
+  // The renderer needs the default limits (the compatibility level's do: 16
+  // KiB uniform bindings, 8 dynamic uniform buffers, 15 inter-stage
+  // variables) and the adapter's largest textures.
   wgpu::Limits requiredLimits{};
   requiredLimits.maxTextureDimension2D = supportedLimits.maxTextureDimension2D;
   wgpu::DeviceDescriptor deviceDescriptor;
@@ -104,7 +119,10 @@ void request_adapter(void*) {
     return;
   }
 
+  // The compatibility level admits the adapters that only it fits as well; a
+  // browser without feature levels returns a core adapter.
   const wgpu::RequestAdapterOptions options{
+      .featureLevel = wgpu::FeatureLevel::Compatibility,
       .powerPreference = wgpu::PowerPreference::HighPerformance,
   };
 
@@ -171,8 +189,8 @@ bool initialize() noexcept {
     g_adapter.GetInfo(&info);
     Log.info("Graphics adapter information\n  API: WebGPU\n  Vendor: {}\n  Architecture: {}\n  Device: {}\n  Description: {}", std::string_view(info.vendor),
              std::string_view(info.architecture), std::string_view(info.device), std::string_view(info.description));
-    Log.info("Using limits: maxTextureDimension2D {}, minUniformBufferOffsetAlignment {}, maxUniformBufferBindingSize {}", g_limits.maxTextureDimension2D,
-             g_limits.minUniformBufferOffsetAlignment, g_limits.maxUniformBufferBindingSize);
+    Log.info("Using the {} feature level, limits: maxTextureDimension2D {}, minUniformBufferOffsetAlignment {}, maxUniformBufferBindingSize {}",
+             g_compatibility ? "compatibility" : "core", g_limits.maxTextureDimension2D, g_limits.minUniformBufferOffsetAlignment, g_limits.maxUniformBufferBindingSize);
     ok = create_surface();
     initialized.store(ok, std::memory_order_release);
   });

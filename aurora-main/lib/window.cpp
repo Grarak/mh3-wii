@@ -55,6 +55,10 @@ bool g_presentSurfaceFill = false;
 // A fixed display surface the native target is sized for (0: the window's).
 int g_surfaceWidth = 0;
 int g_surfaceHeight = 0;
+
+// Supersampling: the native target's width and height times this, which
+// presentation filters down into the window (1: off).
+float g_superSample = 1.f;
 int g_presentAspectWidth = 0;
 int g_presentAspectHeight = 0;
 AuroraWindowSize g_windowSize;
@@ -616,6 +620,11 @@ AuroraWindowSize get_window_size() {
     fb_h = scaledH;
   }
 
+  if (g_superSample > 1.f) {
+    fb_w = std::max(1, static_cast<int>(std::lround(static_cast<float>(fb_w) * g_superSample)));
+    fb_h = std::max(1, static_cast<int>(std::lround(static_cast<float>(fb_h) * g_superSample)));
+  }
+
   const float scale = SDL_GetWindowDisplayScale(g_window);
   return {
       .width = static_cast<uint32_t>(width),
@@ -878,6 +887,17 @@ void set_native_surface_size(uint32_t width, uint32_t height) {
 
   g_surfaceWidth = static_cast<int>(width);
   g_surfaceHeight = static_cast<int>(height);
+  request_frame_buffer_resize();
+}
+
+void set_super_sample(float scale) {
+  scale = std::max(scale, 1.f);
+
+  if (g_superSample == scale) {
+    return;
+  }
+
+  g_superSample = scale;
   request_frame_buffer_resize();
 }
 

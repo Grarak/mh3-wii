@@ -34,6 +34,10 @@
 #ifndef __vita__
 #include "debug_port.h"
 #endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten/heap.h>
+#include <unistd.h>
+#endif
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -93,7 +97,7 @@ enum : uint32_t {
 };
 
 #ifdef MH3_DEVELOPMENT
-// MH3_STEP_PROBE=T[,T...][,step=N][,settle][,all] (docs/flags.md): find state
+// MH3_STEP_PROBE=T[,T...][,step=N][,settle][,all]: find state
 // that counts steps rather than time, before the first logic step at or after
 // each T ticks of game time (loading runs many short steps at variable step),
 // or before logic step N. From one RAM snapshot the task pass runs once with a
@@ -298,6 +302,11 @@ struct FrameSplit {
 
         std::printf("MH3 frame split: logic %.2f draw %.2f other %.2f ms/frame (%u frames); calls logic/draw: world %u/%u anim %u/%u effect %u/%u view %u/%u\n", logic / frames, draw / frames,
                     other / frames, frames, splitCalls[0][2], splitCalls[0][3], splitCalls[1][2], splitCalls[1][3], splitCalls[2][2], splitCalls[2][3], splitCalls[3][2], splitCalls[3][3]);
+#ifdef __EMSCRIPTEN__
+        // The web build's heap is fixed (-sINITIAL_MEMORY): how much of it the
+        // allocator has claimed, which it never gives back.
+        std::printf("MH3 web heap: %.0f of %.0f MiB claimed\n", double(reinterpret_cast<uintptr_t>(sbrk(0))) / 1048576, double(emscripten_get_heap_size()) / 1048576);
+#endif
         const auto f = [this](unsigned family) { return splitFamilies[family] / frames; };
         const auto n = [this](unsigned family) { return splitScopes[family] / frames; };
         std::printf("MH3 draw split: traverse %.2f model %.2f effect %.2f node callback %.2f font %.2f fade %.2f hud %.2f movie %.2f layers %.2f ui %.2f ms/frame; "
@@ -577,6 +586,7 @@ void MH3StartDrawOverlap() {
 
 extern "C" void MH3_GameFrame(CpuContext* ctx) {
     const CpuContext saved = *ctx;
+    UpdateNativeCameraAspect();
 #ifdef MH3_DEVELOPMENT
     mh3GameStackProbe = uintptr_t(&saved);
 #endif

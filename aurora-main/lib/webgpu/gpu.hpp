@@ -1,6 +1,6 @@
 #pragma once
 
-// The WebGPU device of the web build (docs/optimizations/platforms/web-build.md), restored from
+// The WebGPU device of the web build, restored from
 // Aurora's Dawn renderer (03132238^:aurora-main/lib/webgpu/gpu.cpp) onto
 // Emscripten's emdawnwebgpu. WebGPU objects belong to the JavaScript realm
 // that created them, so the device, the canvas surface and every renderer call
@@ -24,6 +24,9 @@ extern wgpu::Queue g_queue;
 extern wgpu::Surface g_surface;
 extern wgpu::TextureFormat g_surfaceFormat;
 extern wgpu::Limits g_limits;
+
+// The device works at WebGPU's compatibility level (no core features).
+extern bool g_compatibility;
 
 // Main thread only: whether the surface is configured for this size.
 struct SurfaceSize {

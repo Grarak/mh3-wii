@@ -183,6 +183,11 @@ void aurora_set_native_target_aspect(AuroraNativeTargetAspect aspect);
 // Same thread rules as aurora_set_native_target_aspect.
 void aurora_set_native_surface_size(uint32_t width, uint32_t height);
 
+// Supersampling: the native target at `scale` times its width and height
+// (1: off), filtered down by presentation. Same thread rules as
+// aurora_set_native_target_aspect.
+void aurora_set_native_super_sample(float scale);
+
 // Direct native rendering: call begin before preparing any draws or writing
 // their mapped GPU payload. False skips all drawing/clears/present for this
 // game frame without waiting. Logic still advances; always call end, including

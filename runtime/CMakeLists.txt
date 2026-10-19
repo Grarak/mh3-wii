@@ -84,14 +84,15 @@ if(NOT MH3_DEVELOPMENT)
   # Also for dependencies whose minimum CMake version predates CMP0069.
   set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 
-  # ThinLTO needs lld (the Vita and arm32 toolchains already use it); the
-  # check below links with it as well.
-  if(NOT VITA)
+  # ThinLTO needs lld (the Vita and arm32 toolchains already use it, and
+  # Emscripten links with its WebAssembly port); the check below links with it
+  # as well.
+  if(NOT VITA AND NOT EMSCRIPTEN)
     add_link_options(-fuse-ld=lld)
   endif()
 
   block(PROPAGATE mh3_thinlto mh3_thinlto_error)
-    if(NOT VITA)
+    if(NOT VITA AND NOT EMSCRIPTEN)
       string(APPEND CMAKE_C_FLAGS " -fuse-ld=lld")
       string(APPEND CMAKE_CXX_FLAGS " -fuse-ld=lld")
     endif()
@@ -222,21 +223,33 @@ endif()
 file(GLOB_RECURSE native_dispatch_sources CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp")
-file(GLOB native_dispatch_tools CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/../toolchain/translator/src/Translator.Cli/bin/Release/net8.0/Translator*.dll")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${native_dispatch_sources} ${native_dispatch_tools}
-  "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/prepare_native_dispatch.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../generated/translation.json")
-file(GLOB native_dispatch_functions CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../generated/functions/*.cpp")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${native_dispatch_functions})
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../generated/translation.json" native_dispatch_metadata)
-string(JSON native_dispatch_bundle_type ERROR_VARIABLE native_dispatch_bundle_error TYPE "${native_dispatch_metadata}" sourceBundlePath)
 
-if(NOT native_dispatch_bundle_error AND native_dispatch_bundle_type STREQUAL "STRING")
-  string(JSON native_dispatch_bundle GET "${native_dispatch_metadata}" sourceBundlePath)
-  cmake_path(ABSOLUTE_PATH native_dispatch_bundle BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../generated")
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${native_dispatch_bundle}")
-endif()
+# The translation (scripts/translate.py): the translator's dotnet build, the
+# native index, the DOL and the RSO overlays, then the dispatch shards, each
+# step only when its inputs changed. CMake runs again when one of them
+# changes, so a build translates by itself; an edit of a runtime source that
+# leaves the native ports' registrations, ABIs and effects alone translates
+# nothing.
+set(mh3_root "${CMAKE_CURRENT_SOURCE_DIR}/..")
+file(GLOB_RECURSE mh3_translator_sources CONFIGURE_DEPENDS
+  "${mh3_root}/toolchain/translator/src/Translator.Cli/*.cs" "${mh3_root}/toolchain/translator/src/Translator.Cli/*.csproj"
+  "${mh3_root}/toolchain/translator/src/Translator.Core/*.cs" "${mh3_root}/toolchain/translator/src/Translator.Core/*.csproj"
+  "${mh3_root}/toolchain/Launcher/WiiCompiled.Setup.Common/*.cs"
+  "${mh3_root}/toolchain/Launcher/WiiCompiled.Setup.Common/*.csproj")
+list(FILTER mh3_translator_sources EXCLUDE REGEX "/(bin|obj)/")
+file(GLOB native_dispatch_tools CONFIGURE_DEPENDS
+  "${mh3_root}/toolchain/translator/src/Translator.Cli/bin/Release/net8.0/Translator*.dll")
+file(GLOB mh3_site_lists CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.inc")
+file(GLOB mh3_disc_modules CONFIGURE_DEPENDS "${mh3_root}/Assets/DATA/files/*/*.rso")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${native_dispatch_sources} ${native_dispatch_tools}
+  ${mh3_translator_sources} ${mh3_site_lists} ${mh3_disc_modules}
+  "${mh3_root}/symbols.txt" "${mh3_root}/recomp.yml"
+  "${mh3_root}/Assets/DATA/sys/main.dol" "${mh3_root}/Assets/DATA/files/mh3.sel"
+  "${mh3_root}/scripts/translate.py" "${mh3_root}/scripts/prepare_native_dispatch.py"
+  "${mh3_root}/scripts/translate_rso_overlays.py" "${mh3_root}/scripts/prepare_rso_translation.py"
+  "${mh3_root}/scripts/inspect_disc.py" "${mh3_root}/scripts/generate_symbols.py"
+  "${mh3_root}/scripts/link_rso.py" "${mh3_root}/scripts/tick_sites_filter.py"
+  "${mh3_root}/generated/translation.json" "${mh3_root}/generated/native_index.json")
 
 if(MH3_NATIVE_DISPATCH_RESOLVED_PROFILE)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${MH3_NATIVE_DISPATCH_RESOLVED_PROFILE}")
@@ -252,10 +265,11 @@ if(MH3_NATIVE_DISPATCH_RETRO_CPP_DIR)
   endif()
 endif()
 
-execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/prepare_native_dispatch.py"
-  ${native_dispatch_args} RESULT_VARIABLE native_dispatch_result)
-if(NOT native_dispatch_result EQUAL 0)
-  message(FATAL_ERROR "Native dispatch preparation failed; generated profile graph was not accepted")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${mh3_root}/scripts/translate.py" ${native_dispatch_args}
+  RESULT_VARIABLE mh3_translation_result)
+
+if(NOT mh3_translation_result EQUAL 0)
+  message(FATAL_ERROR "The translation failed (scripts/translate.py, logs in logs/)")
 endif()
 
 include(../generated/build_shards/shards.cmake)
@@ -281,7 +295,7 @@ add_executable(MH3
   src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp native/mh3_classic_map.c src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
   src/audio_tests.cpp src/audio_dma.cpp
   src/audio/native_audio_api.cpp src/audio/native_audio_frame.cpp src/audio/native_audio_mixer.cpp src/audio/native_audio_tests.cpp src/audio/sdk_mix.cpp src/audio/sdk_synseq.cpp src/audio/sound_engine.cpp src/audio/sound_stream.cpp
-  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/frame_draw.cpp src/hud_draw.cpp src/hud_icons.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/guest_worker.cpp src/guest_threads.cpp src/net/online_patches.cpp src/net/online_close.cpp src/net/gamespy_common.cpp src/net/gamespy_gt2.cpp src/net/gamespy_natneg.cpp src/net/online_name.cpp src/net/wii_so.cpp src/net/wii_ncd.cpp src/net/wii_nwc24.cpp src/net/wii_dwc.cpp src/net/wii_ssl.cpp src/net/wii_nhttp.cpp src/net/wii_vf.cpp src/net/game_net_packet.cpp src/net/game_net_connection.cpp src/net/game_net_socket.cpp src/net/game_net_session.cpp src/net/game_net_manager.cpp src/net/game_net_hot.cpp src/net/net_ctrl.cpp src/net/ios_net.cpp ${MH3_NET_HOST_SOURCE} src/effect_calc.cpp src/effect_objects.cpp src/effect_draw_order.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/pad_input.cpp src/pad_pointer.cpp src/log_pointer.cpp src/camera_input.cpp src/field_camera.cpp src/player_aim.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/quest_placement.cpp src/monster_heaps.cpp src/save_data.cpp src/game_boot.cpp src/game_tasks.cpp src/field_frame.cpp src/draw_buckets.cpp src/player_health.cpp src/cheats.cpp src/cheat_data.cpp src/cheat_items.cpp src/cheat_monsters.cpp src/cheat_quest.cpp src/cheat_hunter.cpp src/cheat_movement.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/load_progress.cpp src/quest_clock.cpp src/ambient_hover.cpp src/fish_effects.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/anm_obj_chr_res.cpp src/effect_texture.cpp src/effect_billboard.cpp src/effect_particle.cpp src/msl_math.cpp src/texture_scroll.cpp src/ran_suu.cpp src/reward_equip.cpp src/ceadeus_intro.cpp src/demo_pose.cpp src/event_demo.cpp src/alatreon_actions.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/npc_turn.cpp src/field_actor.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/scene_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp src/g3d_anm_result.cpp src/nw4r_math.cpp src/scn_mdl_tasks.cpp src/gather_spots.cpp src/mhchar_move.cpp src/field_lists.cpp src/res_anm_keys.cpp src/drawshape.cpp src/particle_mtx.cpp src/particle_initialize.cpp src/hunter_parts.cpp src/player_skill.cpp src/sound_shells.cpp src/enemy_hit_shapes.cpp src/enemy_conditions.cpp src/small_monsters.cpp src/ef_mtx_scale.cpp src/ef_resource.cpp src/msl_string.cpp src/debug_font.cpp src/prim_buffers.cpp src/monster_intros.cpp src/monster_roars.cpp src/monster_attacks.cpp src/monster_control.cpp src/enemy_actions.cpp src/monster_waits.cpp src/g3d_destroy.cpp
+  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/frame_draw.cpp src/hud_draw.cpp src/hud_icons.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/guest_worker.cpp src/guest_threads.cpp src/net/online_patches.cpp src/net/online_close.cpp src/net/gamespy_common.cpp src/net/gamespy_gt2.cpp src/net/gamespy_natneg.cpp src/net/online_name.cpp src/net/wii_so.cpp src/net/wii_ncd.cpp src/net/wii_nwc24.cpp src/net/wii_dwc.cpp src/net/wii_ssl.cpp src/net/wii_nhttp.cpp src/net/wii_vf.cpp src/net/game_net_packet.cpp src/net/game_net_connection.cpp src/net/game_net_socket.cpp src/net/game_net_session.cpp src/net/game_net_manager.cpp src/net/game_net_hot.cpp src/net/net_ctrl.cpp src/net/ios_net.cpp ${MH3_NET_HOST_SOURCE} src/effect_calc.cpp src/effect_objects.cpp src/effect_draw_order.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/pad_input.cpp src/pad_pointer.cpp src/log_pointer.cpp src/camera_input.cpp src/camera_controls.cpp src/item_bar.cpp src/field_camera.cpp src/player_aim.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/quest_placement.cpp src/monster_heaps.cpp src/save_data.cpp src/game_boot.cpp src/game_tasks.cpp src/field_frame.cpp src/draw_buckets.cpp src/player_health.cpp src/cheats.cpp src/cheat_data.cpp src/cheat_items.cpp src/cheat_monsters.cpp src/cheat_quest.cpp src/cheat_hunter.cpp src/cheat_movement.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/load_progress.cpp src/quest_clock.cpp src/ambient_hover.cpp src/fish_effects.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/anm_obj_chr_res.cpp src/effect_texture.cpp src/effect_billboard.cpp src/effect_particle.cpp src/msl_math.cpp src/texture_scroll.cpp src/ran_suu.cpp src/reward_equip.cpp src/ceadeus_intro.cpp src/demo_pose.cpp src/event_demo.cpp src/alatreon_actions.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/npc_turn.cpp src/field_actor.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/scene_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp src/g3d_anm_result.cpp src/nw4r_math.cpp src/scn_mdl_tasks.cpp src/gather_spots.cpp src/mhchar_move.cpp src/field_lists.cpp src/res_anm_keys.cpp src/drawshape.cpp src/particle_mtx.cpp src/particle_initialize.cpp src/hunter_parts.cpp src/player_skill.cpp src/sound_shells.cpp src/enemy_hit_shapes.cpp src/enemy_conditions.cpp src/small_monsters.cpp src/ef_mtx_scale.cpp src/ef_resource.cpp src/msl_string.cpp src/debug_font.cpp src/prim_buffers.cpp src/monster_intros.cpp src/monster_roars.cpp src/monster_attacks.cpp src/monster_control.cpp src/enemy_actions.cpp src/monster_waits.cpp src/g3d_destroy.cpp
   src/dol_sections.cpp
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp ../generated/rso_overlays/net_data.cpp ../generated/rso_overlays/map_town_online.cpp ../generated/rso_overlays/map_town_quest.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
@@ -593,15 +607,16 @@ if(NOT VITA)
   target_sources(MH3 PRIVATE src/launcher_disc.cpp src/launcher_textures.cpp)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
-  # MH3 --launcher: the Vita launcher's menus on a development host.
-  if(MH3_DEVELOPMENT AND TARGET aurora::core)
+  # MH3 --launcher: the Vita launcher's menus on a development host, and on
+  # the web, whose page starts them.
+  if((MH3_DEVELOPMENT OR EMSCRIPTEN) AND TARGET aurora::core)
     target_sources(MH3 PRIVATE vita/launcher.cpp vita/launcher_font.cpp)
     set_property(SOURCE vita/launcher.cpp vita/launcher_font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MH3_DEVELOPMENT=1)
   endif()
 endif()
 
 # Disc images (ISO, RVZ, WIA) decode with the native decoder
-# (src/rom_decoder.cpp, docs/rom-decoder.md) in every build.
+# (src/rom_decoder.cpp) in every build.
 if(NOT TARGET libzstd_static)
   message(FATAL_ERROR "The ROM decoder needs Aurora's zstd (AURORA_CACHE_USE_ZSTD=ON)")
 endif()
@@ -618,8 +633,7 @@ target_link_libraries(MH3 PRIVATE mh3_rom_decoder)
 
 if(VITA)
   # The EABI memory helpers (__aeabi_memcpy and the others). As an object on
-  # the link line they win over newlib's slower archive members
-  # (docs/rom-decoder.md#vita-runtime-helpers).
+  # the link line they win over newlib's slower archive members.
   target_sources(MH3 PRIVATE vita/aeabi_memory.c)
   set_source_files_properties(vita/aeabi_memory.c PROPERTIES COMPILE_OPTIONS -fno-builtin)
 
@@ -637,7 +651,7 @@ endif()
 
 target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest, launcher
 
-# MH3_DEBUG_PORT (docs/debug-port.md): development builds on the hosts.
+# MH3_DEBUG_PORT: development builds on the hosts.
 if(MH3_DEVELOPMENT AND NOT VITA)
   target_sources(MH3 PRIVATE src/debug_port.cpp)
 endif()

@@ -20,6 +20,9 @@ typedef struct mh3_draw_state {
     float projection[16], position[12], viewport[6];
     uint32_t perspective;
     mh3_raster_state raster;
+    /* Where a 2D layer sits on a target wider than it: 0 the middle, 1 the
+     * left edge, 2 the right edge (HUD parts; native_render_state.cpp). */
+    uint32_t anchor;
 } mh3_draw_state;
 
 void mh3_draw_identity_position(float out[12]);

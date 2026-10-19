@@ -180,6 +180,7 @@ return command switch
     "translate-recursive" => RunTranslateRecursive(tail),
     "translate-mod" => RunTranslateMod(tail),
     "emit-build-shards" => RunEmitBuildShards(tail),
+    "emit-native-index" => RunEmitNativeIndex(tail),
     "emit-base-manifest" => RunEmitBaseManifest(tail),
     "check-base-mod-awareness" => RunCheckBaseModAwareness(tail),
     "validate-retro-wfc-payload" => RunValidateRetroWfcPayload(tail),
@@ -307,6 +308,56 @@ static void WritePreciseNativeCalls(RuntimeNativeIndex index, string nativeSourc
     var text = sb.ToString();
     if (!File.Exists(path) || File.ReadAllText(path) != text) File.WriteAllText(path, text);
     Console.WriteLine($"[translator] precise native direct calls: {count:N0}");
+}
+
+// Everything translate-recursive and emit-build-shards take from the runtime's
+// C++ (registrations, void-stub ABIs, guest effects and the C linkage of the
+// registered symbols) as one canonical JSON file, rewritten only when it
+// changes: the build re-translates when it changes, not on every edit of a
+// runtime source (scripts/translate.py).
+int RunEmitNativeIndex(string[] argsTail)
+{
+    var nativeSources = OptionValue(argsTail, "--native-source-dir") ?? RequireProject().Runtime.NativeRegistrationRoot;
+    var output = Path.GetFullPath(OptionValue(argsTail, "--out")!);
+    var nativeSourcePath = Path.GetFullPath(nativeSources);
+    var timer = Stopwatch.StartNew();
+    var index = RuntimeNativeIndexBuilder.Build(nativeSourcePath);
+    // The natives WritePreciseNativeCalls looks up: precise, one registration.
+    var precise = index.Effects.Where(static entry => entry.IsPrecise).Select(static entry => entry.Address).ToHashSet();
+    var sources = new Dictionary<string, string>(StringComparer.Ordinal);
+    var linkage = index.Registrations
+        .Where(static registration => !registration.IsTranslatedOverride)
+        .GroupBy(static registration => registration.Address)
+        .Where(group => precise.Contains(group.Key) && group.Count() == 1)
+        .Select(static group => group.First())
+        .Select(registration =>
+        {
+            var path = Path.Combine(nativeSourcePath, registration.SourceFile);
+            if (!sources.TryGetValue(path, out var source))
+                sources[path] = source = File.Exists(path) ? File.ReadAllText(path) : "";
+            return new
+            {
+                registration.Address,
+                registration.Symbol,
+                CLinkage = HasCLinkage(source, registration.Symbol)
+            };
+        })
+        .ToArray();
+    var text = JsonSerializer.Serialize(new
+    {
+        Format = 1,
+        index.Registrations,
+        index.VoidStubAbis,
+        index.Effects,
+        Linkage = linkage
+    }, new JsonSerializerOptions { WriteIndented = true }) + "\n";
+    Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+    var changed = !File.Exists(output) || File.ReadAllText(output) != text;
+    if (changed)
+        File.WriteAllText(output, text);
+    Console.WriteLine($"[translator] native index: {index.Registrations.Length:N0} registrations, " +
+        $"{index.Effects.Length:N0} effect contracts ({(changed ? "changed" : "unchanged")}, {timer.Elapsed.TotalSeconds:F1}s)");
+    return 0;
 }
 
 int RunEmitBuildShards(string[] argsTail)
@@ -3746,6 +3797,7 @@ static string[] KnownCommands() => new[]
     "translate-mod",
     "emit-base-manifest",
     "emit-build-shards",
+    "emit-native-index",
     "check-base-mod-awareness",
     "validate-retro-wfc-payload"
 };
@@ -3812,6 +3864,11 @@ static (string? Positional, CommandOption[] Options)? CommandSpec(string command
         new("--resolved-profile", "path"),
         new("--retro-cpp-dir", "path"),
         new("--out", "generated/build_shards")
+    }),
+    "emit-native-index" => (null, new CommandOption[]
+    {
+        new("--native-source-dir", "path"),
+        new("--out", "path", Required: true)
     }),
     _ => null
 };

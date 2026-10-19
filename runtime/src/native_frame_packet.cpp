@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,7 +34,9 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
@@ -51,6 +54,7 @@
 #include <unistd.h>
 #endif
 #ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
 #include <emscripten/proxying.h>
 #include <emscripten/threading.h>
@@ -342,10 +346,14 @@ bool synchronous = false;
 // The game thread limiter (the launcher's setting, FrameLimitSetting): at
 // most one published packet waits for the render thread; see
 // PaceNativeFramePacket. Latched at the render thread's start, with the
-// VBlanks each frame is shown for (FrameLimitVBlanks).
-uint32_t frameLimit = 60;
+// VBlanks each frame is shown for (FrameLimitVBlanks) and a cap's period.
+FrameLimit frameLimit;
 bool paced = true;
 uint32_t flipVBlanks = 1;
+std::chrono::steady_clock::duration capPeriod{};
+
+// Game thread: when a capped frame may start next.
+std::chrono::steady_clock::time_point capNext;
 
 // A display retrace (VBlank) at 59.94 Hz.
 constexpr auto kRetrace = std::chrono::microseconds(16683);
@@ -914,13 +922,15 @@ void Draw(const Packet& p) {
             break;
         case Kind::MaterialGeometry: {
             MH3_RENDER_PART(MaterialGeometry);
+            const auto& source = p.materialGeometry[record.payload];
+            NativeWideDrawScope wide(source.vertices, source.vertex_count, sizeof(*source.vertices));
 #ifdef __vita__
             AuroraNativeMaterialGeometry geometry;
 
-            if (GpuGeometry(p.materialGeometry[record.payload], geometry, aurora_allocate_native_material_geometry))
+            if (GpuGeometry(source, geometry, aurora_allocate_native_material_geometry))
                 DrawNativeMaterialGeometry(geometry);
 #else
-            DrawNativeMaterialGeometry(p.materialGeometry[record.payload]);
+            DrawNativeMaterialGeometry(source);
 #endif
             break;
         }
@@ -955,13 +965,15 @@ void Draw(const Packet& p) {
         }
         case Kind::Geometry: {
             MH3_RENDER_PART(Geometry);
+            const auto& source = p.geometry[record.payload];
+            NativeWideDrawScope wide(source.vertices, source.vertex_count, sizeof(*source.vertices));
 #ifdef __vita__
             AuroraNativeGeometry geometry;
 
-            if (GpuGeometry(p.geometry[record.payload], geometry, aurora_allocate_native_geometry))
+            if (GpuGeometry(source, geometry, aurora_allocate_native_geometry))
                 aurora::gl::draw_native_geometry(geometry, record.textured);
 #else
-            aurora::gl::draw_native_geometry(p.geometry[record.payload], record.textured);
+            aurora::gl::draw_native_geometry(source, record.textured);
 #endif
             break;
         }
@@ -1279,7 +1291,7 @@ void RenderLoop() {
 }
 
 #ifdef __EMSCRIPTEN__
-// The web build (docs/optimizations/platforms/web-build.md): WebGPU belongs to the browser's main
+// The web build: WebGPU belongs to the browser's main
 // thread, which shows a frame only once it returns to its event loop. The
 // render thread is a requestAnimationFrame loop there: each animation frame
 // replays the next published packet, as RenderPackets would, and its present
@@ -1294,14 +1306,97 @@ void FinishWebRenderLoop() {
     webLoopRunning.notify_all();
 }
 
-EM_BOOL RenderAnimationFrame(double, void*) {
+// Animation frames since the last packet was shown: with half VSync each
+// stays for two.
+uint32_t animationFramesShown = 0;
+
+// The display's refresh as the animation frames come: the median of the last
+// 32 intervals between them, which keeps to the refresh while the browser
+// skips fewer than half. Unknown (0) until 8 came.
+std::array<double, 32> refreshIntervals{};
+uint32_t refreshIntervalCount = 0;
+double lastAnimationFrameMs = 0;
+std::atomic<uint64_t> webRefreshNs{0};
+
+// The refreshes each packet stayed on screen for beyond its flipVBlanks (the
+// next packet was late, or the browser skipped animation frames), summed:
+// the Vita's repeated VBlanks (NativeFrameRepeatedVBlanks). A packet counts
+// 100 ms at most, as a host step does (a hidden page has no animation frames).
+double lastShownMs = 0;
+std::atomic<int64_t> webRepeatedRefreshes{0};
+#ifdef MH3_DEVELOPMENT
+// Pacing as the Vita's display reports it (gxm::display_statistics): per
+// packet shown, |time on screen - game time it advanced|, and the refreshes
+// it stayed for (1, 2, 3, 4 or more).
+std::atomic<uint64_t> webPacedFrames{0}, webPacingErrorUs{0};
+std::atomic<uint32_t> webPacingErrorMaxUs{0};
+std::array<std::atomic<uint64_t>, 4> webShownRefreshes{};
+uint64_t lastShownGameUs = 0;
+#endif
+
+void NoteAnimationFrame(double ms) {
+    if (lastAnimationFrameMs > 0 && ms > lastAnimationFrameMs)
+        refreshIntervals[refreshIntervalCount++ % refreshIntervals.size()] = ms - lastAnimationFrameMs;
+
+    lastAnimationFrameMs = ms;
+
+    if (refreshIntervalCount < 8)
+        return;
+
+    std::array<double, 32> sorted = refreshIntervals;
+    const auto count = std::min<size_t>(refreshIntervalCount, sorted.size());
+    const auto middle = sorted.begin() + std::ptrdiff_t(count / 2);
+    std::nth_element(sorted.begin(), middle, sorted.begin() + std::ptrdiff_t(count));
+    webRefreshNs.store(uint64_t(*middle * 1e6), std::memory_order_relaxed);
+}
+
+void NoteShownPacket(double ms, const Packet& p) {
+    const double refreshMs = double(webRefreshNs.load(std::memory_order_relaxed)) / 1e6;
+
+    if (lastShownMs > 0 && refreshMs > 0) {
+        const double shownMs = std::min(ms - lastShownMs, 100.0);
+        const int64_t refreshes = std::max<int64_t>(1, std::llround(shownMs / refreshMs));
+        webRepeatedRefreshes.fetch_add(refreshes - int64_t(std::max<uint32_t>(flipVBlanks, 1)), std::memory_order_relaxed);
+#ifdef MH3_DEVELOPMENT
+        if (lastShownGameUs && p.gameUs > lastShownGameUs && !p.loading) {
+            const double gameMs = double(p.gameUs - lastShownGameUs) / 1e3;
+            const auto error = uint32_t(std::lround(std::abs(shownMs - gameMs) * 1e3));
+            webPacedFrames.fetch_add(1, std::memory_order_relaxed);
+            webPacingErrorUs.fetch_add(error, std::memory_order_relaxed);
+
+            if (error > webPacingErrorMaxUs.load(std::memory_order_relaxed))
+                webPacingErrorMaxUs.store(error, std::memory_order_relaxed);
+
+            webShownRefreshes[std::clamp<int64_t>(refreshes, 1, 4) - 1].fetch_add(1, std::memory_order_relaxed);
+        }
+#endif
+    }
+
+    lastShownMs = ms;
+#ifdef MH3_DEVELOPMENT
+    lastShownGameUs = p.gameUs;
+#else
+    (void)p;
+#endif
+}
+
+// The page's frame counter (mh3_web_frames_shown, mh3_web_frames_made): the
+// packets shown, and those the game published to draw, without the loading
+// screens' (their frames run faster than they are drawn, NextPacket).
+uint32_t webFramesShown = 0;
+std::atomic<uint32_t> webFramesMade{0};
+
+EM_BOOL RenderAnimationFrame(double ms, void*) {
 #if defined(__cpp_exceptions)
     // A failure goes to the game thread, which reports it.
     try {
 #endif
         const uint64_t newest = lastPublished.load(std::memory_order_acquire), current = taken.load(std::memory_order_relaxed);
+        ++animationFramesShown;
+        NoteAnimationFrame(ms);
 
-        if (newest > current) {
+        if (newest > current && animationFramesShown >= std::max<uint32_t>(flipVBlanks, 1)) {
+            animationFramesShown = 0;
             const uint64_t next = NextPacket(current, newest);
             taken.store(next, std::memory_order_release);
             takenSignal.Advance();
@@ -1311,6 +1406,12 @@ EM_BOOL RenderAnimationFrame(double, void*) {
                 MH3_THROW(std::runtime_error("Frame packet ring out of order"));
 
             Execute(p, p.render && !p.canceled);
+
+            if (p.render && !p.canceled) {
+                ++webFramesShown;
+                NoteShownPacket(ms, p);
+            }
+
             completed.store(p.sequence, std::memory_order_release);
             completed.notify_all();
             takenSignal.Advance();
@@ -1361,6 +1462,19 @@ void WaitCompleted(uint64_t target) {
     RethrowFailure();
 }
 } // namespace
+
+#ifdef __EMSCRIPTEN__
+// The page's frame counter (mh3-web.js) reads these on the main thread: the
+// frames shown and those the game made, so the game's own rate where it makes
+// more than the browser shows.
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t mh3_web_frames_shown() {
+    return webFramesShown;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t mh3_web_frames_made() {
+    return webFramesMade.load(std::memory_order_relaxed);
+}
+#endif
 
 bool OnNativeGraphicsThread() {
     return aurora::gl::on_render_thread() || (running.load(std::memory_order_relaxed) && OnProducer());
@@ -1581,16 +1695,54 @@ uint32_t NativeRenderPacketSlot() {
     return drawingSlot;
 }
 
-uint32_t FrameLimitSetting() {
+FrameLimit FrameLimitSetting() {
     return frameLimit;
 }
 
-void SetFrameLimitSetting(uint32_t fps) {
-    frameLimit = fps;
+void SetFrameLimitSetting(FrameLimit limit) {
+    frameLimit = limit;
 }
 
 uint32_t FrameLimitVBlanks() {
-    return frameLimit ? 60 / frameLimit : 0;
+    return frameLimit.mode == FrameLimitMode::VSync ? 1 : frameLimit.mode == FrameLimitMode::HalfVSync ? 2 : 0;
+}
+
+std::optional<FrameLimit> ParseFrameLimit(std::string_view text) {
+    if (text == "vsync" || text == "60")
+        return FrameLimit{FrameLimitMode::VSync};
+
+    if (text == "half" || text == "30")
+        return FrameLimit{FrameLimitMode::HalfVSync};
+
+    if (text == "off")
+        return FrameLimit{FrameLimitMode::Off};
+
+    if (!text.starts_with("cap:"))
+        return {};
+
+    text.remove_prefix(4);
+    uint32_t fps = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), fps);
+
+    if (error != std::errc() || end != text.data() + text.size() || fps < MinFrameCap || fps > MaxFrameCap)
+        return {};
+
+    return FrameLimit{FrameLimitMode::Cap, fps};
+}
+
+std::string FrameLimitText(FrameLimit limit) {
+    switch (limit.mode) {
+    case FrameLimitMode::VSync:
+        return "vsync";
+    case FrameLimitMode::HalfVSync:
+        return "half";
+    case FrameLimitMode::Cap:
+        return "cap:" + std::to_string(limit.fps);
+    case FrameLimitMode::Off:
+        return "off";
+    }
+
+    return "vsync";
 }
 
 uint64_t NativeFramePacketsDone() {
@@ -1609,22 +1761,25 @@ void StartNativeRenderThread() {
     for (uint32_t i = 0; i < packets.size(); ++i)
         packets[i].slot = i;
 
-    // MH3_FRAME_LIMIT=60, 30 or off: the launcher's `Framelimit` row for runs
-    // started without it (off: benchmarks).
+    // MH3_FRAME_LIMIT=vsync (or 60), half (or 30), off or cap:N: the
+    // launcher's `Framelimit` row for runs started without it (off:
+    // benchmarks).
     if (const char* limit = std::getenv("MH3_FRAME_LIMIT")) {
-        const std::string_view value = limit;
-
-        if (value == "off" || value == "60" || value == "30")
-            frameLimit = value == "off" ? 0 : value == "30" ? 30 : 60;
+        if (const auto parsed = ParseFrameLimit(limit))
+            frameLimit = *parsed;
         else
-            std::fprintf(stderr, "MH3: MH3_FRAME_LIMIT=%s is not 60, 30 or off; the limit stays %u\n", limit, unsigned(frameLimit));
+            std::fprintf(stderr, "MH3: MH3_FRAME_LIMIT=%s is not vsync, half, off or cap:%u to cap:%u; the limit stays %s\n", limit, unsigned(MinFrameCap), unsigned(MaxFrameCap),
+                         FrameLimitText(frameLimit).c_str());
     }
 
-    if (frameLimit != 0 && frameLimit != 30)
-        frameLimit = 60;
+    if (frameLimit.mode == FrameLimitMode::Cap)
+        frameLimit.fps = std::clamp(frameLimit.fps, MinFrameCap, MaxFrameCap);
 
-    paced = frameLimit != 0;
+    paced = frameLimit.mode == FrameLimitMode::VSync || frameLimit.mode == FrameLimitMode::HalfVSync;
     flipVBlanks = FrameLimitVBlanks();
+    capPeriod = frameLimit.mode == FrameLimitMode::Cap
+                    ? std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::nanoseconds(1'000'000'000 / frameLimit.fps))
+                    : std::chrono::steady_clock::duration{};
 #ifdef AURORA_GXM
     // The limit off lets the displayed rate go past the VBlank's too.
     aurora::gxm::set_flip_vblanks(flipVBlanks);
@@ -1833,9 +1988,34 @@ std::optional<int64_t> NativeFrameRepeatedVBlanks() {
 #ifdef AURORA_GXM
     if (limitedFrame && running.load(std::memory_order_relaxed))
         return aurora::gxm::repeated_vblanks();
+#elif defined(__EMSCRIPTEN__)
+    if (limitedFrame && running.load(std::memory_order_relaxed) && webRefreshNs.load(std::memory_order_relaxed))
+        return webRepeatedRefreshes.load(std::memory_order_relaxed);
 #endif
     return std::nullopt;
 }
+
+uint64_t NativeFrameRefreshNs() {
+#ifdef __EMSCRIPTEN__
+    return webRefreshNs.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+}
+#if defined(__EMSCRIPTEN__) && defined(MH3_DEVELOPMENT)
+NativeWebPacing TakeNativeWebPacing() {
+    NativeWebPacing pacing;
+    pacing.frames = webPacedFrames.exchange(0, std::memory_order_relaxed);
+    pacing.errorUs = webPacingErrorUs.exchange(0, std::memory_order_relaxed);
+    pacing.errorMaxUs = webPacingErrorMaxUs.exchange(0, std::memory_order_relaxed);
+
+    for (size_t i = 0; i < webShownRefreshes.size(); ++i)
+        pacing.refreshes[i] = webShownRefreshes[i].exchange(0, std::memory_order_relaxed);
+
+    pacing.refreshMs = double(webRefreshNs.load(std::memory_order_relaxed)) / 1e6;
+    return pacing;
+}
+#endif
 
 void PaceNativeFramePacket() {
     if (synchronous || !running.load(std::memory_order_relaxed))
@@ -1863,6 +2043,26 @@ void PaceNativeFramePacket() {
         }
 
         loadingNext = std::max(now, loadingNext) + period;
+    }
+
+    // A cap: a frame starts no sooner than its period after the one before,
+    // on schedule while the frames keep up, from now once one ran a period
+    // late.
+    if (capPeriod.count() && !loading) {
+        const auto now = std::chrono::steady_clock::now();
+
+        if (capNext > now) {
+#ifdef MH3_DEVELOPMENT
+            pacingWaitTotalNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(capNext - now).count());
+#endif
+#ifdef __vita__
+            sceKernelDelayThread(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(capNext - now).count()));
+#else
+            std::this_thread::sleep_until(capNext);
+#endif
+        }
+
+        capNext = now - capNext > capPeriod ? now + capPeriod : capNext + capPeriod;
     }
 
     const uint64_t next = sequence + 1;
@@ -2023,6 +2223,10 @@ void PublishNativeFramePacket(std::string capture) {
     const bool wait = synchronous || !p.capture.empty();
 #ifdef MH3_DEVELOPMENT
     p.publishedNs = RenderMonotonicNs();
+#endif
+#ifdef __EMSCRIPTEN__
+    if (p.render && !p.canceled && !p.loading)
+        webFramesMade.fetch_add(1, std::memory_order_relaxed);
 #endif
     lastPublished.store(p.sequence, std::memory_order_release);
     published.Advance();

@@ -1,4 +1,4 @@
-# The web build (docs/optimizations/platforms/web-build.md): Emscripten's toolchain, with pthreads
+# The web build: Emscripten's toolchain, with pthreads
 # (SharedArrayBuffer) and native WebAssembly exceptions for every object, the
 # runtime's and the fetched dependencies' alike. Usage:
 #   cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/web.cmake ...

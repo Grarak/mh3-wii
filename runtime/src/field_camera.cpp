@@ -2,14 +2,15 @@
 // update 0x802B5CBC FieldCameraUpdate (camera; the PLW at +0x494), called by
 // CameraUpdate 0x802B579C, decompiled with Ghidra.
 //
-// Each step it picks the distance and height row, takes the stick (the input
-// ports in camera_input.cpp), eases the pitch and yaw toward their targets,
+// Each step it picks the distance and height row, takes the stick and the
+// mouse (the input ports in camera_input.cpp; camera_mouse.h), eases the
+// pitch and yaw toward their targets,
 // places the target and the eye behind the player and blends a camera reset.
 // What the original does once per step, and what this port does instead over
 // a step of s ticks (GameStep):
 //   - pitch levelling: the pitch target returns toward 0 by 10 (30) a step
-//     once within 2560 of it, and while looking up (0x802B79E4, a ledge or a
-//     climb) moves toward -0x1000 by 48 (144) a step: here GameStep::Share
+//     once within 2560 of it, and while swimming at the surface (0x802B79E4)
+//     moves toward -0x1000 by 48 (144) a step: here GameStep::Share
 //     of those amounts;
 //   - the eases of pitch, yaw and distance angle (`+= gap >> shift`) go
 //     through CameraAngleEase (camera_input.cpp), which closes the gap for the
@@ -23,6 +24,7 @@
 //     old position. Here the count is in whole ticks and each step keeps t^s,
 //     so the blend takes as long as on the Wii.
 // At the stock 1/30 s step every one of these is the original.
+#include "camera_mouse.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
@@ -63,7 +65,7 @@ enum : uint32_t {
     VecSet = 0x8005000C,           // setVector3 (VEC3*; f1, f2, f3)
     RotY = 0x800510C8,             // rotVecY (VEC3*, angle)
     RotX = 0x8005101C,             // rotVecX (VEC3*, angle)
-    LookingUp = 0x802B79E4,        // (PLW) -> nonzero
+    CameraSurfaced = 0x802B79E4,   // (PLW) -> 1 swimming at the surface
     ActionCheck = 0x8026FECC,      // Pl_act_ck (PLW, u8 kind, u16 action) -> 1
     PlStateCheck = 0x8027D850,     // (PLW, 2) -> 1
     CameraEvent = 0x802B7A1C,      // (PLW, kind) -> 1
@@ -215,6 +217,8 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
     if (Memory::Read8(plw) == 0 || (game.Call<GetOnlineMode>() & 0xFF) == 2)
         return;
 
+    // This step's mouse look, for the stick input functions below.
+    CameraMouse::Take();
     game.Call<CameraFollowMode>({cam, plw});
     Memory::Write8(cam + kFlags, 0);
 
@@ -259,7 +263,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
         else if (Memory::Read8(plw + kPlwState) == 1 && Memory::Read8(cam + kDistance) == 2)
             W32(cam + kRow, kRowRidingMid);
         else
-            W32(cam + kRow, kRows + Memory::Read8(cam + kDistance) * 28);
+            W32(cam + kRow, CameraMouse::Row(kRows, CameraMouse::Level(Memory::Read8(cam + kDistance))));
     }
 
     game.Call<CameraYawInput>({cam, cam, plw});
@@ -303,7 +307,7 @@ static void FieldCameraUpdatePort(CpuContext* ctx) {
 
     if ((game.Call<OptionConfig>({Memory::Read8(plw + kPlwPlayer), 10}) & 0xFF) == 1 && Memory::Read8(cam + kPitchSnap) == 1) {
         pitchShift = 3;
-    } else if (game.Call<LookingUp>({plw}) != 0) {
+    } else if (game.Call<CameraSurfaced>({plw}) != 0) {
         if (!manual) {
             Memory::Write8(cam + kLookUp, 1);
             const uint32_t step = uint32_t(GameStep::Share(Memory::Read8(cam + kFast) == 0 ? 48 : 144));

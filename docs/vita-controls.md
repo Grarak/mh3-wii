@@ -92,23 +92,60 @@ Nintendo layouts land on the same physical buttons. The triggers set the
 digital L/R past half way; the sticks use the Vita's curve with a 15 % dead
 zone.
 
-Keyboard, while the window has focus:
+Keyboard and mouse, while the window has focus, after Monster Hunter:
+World's defaults where the game has the action:
 
-| Keys | Classic Controller |
-| --- | --- |
-| W A S D | Left stick |
-| I J K L | Right stick |
-| Arrow keys | D-pad |
-| Space / Left Shift | A / B |
-| E / F | X / Y |
-| Q / R | L / R (fully pressed) |
-| Z / C | ZL / ZR |
-| Enter / Backspace | + / − |
-| Escape or Home | HOME |
+| Keys and mouse | Classic Controller | In the game |
+| --- | --- | --- |
+| W A S D | Left stick | Move |
+| Mouse (captured) | — | Camera, turned by the mouse itself (below) |
+| Left button (captured) | X | Draw the weapon, attack |
+| Right button (captured) | A | Second attack |
+| Space | B | Evade, back |
+| Left Shift | R (fully pressed) | Dash; the weapon's guard or charge |
+| E | Y | Use an item, sheathe |
+| F / Enter | A | Talk, gather, confirm |
+| Q | L (fully pressed) | Camera behind the hunter; held, the item bar |
+| Q held + left / right button (captured) | — | Item bar: the previous / next item |
+| Z / C | ZL / ZR | Per control style |
+| Escape | + | Pause menu |
+| Tab / M | − | Quest menu (item pouch, map, signal) |
+| Backspace | B | Back |
+| Arrow keys | D-pad | Menu cursor |
+| I J K L | Right stick | Camera or attack, as the game's option |
+| Home | HOME | HOME Menu |
 
 Keyboard and gamepad sticks combine per stick (a held key wins). There is no
 remapping yet: the tables live in `mh3_classic_map.c` (Vita) and
 `controller_host.cpp` (SDL, keyboard).
 
-The mouse is the pointer: the left button held over the game's picture is a
-finger on the Vita's screen ([pointer](#pointer)).
+### Mouse look
+
+A click in the window captures the mouse; Left Alt held frees the cursor
+(the window or the browser keeps it otherwise). Captured, the mouse turns
+the field camera directly instead of standing in for the right stick, whose
+camera only turns at fixed speeds:
+
+- across, the yaw turns with the mouse, one to one and without the stick's
+  ramp (22 angle units a pixel, 0.12°), and holds off the camera's swing
+  back behind the hunter as a turning stick does;
+- up and down, on land, where the stick only steps between the camera's
+  five distance rows (0 high and close, 1 high and far, 2 the middle, 3 low
+  and far with the narrower view, 4 low and close), the mouse moves between
+  them continuously (96 pixels a row): the camera's row is the blend of the
+  two nearest, written to 32 bytes the runtime reserves in MEM2, so the
+  camera's collision and limits see the same row; swimming, it tilts the
+  pitch as the stick does.
+
+While L is held (Q) the item bar is open, and the captured buttons scroll it
+instead of attacking: the runtime replays the bar's own scroll
+(`runtime/src/item_bar.cpp`, the game's 0x8025E12C), its sound, the next
+usable pouch slot back or forward and the HUD's turn.
+
+`MH3_MOUSE_SENSITIVITY` scales both (default 1) and `MH3_MOUSE_INVERT_Y=1`
+turns the vertical round; the game's own camera inversion options apply too.
+Free, the left button over the game's picture is the Wii Remote's pointer: a
+finger on the Vita's screen ([pointer](#pointer)). Code:
+`runtime/src/controller_host.cpp` (capture, `TakeMouseMotion`),
+`runtime/src/camera_input.cpp` and `field_camera.cpp` (the camera), and the
+camera helpers ported for it in `runtime/src/camera_controls.cpp`.

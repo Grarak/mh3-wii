@@ -24,6 +24,8 @@ it to another Wii game.
 
 ## Development
 
+- [translation.md](translation.md): how the build runs the translator, step
+  by step, only when its inputs changed.
 - [flags.md](flags.md): every environment variable the runtime reads.
 - [profiling.md](profiling.md): statistics lines, profiling on the Vita and
   ARM boards, and what to measure.

@@ -34,6 +34,7 @@ when one is an error.
 | `steps N` | answers N logic steps later |
 | `press BUTTONS [TICKS]` | holds the Classic buttons for TICKS ticks (3), then gives the controller back to the host input or playback, and answers: names joined by `+` (`a`, `b`, `x`, `y`, `l`, `r`, `zl`, `zr`, `plus`, `minus`, `home`, `up`, `down`, `left`, `right`; the Vita's circle is `a`, cross `b`) or hex Classic bits |
 | `point X Y [TICKS]` | touches the screen (clicks) at X, Y across and down the game's picture (0..1) as the Wii Remote's pointer, and answers TICKS ticks (30) later; the touch stays until `point off` or the next `point` moves it ([controls](vita-controls.md)) |
+| `mouse DX DY [FRAMES]` | moves the captured mouse by DX, DY pixels, spread over FRAMES paced frames (1): the field camera's mouse look ([controls](vita-controls.md)) |
 | `shot PATH` | dumps the next drawn frame to PATH (BMP) |
 | `call ADDR [INT...] [f FLOAT...]` | calls the guest function at ADDR with the ints (hex) in r3.. and the floats in f1..; answers r3 and f1 |
 | `cheat NAME[=VALUE]` | turns on an integrated cheat (as `--cheat`) |

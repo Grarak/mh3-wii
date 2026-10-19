@@ -2,8 +2,11 @@
 """Refresh translator-owned dispatch, registration and direct-call traits.
 
 This runs emit-build-shards only; it does not translate guest functions/assets.
-CMake invokes it before loading shards.cmake. The input and output digests keep
-unchanged configurations cheap and detect edited/missing generated artifacts.
+scripts/translate.py runs it last, after the native index (CMake runs that
+before loading shards.cmake). The runtime's sources reach the shards only
+through generated/native_index.json, so the inputs digest that instead of every
+source. The input and output digests keep unchanged configurations cheap and
+detect edited/missing generated artifacts.
 """
 from pathlib import Path
 import argparse
@@ -84,7 +87,7 @@ def output_digests(directory):
 
 
 def input_digests(args):
-    paths = source_files(args.native_dir)
+    paths = [args.native_index] if args.native_index.is_file() else source_files(args.native_dir)
     paths += [args.base_metadata, args.translator, Path(__file__).resolve()]
     # Core dependencies matter even when the CLI wrapper itself is unchanged.
     paths += sorted(args.translator.parent.glob('Translator*.dll'))
@@ -114,7 +117,7 @@ def prepare(args):
         recipe = [str(args.base_metadata), str(args.functions), str(args.native_dir),
                   str(args.resolved_profile or ''), str(args.retro_cpp_dir or '')]
         previous = json.loads(stamp.read_text()) if stamp.is_file() else {}
-        fresh = (previous.get('format') == 1 and previous.get('inputs') == inputs and
+        fresh = (previous.get('format') == 2 and previous.get('inputs') == inputs and
                  previous.get('recipe') == recipe and previous.get('outputs') == output_digests(args.out))
         native = native_addresses(args.native_dir)
         if fresh and not args.force:
@@ -147,7 +150,7 @@ def prepare(args):
             raise ValueError('native dispatch inputs changed during emission; retry after source freeze')
         tables = validate(args.out, native, args.resolved_profile)
         temporary = stamp.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(format=1, inputs=inputs, recipe=recipe,
+        temporary.write_text(json.dumps(dict(format=2, inputs=inputs, recipe=recipe,
                                              outputs=output_digests(args.out), native_addresses=sorted(native),
                                              tables=tables), indent=2) + '\n')
         temporary.replace(stamp)
@@ -157,6 +160,7 @@ def prepare(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native-dir', type=Path, default=ROOT / 'runtime/src')
+    parser.add_argument('--native-index', type=Path, default=ROOT / 'generated/native_index.json')
     parser.add_argument('--base-metadata', type=Path, default=ROOT / 'generated/translation.json')
     parser.add_argument('--functions', type=Path, default=ROOT / 'generated/functions')
     parser.add_argument('--out', type=Path, default=ROOT / 'generated/build_shards')

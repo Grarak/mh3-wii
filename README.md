@@ -53,43 +53,70 @@ sound and movies are read from your image.
 
 ## Building
 
-Tested on arm64 Linux. You need:
+Tested on arm64 Linux. Every target needs:
 
-- Python 3, CMake 3.25+, Ninja, Git and Docker;
-- **clang-21** with lld-21 and llvm-21 (`clang-21`, `clang++-21`,
-  `llvm-ar-21` on `PATH`; the Vita build compiles with them as well, not with
-  VitaSDK's gcc);
+- Python 3, CMake 3.25+, Ninja and Git;
 - the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) for the
   translator, in `tools/dotnet/` or named by `DOTNET_BIN`;
 - [nodtool](https://github.com/encounter/nod/releases) to extract the disc
-  for the translator;
-- for the Vita: [VitaSDK](https://vitasdk.org) (`VITASDK`, default
-  `/usr/local/vitasdk`) and **a copy of Sony's `psp2cgc.exe`** shader
-  compiler from the official PS Vita SDK's host tools, which cannot be
-  distributed here. Export its absolute path:
+  for the translator (the commands below expect it in `tools/`).
+
+The PS Vita and Linux builds also need **clang-21** with lld-21 and llvm-21
+(`clang-21`, `clang++-21`, `llvm-ar-21` on `PATH`; the Vita build compiles
+with them as well, not with VitaSDK's gcc), and the PS Vita and arm32 builds
+need Docker.
+
+For the PS Vita: [VitaSDK](https://vitasdk.org) (`VITASDK`, default
+`/usr/local/vitasdk`) and **a copy of Sony's `psp2cgc.exe`** shader compiler
+from the official PS Vita SDK's host tools, which cannot be distributed here.
+Export its absolute path:
+
+```sh
+export PSP2CGC=/absolute/path/to/psp2cgc.exe
+```
+
+The build runs psp2cgc under Wine in Docker; the image is built from
+[docker/psp2cgc-wine.Dockerfile](docker/psp2cgc-wine.Dockerfile) on first use
+(on an arm64 host through qemu-user binfmt for i386). Every shader is
+compiled once at build time into the executable.
+
+For the web (WebAssembly):
+
+- the [Emscripten SDK](https://emscripten.org) 6.0.11 in `~/emsdk` (or
+  named by `EMSDK`):
 
   ```sh
-  export PSP2CGC=/absolute/path/to/psp2cgc.exe
+  git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+  ~/emsdk/emsdk install 6.0.11 && ~/emsdk/emsdk activate 6.0.11
   ```
 
-  The build runs psp2cgc under Wine in Docker; the image is built from
-  [docker/psp2cgc-wine.Dockerfile](docker/psp2cgc-wine.Dockerfile) on first
-  use (on an arm64 host through qemu-user binfmt for i386). Every shader is
-  compiled once at build time into the executable.
+- glslangValidator, zstd and [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga),
+  which convert the shaders to WebGPU's WGSL, a C++ compiler for the build
+  machine, and Liberation Sans or DejaVu Sans, the launcher's font:
 
-### 1. Translate the game
+  ```sh
+  sudo apt install glslang-tools zstd fonts-liberation clang
+  cargo install naga-cli
+  ```
+
+### 1. Extract the disc
 
 ```sh
 tools/nodtool extract -q 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' Assets/DATA
-tools/dotnet/dotnet build -c Release toolchain/translator/src/Translator.Cli
-scripts/translate.sh            # writes generated/ (a few minutes)
 ```
 
-`generated/` and `Assets/` are not part of the repository. Translate again
-after changing `symbols.txt`, `recomp.yml`, `runtime/src/tick_sites.inc` or
-adding or removing a native function registration (`REGISTER_NATIVE_FUNCTION_AS`).
+The build compiles the translator with dotnet and translates the game into
+`generated/` by itself (the first build takes about 5 minutes longer), and
+again, step by step, after a change of `symbols.txt`, `recomp.yml`, a site
+list, the translator or a native port's registration or registers.
+`generated/` and `Assets/` are not part
+of the repository; `scripts/translate.sh` translates outside a build.
 
 ### 2. Build
+
+The Linux and web scripts print one line when they are done and write the
+compiler's output to `logs/` (`aurora-build.log`, `web-build.log`); read it
+when a script stops without that line.
 
 PS Vita (`build/vita/mh3-vita.vpk`):
 
@@ -101,7 +128,7 @@ MH3_DEVELOPMENT=ON scripts/build-vita.sh     # development: statistics and debug
 Release builds use the checked-in profile `pgo/mh3-release.profdata.tar.zst`
 ([PGO and ThinLTO](docs/optimizations/cpu/pgo-and-thinlto.md)).
 
-Linux, arm64 (development host):
+Linux, arm64 (development host, `build/linux-arm64-dev/MH3`):
 
 ```sh
 MH3_ARCH=arm64 MH3_BUILD_DIR=build/linux-arm64-dev \
@@ -109,7 +136,7 @@ MH3_ARCH=arm64 MH3_BUILD_DIR=build/linux-arm64-dev \
 ```
 
 Linux, arm32 (armhf, Cortex-A9 code; for a Raspberry Pi or another ARMv7+
-board), cross-compiled in a Docker image built from
+board; `build/linux-arm32/MH3`), cross-compiled in a Docker image built from
 [docker/armhf-cross.Dockerfile](docker/armhf-cross.Dockerfile) on first use:
 
 ```sh
@@ -119,8 +146,35 @@ MH3_EXTRA_CMAKE_ARGS='-DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' scripts/docker-build.
 Like the Vita's, Linux builds are release builds unless `-DMH3_DEVELOPMENT=ON`
 is added.
 
-Web: `scripts/build-web.sh`, then `scripts/serve-web.py build/web`
-([web build](docs/web-build.md)).
+Web (WebAssembly and WebGPU, `build/web`):
+
+```sh
+scripts/build-web.sh                      # release: ThinLTO, build/web
+MH3_DEVELOPMENT=ON scripts/build-web.sh   # development: statistics and debug tools, build/web-dev
+scripts/serve-web.py build/web            # play it at http://localhost:8080/
+```
+
+`build/web` then holds the whole site: `index.html`, `mh3-web.js`, `MH3.js`,
+`MH3.wasm` and `MH3.data` (the launcher's font). The first build also
+converts every shader to WGSL, which later builds take from
+`~/.cache/mh3-web-shader-bank`. A release page always opens the launcher; a
+development page also takes the command line from its address
+(`?args=--quest+19001+--area+1&env=MH3_STATS=1`), which
+`scripts/web-check.mjs` uses to test the web build in headless Chromium.
+
+## Playing in a browser
+
+`scripts/serve-web.py build/web` serves the page at `http://localhost:8080/`;
+browsers run it only from `localhost` or over HTTPS. Open it in Chrome or Edge
+113 or newer (Firefox and Safari where WebGPU is turned on), choose your disc
+image and press Start. The page copies the image into the browser's storage
+once (keep its size free on disk: 2.4 GB for the RVZ), and keeps it, your
+saves and the settings between visits. The setup panel imports a save
+(Dolphin's `Wii/title/00010000/524d4850` folder, or `saves` from Linux or the
+Vita) and sets the display and mouse options and a frame counter
+(<kbd>F2</kbd> during play). Start opens the Vita launcher's menus (the game,
+quests, custom quests, cheats, SSAA, the frame limit) for keyboard, mouse or
+gamepad: everything but online play.
 
 ## Running on Linux
 
@@ -133,10 +187,10 @@ MH3 --launcher                  # development builds: the Vita launcher's menus
 ```
 
 The image is read in place; pass `--rom` again after moving it. Saves go to
-`saves/` (`MH3_USER_DIR`). Keyboard: Space = A, Left Shift = B, WASD = left
-stick, IJKL = right stick, arrows = D-pad, Enter = Plus; SDL gamepads work too.
-Runtime options: [flags](docs/flags.md); debugging and profiling:
-[docs](docs/README.md).
+`saves/` (`MH3_USER_DIR`). Keyboard and mouse follow Monster Hunter World's
+defaults (WASD moves, a click captures the mouse for the camera, left and
+right buttons attack, Q held with a click scrolls the item bar, Space evades:
+[controls](docs/vita-controls.md)); SDL gamepads work too.
 
 ## License
 

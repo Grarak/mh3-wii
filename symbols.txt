@@ -1209,7 +1209,7 @@
 8014e410 Em001Attacks
 80151128 Em001Actions
 801db788 Em007Actions
-# Enemy actions (enemy_actions.cpp, monster_control.cpp, docs/monster-control.md)
+# Enemy actions (enemy_actions.cpp, monster_control.cpp)
 80128624 EnemySetAction
 801283a4 EnemyStartAction
 80126520 EnemyHandler
@@ -1677,6 +1677,10 @@
 802be2f0 CameraUsable
 802b8af0 CameraFollowMode
 802b7a1c CameraEvent
+# Camera controls (camera_controls.cpp).
+802b8c4c CameraTargetMode
+802b79e4 CameraSurfaced
+802be0ec CameraUnderwater
 802bb0b0 CameraResetCurve
 80052298 VecLerp
 802b8244 CameraCollide

@@ -1,4 +1,4 @@
-// The web build's files (docs/optimizations/platforms/web-build.md). The page imports the disc image
+// The web build's files. The page imports the disc image
 // into the browser's Origin Private File System (OPFS); WasmFS mounts it at
 // /opfs, where the prepared game data and the saves stay between visits:
 //
@@ -18,6 +18,23 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+
+// fsync through WasmFS's own sync, keeping libc's out of the link: libc's
+// fsync declares __wasi_fd_sync an import from wasi_snapshot_preview1, which
+// WasmFS defines instead, and a ThinLTO link (release builds) stops on the
+// mismatch ("import module mismatch for symbol: __wasi_fd_sync").
+extern "C" int __syscall_fdatasync(int fd);
+
+extern "C" int fsync(int fd) {
+    const int result = __syscall_fdatasync(fd);
+
+    if (result < 0) {
+        errno = -result;
+        return -1;
+    }
+
+    return 0;
+}
 
 namespace {
 void Directory(const char* path) {

@@ -23,6 +23,8 @@
 // starts at 1 on the first step held, as the original's first step does), and
 // an ease closes 1 - (1 - 2^-shift)^s of the gap, dithered over steps as
 // Share() is. At the stock 1/30 s step all of this is the original.
+#include "camera_mouse.h"
+#include "controller_host.h"
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
@@ -52,7 +54,12 @@ enum : uint32_t {
     kPitchSnap = 0xB0,     // u8, the snapped pitch (u16) at +0xB2
     kSlowB = 0xB5,         // u8: slower turn (747 yaw, 368 pitch)
     kTurned = 0x91,        // u8, cleared when the stick turns the camera
+    kYaw = 0x70,           // s32 (s16 angle): the eased yaw
 };
+
+// Mouse look: angle units (a turn is 65536) and distance levels a pixel.
+constexpr float kMouseYaw = 22.0f, kMousePitch = 22.0f, kMouseLevel = 1.0f / 96.0f;
+constexpr uint32_t kRowFloats = 7;
 
 enum : uint32_t {
     kPlwState = 9,       // u8: 3 swimming
@@ -68,9 +75,9 @@ enum : uint32_t {
     OptionConfig = 0x803BED04,  // get_option_cfg (player, option) -> u8
     TargetHeld = 0x8027A304,    // (PLW, 0) -> 1: swing behind while targeting
     SwingBack = 0x802B6C30,     // (f1 lo, f2 hi, f3 gain; r3 u16 gap) -> s16 turn this step
-    StickTilted = 0x8026F96C,   // (PLW, stick) -> 0 when the stick is near the middle
-    AimingUp = 0x802B79E4,      // (PLW) -> 1
-    AimAllowed = 0x802BE0EC,    // () -> nonzero
+    PlStickLevel = 0x8026F96C,  // (PLW, stick) -> 0 when the stick is near the middle
+    CameraSurfaced = 0x802B79E4, // (PLW) -> 1 swimming at the surface
+    CameraUnderwater = 0x802BE0EC, // () -> 1 the camera below the water line
 };
 
 constexpr uint32_t kSwingLo = 0x8079C9F0, kSwingHi = 0x8079C9F4, kSwingGain = 0x8079C9F8; // f32
@@ -109,7 +116,60 @@ void SnapBehind(uint32_t work, uint32_t plw) {
     Memory::Write16(work + kYawSnap + 1, uint16_t(yaw));
 }
 
+struct {
+    float dx = 0, dy = 0, yawLeft = 0, level = -1;
+    uint32_t row = 0;
+} mouse;
+
 } // namespace
+
+namespace CameraMouse {
+
+void Take() {
+    const MouseMotion motion = TakeMouseMotion();
+    mouse.dx = motion.dx * MouseSensitivity();
+    mouse.dy = motion.dy * MouseSensitivity() * (MouseInvertY() ? -1.0f : 1.0f);
+}
+
+float Dx() {
+    return mouse.dx;
+}
+
+float Dy() {
+    return mouse.dy;
+}
+
+float Level(uint32_t gameLevel) {
+    if (mouse.level < 0.0f || uint32_t(std::lround(mouse.level)) != gameLevel)
+        mouse.level = float(gameLevel);
+
+    return mouse.level;
+}
+
+void SetLevel(float level) {
+    mouse.level = level;
+}
+
+void ReserveRow(uint32_t base) {
+    mouse.row = base;
+}
+
+uint32_t Row(uint32_t rows, float level) {
+    const uint32_t below = uint32_t(level);
+    const float t = level - float(below);
+
+    if (t <= 0.0f || below >= 4 || !mouse.row)
+        return rows + std::min<uint32_t>(uint32_t(std::lround(level)), 4) * 28;
+
+    for (uint32_t k = 0; k < kRowFloats; ++k) {
+        const float a = Memory::ReadFloat32(rows + below * 28 + 4 * k), b = Memory::ReadFloat32(rows + (below + 1) * 28 + 4 * k);
+        Memory::WriteFloat32(mouse.row + 4 * k, a + (b - a) * t);
+    }
+
+    return mouse.row;
+}
+
+} // namespace CameraMouse
 
 static void CameraYawInputPort(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x40);
@@ -127,6 +187,26 @@ static void CameraYawInputPort(CpuContext* ctx) {
         speed = 747;
 
     uint32_t following = 0, snapped = 0;
+
+    // The mouse turns the yaw and its target together, one to one (the
+    // fraction of a unit carried to the next step), and holds off the swing
+    // back as a turning stick does.
+    bool mouseTurned = false;
+
+    if (CameraMouse::Dx() != 0.0f && game.Call<CameraUsable>({plw}) == 1) {
+        // A larger yaw turns the view left: the mouse to the right lowers it.
+        const float units = -CameraMouse::Dx() * kMouseYaw + mouse.yawLeft;
+        int32_t turn = int32_t(std::lround(units));
+        mouse.yawLeft = units - float(turn);
+
+        if (Memory::Read8(camera + kFlags) & 1)
+            turn = -turn;
+
+        Memory::Write32(work + kYawTarget, Memory::Read32(work + kYawTarget) + uint32_t(turn));
+        Memory::Write32(work + kYaw, Memory::Read32(work + kYaw) + uint32_t(turn));
+        mouseTurned = true;
+    }
+
     uint32_t yaw = Memory::Read32(work + kYawTarget);
 
     if (Command(plw, 9) && (Command(plw, 6) || Command(plw, 8)) && game.Call<CameraUsable>({plw}) == 1) {
@@ -156,6 +236,14 @@ static void CameraYawInputPort(CpuContext* ctx) {
         Memory::Write8(work + kYawRamp, 0);
     else
         RampDown(work + kYawRamp);
+
+    if (mouseTurned) {
+        Memory::Write8(work + kTurned, 0);
+        Memory::Write8(work + kFollowing, 0);
+        Memory::Write8(work + kSnapped, 0);
+        return;
+    }
+
     // The swing back behind the player: an amount a step, here its share.
     const auto swingBack = [&](uint32_t lo) {
         const uint32_t gap = (((Memory::Read32(plw + kPlwYaw) & 0xFFFF) ^ 0x8000) - Memory::Read32(work + kYawTarget)) & 0xFFFF;
@@ -204,6 +292,14 @@ static void CameraPitchInputPort(CpuContext* ctx) {
     const bool swapped = Memory::Read8(camera + kFlags) & 2;
 
     if (Memory::Read8(plw + kPlwState) != 3) {
+        // The mouse moves the distance level continuously (up as the stick's
+        // flick up), the row blended from the two nearest (FieldCameraUpdate).
+        if (const float dy = CameraMouse::Dy(); dy != 0.0f) {
+            const float level = std::clamp(CameraMouse::Level(Memory::Read8(work + kDistance)) + (swapped ? dy : -dy) * kMouseLevel, 0.0f, 4.0f);
+            CameraMouse::SetLevel(level);
+            Memory::Write8(work + kDistance, uint8_t(std::lround(level)));
+        }
+
         // On land the stick's flicks (edges) step the distance level.
         const uint32_t closer = swapped ? 3 : 1, farther = swapped ? 1 : 3;
         const uint32_t level = Memory::Read8(work + kDistance);
@@ -250,8 +346,8 @@ static void CameraPitchInputPort(CpuContext* ctx) {
         Memory::Write8(work + kManualPitch, 1);
         Memory::Write8(work + kPitchHold, 30);
     } else {
-        if (Command(plw, 0) && (game.Call<StickTilted>({plw, 0}) & 0xFF) == 0 &&
-            (game.Call<AimingUp>({plw}) != 1 || game.Call<AimAllowed>() != 0)) {
+        if (Command(plw, 0) && (game.Call<PlStickLevel>({plw, 0}) & 0xFF) == 0 &&
+            (game.Call<CameraSurfaced>({plw}) != 1 || game.Call<CameraUnderwater>() != 0)) {
             const uint32_t level = -Memory::Read32(plw + kPlwPitch) & 0xFFFF;
             Memory::Write32(work + kPitchTarget, level);
             Memory::Write8(work + kPitchRamp, 10);
@@ -264,6 +360,15 @@ static void CameraPitchInputPort(CpuContext* ctx) {
 
         if (hold != 0)
             Memory::Write8(work + kPitchHold, uint8_t(hold - std::min(hold, GameStep::Ticks())));
+    }
+
+    // Swimming, the mouse tilts the pitch target as the stick does.
+    if (const float dy = CameraMouse::Dy(); dy != 0.0f) {
+        const int32_t tilt = int32_t(std::lround((swapped ? dy : -dy) * kMousePitch));
+        const int32_t target = std::clamp<int32_t>(int16_t(Memory::Read32(work + kPitchTarget)) + tilt, -16020, 16020);
+        Memory::Write32(work + kPitchTarget, uint32_t(target) & 0xFFFF);
+        Memory::Write8(work + kManualPitch, 1);
+        Memory::Write8(work + kPitchHold, 30);
     }
 
     Memory::Write8(work + kDistance, 2);

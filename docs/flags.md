@@ -11,8 +11,15 @@ builds (`MH3_DEVELOPMENT=ON`); the Builds column says which.
 | `MH3_USER_DIR` | save/NAND root (default `saves`; Vita `ux0:/data/mh3-wii/saves`) | all |
 | `MH3_NATIVE_ASSET_DIR` | a whole-disc converted texture/model set instead of the load-time cache | all |
 | `MH3_WIDESCREEN` | `0`: 4:3; default 16:9 ([widescreen](optimizations/rendering/widescreen.md)) | all |
-| `MH3_FRAME_LIMIT` | `60` (default), `30` or `off`, as the launcher's `Framelimit` row; `off` for benchmarks | all |
-| `MH3_MSAA` | `2`, `4` or `off`, as the launcher's `MSAA` row | development |
+| `MH3_RESOLUTION` | `native`: render at the window's (the canvas's) pixel size instead of 960×544 ([widescreen](optimizations/rendering/widescreen.md)) | all but Vita |
+| `MH3_ASPECT` | `window`: the picture takes the window's aspect (ultrawide); the HUD's parts move to its edges | all but Vita |
+| `MH3_FRAME_LIMIT` | `vsync` or `60` (default), `half` or `30`, `off`, or `cap:N` (10 to 1000 frames a second), as the launcher's `Framelimit` row; `off` for benchmarks | all |
+| `MH3_MSAA` | `2`, `4` or `off`, as the launcher's `MSAA` row (not on the web) | development |
+| `MH3_SSAA` | `2`, `4` or `off`, as the web launcher's `SSAA` row: supersampling | development, web |
+| `MH3_MOUSE_SENSITIVITY` | mouse look speed, a factor (default 1) ([controls](vita-controls.md#mouse-look)) | all |
+| `MH3_MOUSE_INVERT_Y` | `1`: mouse up looks down | all |
+| `MH3_WEB_FILL` | `1`: the canvas fills the browser window and follows its size ([web build](web-build.md#the-pages-options)) | web |
+| `MH3_WEBGPU_COMPAT` | `1`: a WebGPU device at the compatibility level even where the adapter has core ([web build](web-build.md#the-compatibility-level)) | web |
 | `MH3_LANGUAGE` | `en`, `fr`, `de`, `it` or `es`, as the launcher's `Language` row | all |
 | `MH3_STATS` | `0`: no once-per-second statistics lines ([profiling](profiling.md#statistics-lines)) | development |
 | `MH3_WINDOW_SCALE` | `n`: an n times larger window | development |
@@ -79,6 +86,7 @@ These need a CMake option, which rebuilds the generated code.
 | `AURORA_PORT_CAPTURE` | `DIR`: a per-draw state log and the shader sources | all |
 | `AURORA_PORT_CAPTURE_DRAW_INTERVAL` | `N`: log every Nth draw (default 30) | all |
 | `AURORA_PORT_CAPTURE_DRAW_TIMING` | set: each captured draw's GPU time | all |
+| `AURORA_WEBGPU_TRACE` | `1`: log each WebGPU queue write of 256 KiB or more | web |
 
 ## Read by tools, not the runtime
 

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 constexpr uint32_t Shape = 0x8066CDA0, ScreenWidth = 0x8065B4C0, ScreenHeight = 0x8065B4C4;
@@ -886,6 +887,59 @@ extern "C" void MH3_UIShapeTextureObject(CpuContext* cpu) {
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80054CD8, MH3_UIShapeTextureObject, "UIShapeTextureObject");
 
+// HUD parts' text: the font queue positions a part appended (per bank) and
+// its anchor, which the flush draws them with (BeginNativeHudPart). Cleared
+// with the queue each frame (FontStackReset).
+namespace {
+struct GlyphAnchor {
+    uint32_t bank, begin, end, anchor;
+};
+
+std::vector<GlyphAnchor> glyphAnchors;
+uint32_t partAnchor = 0, partQueued[2] = {};
+
+uint32_t GlyphAnchorAt(uint32_t bank, uint32_t position) {
+    for (const auto& a : glyphAnchors)
+        if (a.bank == bank && position >= a.begin && position < a.end)
+            return a.anchor;
+
+    // A part that flushes its own text: what it queued so far.
+    if (partAnchor && bank < 2 && position >= partQueued[bank])
+        return partAnchor;
+
+    return 0;
+}
+} // namespace
+
+void BeginNativeHudPart(uint32_t anchor) {
+    // Only a wider target places parts: elsewhere the draws keep one state.
+    if (!NativeWindowAspect())
+        anchor = 0;
+
+    partAnchor = anchor;
+    SetNativeHudAnchor(anchor);
+
+    if (!anchor)
+        return;
+
+    if (const auto font = Memory::Read32(0x80796D98))
+        for (uint32_t bank = 0; bank < 2; ++bank)
+            partQueued[bank] = Memory::Read16(font + 0x15094 + bank * 2);
+}
+
+void EndNativeHudPart() {
+    if (!partAnchor)
+        return;
+
+    if (const auto font = Memory::Read32(0x80796D98))
+        for (uint32_t bank = 0; bank < 2; ++bank)
+            if (const uint32_t end = Memory::Read16(font + 0x15094 + bank * 2); end > partQueued[bank])
+                glyphAnchors.push_back({bank, partQueued[bank], end, partAnchor});
+
+    partAnchor = 0;
+    SetNativeHudAnchor(0);
+}
+
 extern "C" void MH3_FontFlush(CpuContext* cpu) {
     const auto font = Memory::Read32(0x80796D98);
 
@@ -926,22 +980,36 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
             if (begin[layer] < 0 || end[layer] > 1024)
                 MH3_THROW(std::runtime_error("Native font glyph batch exceeds its CPU index array"));
 
-            const uint32_t count = uint32_t(end[layer] - begin[layer]);
-            const auto indexAddress = font + 0x15098 + layer * 0x800 + uint32_t(begin[layer]) * 2;
-            uint32_t largest = 0;
+            // Runs of glyphs that share their HUD part's anchor.
+            for (uint32_t at = uint32_t(begin[layer]); at < uint32_t(end[layer]);) {
+                const uint32_t anchor = GlyphAnchorAt(layer, at);
+                uint32_t next = at + 1;
 
-            for (uint32_t index = 0; index < count; ++index)
-                largest = std::max(largest, uint32_t(Memory::Read16(indexAddress + index * 2)));
+                while (next < uint32_t(end[layer]) && GlyphAnchorAt(layer, next) == anchor)
+                    ++next;
 
-            if (largest >= Memory::Read32(font + 0x15058))
-                MH3_THROW(std::runtime_error("Native font glyph index exceeds its CPU records"));
+                const uint32_t count = next - at;
+                const auto indexAddress = font + 0x15098 + layer * 0x800 + at * 2;
+                uint32_t largest = 0;
 
-            AuroraNativeGeometry geometry{};
+                for (uint32_t index = 0; index < count; ++index)
+                    largest = std::max(largest, uint32_t(Memory::Read16(indexAddress + index * 2)));
 
-            if (Allocate(MH3_UI_QUADS, count * 4, geometry)) {
-                Checked(mh3_ui_build_glyphs(&GetNativeDrawState(), Span(records, size_t(largest + 1) * 84), Span(indexAddress, count * 2), count, &geometry));
-                SubmitNativeGeometry(geometry, true);
+                if (largest >= Memory::Read32(font + 0x15058))
+                    MH3_THROW(std::runtime_error("Native font glyph index exceeds its CPU records"));
+
+                AuroraNativeGeometry geometry{};
+                SetNativeHudAnchor(anchor);
+
+                if (Allocate(MH3_UI_QUADS, count * 4, geometry)) {
+                    Checked(mh3_ui_build_glyphs(&GetNativeDrawState(), Span(records, size_t(largest + 1) * 84), Span(indexAddress, count * 2), count, &geometry));
+                    SubmitNativeGeometry(geometry, true);
+                }
+
+                at = next;
             }
+
+            SetNativeHudAnchor(0);
         }
     }
 
@@ -964,6 +1032,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8005C174, MH3_FontFlush, "FontFlush");
 namespace {
 void FontStackReset(CpuContext*) {
     const uint32_t font = Memory::Read32(0x80796D98);
+    glyphAnchors.clear();
 
     if (!font)
         return;

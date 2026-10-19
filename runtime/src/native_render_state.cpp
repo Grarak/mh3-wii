@@ -201,30 +201,76 @@ void SetRaster(const mh3_raster_state& raster, bool publish) {
         rasterObserver(raster);
 }
 
+// MH3_ASPECT=window on a target wider than the game's 2D layer (854 x 480):
+// the layer's draws (orthographic, or 3D in a viewport smaller than the
+// screen, as a menu's preview) keep that aspect, in the middle or, for the
+// HUD's parts, against the left or right edge (the draw state's anchor:
+// SetNativeHudAnchor); a draw spanning the whole picture (a fade, a backdrop:
+// NativeWideDrawScope) fills the width. Render thread.
+bool wideDraw = false;
+
+bool Pillarboxed(const DrawOwner& d) {
+    if (!NativeWindowAspect() || wideDraw)
+        return false;
+
+    const auto& target = aurora::gpu::g_frameBuffer;
+
+    if (!target.height || float(target.width) <= float(target.height) * (854.f / 480.f) + 1.f)
+        return false;
+
+    const auto& v = d.drawState.viewport;
+    const auto size = aurora::vi::configured_fb_size();
+    const bool screen = v[0] <= 0.5f && v[1] <= 0.5f && v[2] >= float(size.x) - 1.f && v[3] >= float(size.y) - 1.f;
+    return !d.drawState.perspective || !screen;
+}
+
+// x on the target: x0 + logical x * sx.
+void HorizontalMap(const DrawOwner& d, float scale, float& x0, float& sx) {
+    x0 = 0;
+    sx = scale;
+
+    if (!Pillarboxed(d))
+        return;
+
+    const auto& target = aurora::gpu::g_frameBuffer;
+    const float layer = float(target.height) * (854.f / 480.f), spare = float(target.width) - layer;
+    x0 = d.drawState.anchor == 1 ? 0.f : d.drawState.anchor == 2 ? spare : spare / 2;
+    sx = scale * layer / float(target.width);
+}
+
+void ApplyViewportScissor(const DrawOwner& d) {
+    // Convert logical rectangles again because the target may have resized.
+    const auto scale = TargetScale();
+    float x0, sx;
+    HorizontalMap(d, scale[0], x0, sx);
+
+    // A draw that set no viewport keeps the backend's last one, which on a
+    // wider target may be another layer's: the whole screen's instead.
+    if (d.viewportKnown || NativeWindowAspect()) {
+        const auto size = aurora::vi::configured_fb_size();
+        const float screen[6] = {0, 0, float(size.x), float(size.y), 0, 1};
+        const auto& v = d.viewportKnown ? d.drawState.viewport : screen;
+        aurora::gl::set_viewport(std::lround(x0 + v[0] * sx), std::lround(v[1] * scale[1]), std::lround(v[2] * sx), std::lround(v[3] * scale[1]),
+                                 1.f - std::clamp(std::max(v[4], v[5]), 0.f, 1.f), 1.f - std::clamp(std::min(v[4], v[5]), 0.f, 1.f));
+    }
+
+    if (d.scissorKnown) {
+        const auto [x, y, width, height] = d.scissor;
+        const int32_t left = std::floor(x0 + x * sx), top = std::floor(y * scale[1]);
+        const int32_t right = std::ceil(x0 + (double(x) + width) * sx), bottom = std::ceil((double(y) + height) * scale[1]);
+        aurora::gl::set_scissor_enabled(true);
+        aurora::gl::set_scissor(left, top, right - left, bottom - top);
+    } else
+        aurora::gl::set_scissor_enabled(false);
+}
+
 // Render thread: apply the logical viewport, scissor and raster to the backend.
 void ApplyRenderState() {
     if (!NativeGraphicsFrameShouldRender())
         return;
 
     const auto& d = D(NativeOwner::Render);
-
-    // Convert logical rectangles again because the target may have resized.
-    const auto scale = TargetScale();
-
-    if (d.viewportKnown) {
-        const auto& v = d.drawState.viewport;
-        aurora::gl::set_viewport(std::lround(v[0] * scale[0]), std::lround(v[1] * scale[1]), std::lround(v[2] * scale[0]), std::lround(v[3] * scale[1]),
-                                 1.f - std::clamp(std::max(v[4], v[5]), 0.f, 1.f), 1.f - std::clamp(std::min(v[4], v[5]), 0.f, 1.f));
-    }
-
-    if (d.scissorKnown) {
-        const auto [x, y, width, height] = d.scissor;
-        const int32_t left = std::floor(x * scale[0]), top = std::floor(y * scale[1]);
-        const int32_t right = std::ceil((double(x) + width) * scale[0]), bottom = std::ceil((double(y) + height) * scale[1]);
-        aurora::gl::set_scissor_enabled(true);
-        aurora::gl::set_scissor(left, top, right - left, bottom - top);
-    } else
-        aurora::gl::set_scissor_enabled(false);
+    ApplyViewportScissor(d);
 
     if (d.rasterKnown)
         aurora::gl::apply_raster_state(BackendRaster(d.drawState.raster));
@@ -284,6 +330,50 @@ void RestoreNativeDrawSnapshot(const NativeDrawSnapshot& snapshot) {
     d.rasterKnown = snapshot.rasterKnown;
     Changed(NativeOwner::Render);
     ApplyRenderState();
+}
+
+void SetNativeHudAnchor(uint32_t anchor) {
+    auto& d = D();
+
+    if (d.drawState.anchor == anchor)
+        return;
+
+    d.drawState.anchor = anchor;
+    Changed();
+}
+
+NativeWideDrawScope::NativeWideDrawScope(const void* vertices, uint32_t count, uint32_t stride) {
+    const auto& d = D(NativeOwner::Render);
+
+    if (!NativeGraphicsFrameShouldRender() || !Pillarboxed(d))
+        return;
+
+    // Clip-space x over w, the position's first and last components.
+    float left = 1, right = -1;
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto* position = reinterpret_cast<const float*>(static_cast<const char*>(vertices) + size_t(i) * stride);
+
+        if (position[3] > 0.f) {
+            const float x = position[0] / position[3];
+            left = std::min(left, x);
+            right = std::max(right, x);
+        }
+    }
+
+    if (left > -0.98f || right < 0.98f)
+        return;
+
+    wideDraw = active = true;
+    ApplyViewportScissor(d);
+}
+
+NativeWideDrawScope::~NativeWideDrawScope() {
+    if (!active)
+        return;
+
+    wideDraw = false;
+    ApplyViewportScissor(D(NativeOwner::Render));
 }
 
 void CopyNativeDrawStoreForDraw() {

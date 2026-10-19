@@ -163,7 +163,7 @@ std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key);
 
 #ifdef MH3_WEB_SHADER_BANK
 // The GLSL ES stage sources; the web build's WGSL bank is keyed by XXH3 of
-// these strings (docs/optimizations/platforms/web-build.md). Only its host generator compiles them.
+// these strings. Only its host generator compiles them.
 std::string NativeShaderGlslVertex(const NativeShaderVertexKey& key);
 std::string NativeShaderGlslFragment(const NativeShaderFragmentKey& key);
 #endif

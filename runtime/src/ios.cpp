@@ -627,7 +627,7 @@ constexpr const char* metadataName = "user.mh3.nand";
 int SetMetadata(int fd, const NandMetadata& metadata) {
 #ifdef __EMSCRIPTEN__
     // WasmFS has no extended attributes: on the web every entry keeps the
-    // title's defaults (docs/optimizations/platforms/web-build.md).
+    // title's defaults.
     (void)fd;
     (void)metadata;
     const int result = 0;

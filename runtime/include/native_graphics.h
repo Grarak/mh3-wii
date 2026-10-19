@@ -136,6 +136,37 @@ void SetNativeDisplayWidescreen(bool widescreen);
 // The aspect of the picture the widescreen target shows on this host.
 float NativeWidescreenAspect();
 
+// MH3_ASPECT=window in the game's 16:9 mode: the picture takes the window's
+// aspect; 2D layers stay 16:9 in the middle (native_render_state.cpp).
+bool NativeWindowAspect();
+
+// Game thread, once a frame: the camera aspect follows the target's.
+void UpdateNativeCameraAspect();
+
+// Game thread: where the 2D layer's draws from here on sit on a target wider
+// than it (NativeWindowAspect): 0 the middle, 1 the left edge, 2 the right
+// edge.
+void SetNativeHudAnchor(uint32_t anchor);
+
+// Game thread: a HUD part draws between these (hud_draw.cpp); its draws and
+// the text it queues for the font flush keep its anchor.
+void BeginNativeHudPart(uint32_t anchor);
+void EndNativeHudPart();
+
+// Render thread, around a draw of pre-transformed vertices (clip-space
+// position first, `stride` bytes apart): one spanning the whole picture fills
+// the target's width though its layer keeps 16:9 (NativeWindowAspect).
+class NativeWideDrawScope {
+public:
+    NativeWideDrawScope(const void* vertices, uint32_t count, uint32_t stride);
+    ~NativeWideDrawScope();
+    NativeWideDrawScope(const NativeWideDrawScope&) = delete;
+    NativeWideDrawScope& operator=(const NativeWideDrawScope&) = delete;
+
+private:
+    bool active = false;
+};
+
 // Opens the native texture and model assets of MH3_DISC_DIR: prepared packs,
 // or the load-time asset cache. Done by InitializeNativeGraphics unless told not to.
 void OpenNativeAssets();

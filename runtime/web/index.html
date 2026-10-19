@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monster Hunter Tri (web)</title>
 <style>
-  :root { color-scheme: dark; --bg: #101214; --panel: #1b1f23; --text: #d8dde2; --muted: #8a949e; --accent: #c9a24a; }
+  :root { color-scheme: dark; --bg: #101214; --panel: #1b1f23; --text: #d8dde2; --muted: #8a949e; --accent: #c9a24a; --line: #2c3238; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
   main { max-width: 1000px; margin: 0 auto; padding: 16px; }
   #canvas { width: 100%; aspect-ratio: 960 / 544; background: #000; display: block; outline: none; }
@@ -14,8 +14,19 @@
   #status { color: var(--accent); margin: 8px 0; min-height: 1.4em; }
   #log { height: 180px; overflow: auto; background: var(--panel); color: var(--muted); font: 12px/1.3 ui-monospace, monospace; padding: 8px; margin-top: 12px; white-space: pre-wrap; }
   label { display: block; margin: 6px 0; }
-  input[type=text] { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid #333; padding: 4px; }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; padding: 6px 12px 10px; }
+  legend { color: var(--muted); padding: 0 4px; }
+  input[type=range] { vertical-align: middle; width: 160px; }
   button { background: var(--accent); color: #111; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+  details { margin: 10px 0; }
+  summary { cursor: pointer; color: var(--muted); }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  td, th { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: normal; }
+  kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font: 12px ui-monospace, monospace; }
+  .note { color: var(--muted); margin: 6px 0; }
+  #fps-counter { position: fixed; z-index: 1; padding: 2px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.6); color: #f2f2f2;
+    font: 600 15px/1.4 ui-monospace, monospace; pointer-events: none; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -24,8 +35,60 @@
     <p>Monster Hunter Tri, recompiled, rendered through WebGPU. Supply your own European disc image
       (<code>RMHP08</code>, ISO, RVZ or WIA). It is copied once into this site's private browser storage
       and read from there; nothing is uploaded.</p>
+    <p>Start opens the launcher, as on the Vita: start the game, go straight to the village, a quest (village,
+      online quests played offline, arena) or a custom quest, make custom quests, and set cheats, widescreen,
+      upscaling, the frame limit, SSAA and the language. No online play.</p>
     <label>Disc image <input id="disc" type="file" accept=".rvz,.wia,.iso"></label>
-    <label>Arguments <input id="args" type="text" placeholder="for example --quest 19001 --area 1 --no-damage"></label>
+    <fieldset>
+      <legend>Save</legend>
+      <p id="save-status" class="note"></p>
+      <label>Import a save folder <input id="save-folder" type="file" webkitdirectory></label>
+      <label>or its files <input id="save-files" type="file" multiple></label>
+      <p class="note">Dolphin's <code>Wii/title/00010000/524d4850</code> folder, or <code>saves</code> from this port
+        on a PC or the Vita (<code>ux0:/data/mh3-wii/saves</code>) with its custom quests. A save replaces the one in
+        this browser; it stays in this browser's storage for this site.</p>
+    </fieldset>
+    <fieldset>
+      <legend>Display</legend>
+      <label><input id="fill" type="checkbox" checked> Fill the browser window (F11 for full screen)</label>
+      <label><input id="native" type="checkbox" checked> Render at the display's resolution</label>
+      <label><input id="ultrawide" type="checkbox"> Use the window's aspect (ultrawide): wider view, HUD at the edges</label>
+      <label><input id="fps" type="checkbox"> Show a frame counter (<kbd>F2</kbd> during play)</label>
+    </fieldset>
+    <fieldset>
+      <legend>Mouse</legend>
+      <label>Camera speed <input id="sensitivity" type="range" min="0.25" max="3" step="0.05" value="1"> <span id="sensitivity-value">1.00</span></label>
+      <label><input id="invert" type="checkbox"> Invert up and down</label>
+    </fieldset>
+    <details>
+      <summary>Controls</summary>
+      <table>
+        <tr><th>Keyboard and mouse</th><th>In the game</th></tr>
+        <tr><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></td><td>Move</td></tr>
+        <tr><td>Mouse (click the picture to capture it, <kbd>Esc</kbd> releases)</td><td>Camera</td></tr>
+        <tr><td>Left button</td><td>Draw the weapon, attack</td></tr>
+        <tr><td>Right button</td><td>Second attack</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Evade, back</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>Dash; guard or charge with the weapon drawn</td></tr>
+        <tr><td><kbd>E</kbd></td><td>Use an item, sheathe</td></tr>
+        <tr><td><kbd>F</kbd> / <kbd>Enter</kbd></td><td>Talk, gather, confirm</td></tr>
+        <tr><td><kbd>Q</kbd></td><td>Camera behind the hunter; held, the item bar</td></tr>
+        <tr><td>Hold <kbd>Q</kbd>, left / right button</td><td>Previous / next item</td></tr>
+        <tr><td><kbd>Tab</kbd> / <kbd>M</kbd></td><td>Quest menu (item pouch, map, signal)</td></tr>
+        <tr><td><kbd>Esc</kbd> (mouse free)</td><td>Pause menu</td></tr>
+        <tr><td>Arrow keys</td><td>Menu cursor</td></tr>
+        <tr><td><kbd>Z</kbd> / <kbd>C</kbd></td><td>Classic ZL / ZR</td></tr>
+        <tr><td>Hold <kbd>Alt</kbd></td><td>Free the cursor: its left button is the Wii Remote's pointer</td></tr>
+        <tr><td><kbd>F2</kbd></td><td>Frame counter on or off</td></tr>
+      </table>
+      <p>A gamepad works as a Classic Controller: face buttons by position (east confirms and acts, south evades),
+        triggers as L/R, bumpers as ZL/ZR, Start for the pause menu, Back for the quest menu.</p>
+      <p>In the launcher: the mouse points at a row and a click selects it, the arrows on a row change its value, the
+        right button goes back, the wheel scrolls and the hints at the bottom are buttons. Keys: arrow keys or
+        <kbd>W</kbd> <kbd>S</kbd> move, <kbd>Enter</kbd> selects, <kbd>Space</kbd> goes back, left and right change a
+        value, <kbd>Q</kbd> / <kbd>Shift</kbd> page through lists, <kbd>E</kbd> edits a custom quest (a gamepad: east
+        selects, south goes back, north or west edits).</p>
+    </details>
     <button id="start" disabled>Start</button>
   </section>
   <div id="status"></div>

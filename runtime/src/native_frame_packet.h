@@ -94,8 +94,27 @@ void NoteNativeLoadingFrame();
 // summed since the start (gxm::repeated_vblanks), while the frames go through
 // the limit and so are each shown, in turn, at a VBlank of their own; or
 // nothing with the limit off, on a loading screen or a display that does not
-// count them (GL).
+// count them (GL). On the web, the browser's animation frames are the
+// VBlanks: the refreshes a packet stayed on screen for beyond its first.
 std::optional<int64_t> NativeFrameRepeatedVBlanks();
+
+// The display's refresh interval where it is not the VBlank's 59.94 Hz (the
+// web: the browser's animation frames, at the display's rate), 0 elsewhere
+// and while unknown: the length of NativeFrameRepeatedVBlanks' unit.
+uint64_t NativeFrameRefreshNs();
+#if defined(__EMSCRIPTEN__) && defined(MH3_DEVELOPMENT)
+// The web's pacing since the last call, as the Vita's display statistics:
+// packets shown, |time on screen - game time advanced| summed and largest,
+// how many stayed 1, 2, 3, 4 or more refreshes, and the refresh.
+struct NativeWebPacing {
+    uint64_t frames = 0, errorUs = 0;
+    uint32_t errorMaxUs = 0;
+    uint64_t refreshes[4]{};
+    double refreshMs = 0;
+};
+
+NativeWebPacing TakeNativeWebPacing();
+#endif
 void BeginNativeFramePacket(bool render);
 bool NativeFramePacketRecording();
 void CancelNativeFramePacket();

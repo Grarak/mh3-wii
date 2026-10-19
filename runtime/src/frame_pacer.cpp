@@ -127,7 +127,12 @@ struct Guest {
 // the catch-up fades out rather than stopping at once (a flat quarter retrace
 // showed as a speed drop when it ended), the part over 4 retraces at once.
 // Without a count from the display (the limit off, a loading screen, GL) the
-// step is the host time.
+// step is the host time. The web counts the browser's animation frames, at
+// the display's refresh rate (60, 120, 144 Hz...), and its steps are
+// refreshes: the game thread there starts a frame when the main thread's
+// animation frame finished an earlier one, so host times wobbled with the
+// animation frames' own lengths, and frames shown at an even rate moved the
+// picture by uneven amounts (a cutscene's camera stuttered).
 double DisplayStep(double hostTicks) {
     static std::optional<int64_t> seen;
     static double owed = 0.0;
@@ -144,7 +149,9 @@ double DisplayStep(double hostTicks) {
     const double excess = std::max(0.0, owed - 4.0);
     const double paid = excess + (owed - excess) / 8.0;
     owed -= paid;
-    return double(FrameLimitVBlanks()) + paid;
+    const uint64_t refresh = NativeFrameRefreshNs();
+    const double retraces = refresh ? double(refresh) / double(VideoRetracePeriodNs()) : 1.0;
+    return (double(FrameLimitVBlanks()) + paid) * retraces;
 }
 #endif
 } // namespace
@@ -262,9 +269,10 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     pacedTicks += stepTicks;
     ++pacedFrames;
 
-    // Input record/playback is indexed by game time in 30 Hz frames (2 retraces),
-    // so a recording replays in real time at any logic rate.
-    SetInputFrame(uint64_t(pacedTicks / 2));
+    // Input record/playback is indexed by game time in 30 Hz frames (2
+    // retraces), fractional, so a recording replays in real time at any
+    // logic rate and keeps changes closer together than a frame.
+    SetInputTime(pacedTicks / 2);
     FieldJumpFrame(uint64_t(pacedTicks / 2));
 #ifdef MH3_DEVELOPMENT
     // MH3_CAPTURE=ram=FIRST[,ram-frames=COUNT]: write MEM1 then MEM2 to

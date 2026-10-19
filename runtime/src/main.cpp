@@ -12,6 +12,7 @@
 #include "quest_catalog.h"
 #include "launcher_cheats.h"
 #include "guest_worker.h"
+#include "camera_mouse.h"
 #include "net/online.h"
 #include <algorithm>
 #include <chrono>
@@ -283,7 +284,7 @@ void StartQuestBoot(int argc, char** argv) {
         // --quest-monster NAME|ID: the quest's large monster replaced (any
         // monster in the arena pit: --quest 9004 --spawn 0,300,0);
         // --quest-small NAME|ID: its small monsters (a field area full:
-        // --quest 1028 --area 1; docs/monster-control.md).
+        // --quest 1028 --area 1).
         const auto monsterId = [](const std::string& name) {
             const auto names = QuestCatalog::MonsterNames();
             uint32_t chosen = 0;
@@ -488,7 +489,7 @@ int main(int argc, char** argv) {
         }
 #ifndef __vita__
         PrepareGameData(rom);
-#if defined(MH3_DEVELOPMENT) && defined(MH3_HAS_AURORA)
+#if (defined(MH3_DEVELOPMENT) || defined(__EMSCRIPTEN__)) && defined(MH3_HAS_AURORA)
         // The Vita launcher's menus, then the game as they start it. Its disc
         // directory is MH3_DISC_DIR as on the Vita: prepared game data, or a
         // directory with one disc image (prepared into its disc/).
@@ -657,9 +658,12 @@ int main(int argc, char** argv) {
         const uint32_t drawArea = workerArea - GuestWorker::kWorkAreaBytes;
         DrawThread::Thread().ReserveWorkArea(drawArea);
 
-        // Then the spawn lists of monsters a quest puts on maps they have no
-        // placement for (custom quests, --quest-monster).
-        const uint32_t mem2ArenaHi = drawArea - QuestPlacement::kBytes;
+        // Then the field camera's blended distance row (mouse look), and the
+        // spawn lists of monsters a quest puts on maps they have no placement
+        // for (custom quests, --quest-monster).
+        const uint32_t cameraRow = drawArea - CameraMouse::kRowBytes;
+        CameraMouse::ReserveRow(cameraRow);
+        const uint32_t mem2ArenaHi = cameraRow - QuestPlacement::kBytes;
         QuestPlacement::Apply(mem2ArenaHi);
         Memory::Write32(0x80003128, mem2ArenaHi);
         Memory::Write32(0x80003130, 0x935E0000);

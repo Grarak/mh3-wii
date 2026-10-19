@@ -4,6 +4,7 @@
 #include "gx_panic.h"
 #include "native_graphics.h"
 #include "msaa.h"
+#include "ssaa.h"
 #include "upscaling.h"
 #include "model_cull.h"
 #include "scene_cull.h"
@@ -32,6 +33,10 @@
 #include "gl/device.hpp"
 #include "gl/gl.hpp"
 #include "dolphin/vi/vi_internal.hpp"
+#ifdef __EMSCRIPTEN__
+#include "window.hpp"
+#include <SDL3/SDL.h>
+#endif
 #ifdef MH3_DEVELOPMENT
 #include "dev_options.h"
 #endif
@@ -41,6 +46,7 @@
 #include <atomic>
 #include <exception>
 #include <vector>
+#include <cmath>
 #include <cstring>
 #include <aurora/aurora.h>
 #include <aurora/generated_texture.hpp>
@@ -110,15 +116,39 @@ bool efbDirty = false;
 uint32_t efbMinX = 0, efbMinY = 0, efbMaxX = 0, efbMaxY = 0;
 bool displayWidescreen = false;
 bool upscaling = true;
-uint32_t msaa = 1;
+uint32_t msaa = 1, ssaa = 1;
 
-// Every host renders for the Vita's display; other hosts scale it into their window.
+// Every host renders for the Vita's display and scales it into its window,
+// unless the window's own size is asked for (not on the Vita):
+//   MH3_RESOLUTION=native: the target at the window's (the canvas's) pixel
+//     size, still 16:9 (or 4:3) in the middle of it;
+//   MH3_ASPECT=window: the picture takes the window's aspect (ultrawide): the
+//     game's camera aspect follows it (UpdateNativeCameraAspect) and its 2D
+//     layers stay 16:9 in the middle (native_render_state.cpp).
 constexpr uint32_t DisplayWidth = 960, DisplayHeight = 544;
 #ifdef __vita__
 static_assert(DisplayWidth == aurora::gxm::Device::Width && DisplayHeight == aurora::gxm::Device::Height);
 #endif
+bool nativeResolution = false, windowAspect = false;
+float cameraAspect = 0;
+
+bool EnvironmentIs(const char* name, const char* value) {
+#ifdef __vita__
+    (void)name;
+    (void)value;
+    return false;
+#else
+    const char* set = std::getenv(name);
+    return set && std::strcmp(set, value) == 0;
+#endif
+}
+
 AuroraNativeTargetAspect DisplayAspect(bool widescreen) {
-    return widescreen ? AURORA_NATIVE_TARGET_FILL : AURORA_NATIVE_TARGET_FIT;
+    if (!widescreen)
+        return AURORA_NATIVE_TARGET_FIT;
+
+    // A window's own surface is 16:9 only by chance: a 16:9 target in it.
+    return windowAspect || !nativeResolution ? AURORA_NATIVE_TARGET_FILL : AURORA_NATIVE_TARGET_ASPECT_16_9;
 }
 
 // The target's scale (VISetFrameBufferScale): 0 sizes it for the display
@@ -326,6 +356,10 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
         }
     }
 #endif
+#ifdef AURORA_WEBGPU
+    // No multisampling: the web build supersamples (InitializeNativeGraphics).
+    config.msaa = 1;
+#else
     // MH3_MSAA=2, 4 or off: the launcher's MSAA setting for runs started without it.
     uint32_t samples = msaa;
 #ifdef MH3_DEVELOPMENT
@@ -333,6 +367,7 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
         samples = std::strcmp(v, "4") == 0 ? 4 : std::strcmp(v, "2") == 0 ? 2 : 1;
 #endif
     config.msaa = samples;
+#endif
     config.maxTextureAnisotropy = 1;
     const auto info = aurora_initialize(argc, argv, &config);
 
@@ -434,7 +469,34 @@ void SubmitHostGraphicsTask(std::function<void()> task) {
 }
 
 float NativeWidescreenAspect() {
+    const auto& target = aurora::gpu::g_frameBuffer;
+
+    if (windowAspect && target.width && target.height)
+        return float(target.width) / float(target.height);
+
     return float(DisplayWidth) / float(DisplayHeight);
+}
+
+bool NativeWindowAspect() {
+    return windowAspect && displayWidescreen;
+}
+
+// MH3_ASPECT=window: the game's 16:9 camera aspect (its constant and the
+// screen record's copy) follows the target as the window resizes.
+void UpdateNativeCameraAspect() {
+    constexpr uint32_t kWideAspect = 0x80797F68, kScreenAspect = 0x8065B4BC + 0x0C;
+
+    if (!NativeWindowAspect())
+        return;
+
+    const float aspect = NativeWidescreenAspect();
+
+    if (std::fabs(aspect - cameraAspect) < 1e-4f)
+        return;
+
+    cameraAspect = aspect;
+    Memory::WriteFloat32(kWideAspect, aspect);
+    Memory::WriteFloat32(kScreenAspect, aspect);
 }
 
 bool PointOnPicture(float x, float y, float& pictureX, float& pictureY) {
@@ -442,6 +504,14 @@ bool PointOnPicture(float x, float y, float& pictureX, float& pictureY) {
 
     if (!aurora_present_rect(&rect))
         return false;
+
+    // A wider picture (MH3_ASPECT=window): the game's 2D layer, where its
+    // pointer lives, is the 16:9 middle of it.
+    if (NativeWindowAspect() && rect.width > rect.height * (854.f / 480.f)) {
+        const float layer = rect.height * (854.f / 480.f);
+        rect.left += (rect.width - layer) / 2;
+        rect.width = layer;
+    }
 
     pictureX = (x - rect.left) / rect.width;
     pictureY = (y - rect.top) / rect.height;
@@ -462,6 +532,14 @@ uint32_t MsaaSetting() {
 
 void SetMsaaSetting(uint32_t samples) {
     msaa = samples == 2 || samples == 4 ? samples : 1;
+}
+
+uint32_t SsaaSetting() {
+    return ssaa;
+}
+
+void SetSsaaSetting(uint32_t samples) {
+    ssaa = samples == 2 || samples == 4 ? samples : 1;
 }
 
 void SetNativeDisplayWidescreen(bool widescreen) {
@@ -488,12 +566,37 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
     if (!aurora_configure_native_target(width, height))
         MH3_THROW(std::runtime_error("Native graphics target has zero dimensions"));
 
-    aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
+    nativeResolution = EnvironmentIs("MH3_RESOLUTION", "native");
+    windowAspect = EnvironmentIs("MH3_ASPECT", "window");
+
+    if (nativeResolution || windowAspect)
+        aurora_set_native_surface_size(0, 0);
+    else
+        aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
+
     aurora_set_native_target_aspect(DisplayAspect(displayWidescreen));
     VISetFrameBufferScale(RenderScale());
+#ifdef AURORA_WEBGPU
+    // SSAA: the target at that many times the pixels (2: 1.41 times the width
+    // and height, 4: twice), which presentation filters down. Applied here,
+    // it follows the launcher's choice at the game's start; MH3_SSAA=2, 4 or
+    // off for runs started without it.
+    uint32_t samples = ssaa;
+#ifdef MH3_DEVELOPMENT
+    if (const char* v = std::getenv("MH3_SSAA"))
+        samples = std::strcmp(v, "4") == 0 ? 4 : std::strcmp(v, "2") == 0 ? 2 : 1;
+#endif
+    aurora_set_native_super_sample(std::sqrt(float(samples)));
+#endif
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv, load_native_assets);
+#ifdef __EMSCRIPTEN__
+    // MH3_WEB_FILL=1 (the page's option): the canvas takes the whole page and
+    // follows the browser window's size.
+    if (EnvironmentIs("MH3_WEB_FILL", "1"))
+        SDL_SetWindowFillDocument(aurora::window::get_sdl_window(), true);
+#endif
 
     if (!aurora::gl::on_render_thread())
         MH3_THROW(std::runtime_error("Native graphics initialized outside the game thread"));
@@ -808,6 +911,15 @@ void ReportHostSpeed([[maybe_unused]] double ticks, [[maybe_unused]] double nomi
                  residency.arena_used / 1048576.0, residency.arena_capacity / 1048576.0, residency.texture_bytes / 1048576.0, residency.textures, residency.pinned_textures,
                  residency.gpu_written_textures, residency.retired_texture_bytes / 1048576.0, residency.model_bytes / 1048576.0, residency.retired_model_bytes / 1048576.0,
                  residency.main_spill_bytes / 1048576.0, residency.phycont_spill_bytes / 1048576.0);
+#endif
+#ifdef __EMSCRIPTEN__
+    // The web's pacing, as the Vita's above: per packet shown, how much its
+    // time on screen differs from the game time it advanced.
+    if (const auto pacing = TakeNativeWebPacing(); pacing.frames)
+        std::fprintf(stderr, "MH3 native work: pacing error %.2f ms avg/%.2f max over %llu frames; shown 1/2/3/4+ refreshes %llu/%llu/%llu/%llu; refresh %.2f ms\n",
+                     double(pacing.errorUs) / (1000.0 * double(pacing.frames)), pacing.errorMaxUs / 1000.0, static_cast<unsigned long long>(pacing.frames),
+                     static_cast<unsigned long long>(pacing.refreshes[0]), static_cast<unsigned long long>(pacing.refreshes[1]),
+                     static_cast<unsigned long long>(pacing.refreshes[2]), static_cast<unsigned long long>(pacing.refreshes[3]), pacing.refreshMs);
 #endif
     NativeAudio::ReportNativeAudioStatistics(seconds);
     ReportDiscStatistics(seconds);

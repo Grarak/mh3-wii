@@ -63,8 +63,8 @@ if (AURORA_ENABLE_GX)
       target_link_libraries(aurora_core PUBLIC SceGxm_stub SceDisplay_stub SceCommonDialog_stub)
     elseif(AURORA_WEBGPU)
       # Emscripten's emdawnwebgpu port supplies webgpu/webgpu_cpp.h. The
-      # executable links the WGSL shader bank (cmake/WebShaderBank.cmake,
-      # docs/optimizations/platforms/web-build.md); GLES3/gl3.h, from Emscripten's sysroot, only
+      # executable links the WGSL shader bank (cmake/WebShaderBank.cmake);
+      # GLES3/gl3.h, from Emscripten's sysroot, only
       # provides the enum values of the renderer interface.
       target_compile_definitions(aurora_core PUBLIC AURORA_WEBGPU)
       target_sources(aurora_core PRIVATE lib/webgpu/gpu.cpp lib/webgpu/renderer.cpp lib/webgpu/shader_bank.cpp)

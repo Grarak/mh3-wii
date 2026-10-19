@@ -1,4 +1,4 @@
-// WebGPU shader bank sources (docs/optimizations/platforms/web-build.md): writes the GLSL ES of every
+// WebGPU shader bank sources: writes the GLSL ES of every
 // program stage the web build can ever bind, named by its runtime key, plus a
 // manifest. scripts/web-shader-bank.py converts them to WGSL and embeds the
 // result. Host tool; standard library and xxHash only.

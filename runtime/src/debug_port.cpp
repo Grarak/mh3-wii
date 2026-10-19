@@ -1,4 +1,4 @@
-// The debug port (development builds, docs/debug-port.md). A listener thread
+// The debug port (development builds). A listener thread
 // takes TCP connections on MH3_DEBUG_PORT and collects their lines; the game
 // thread runs them in order once a logic step (Step) and hands the answers
 // back to the listener, which writes them. A command that takes game time
@@ -277,7 +277,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press shot call cheat trace movie online (docs/debug-port.md)";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press shot call cheat trace movie online";
 
     if (word == "state")
         return State(s);
@@ -424,6 +424,18 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         s.until = GameStep::Elapsed() + ticks;
         s.steps = 0;
         return "";
+    }
+
+    if (word == "mouse") {
+        float dx = 0, dy = 0;
+        uint32_t frames = 1;
+
+        if (!(in >> dx >> dy))
+            return "error: mouse DX DY [FRAMES] (pixels of captured mouse motion, spread over FRAMES paced frames)";
+
+        in >> frames;
+        AddMouseMotion(dx, dy, frames);
+        return "ok";
     }
 
     if (word == "shot") {

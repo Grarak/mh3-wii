@@ -351,8 +351,13 @@ public static class RuntimeNativeGuestEffectAnalyzer
 
     private static bool TryExtractFunction(string source, string symbol, out FunctionDefinition definition)
     {
+        definition = null!;
+        var first = source.IndexOf(symbol, StringComparison.Ordinal);
+        if (first < 0)
+            return false;
+
         var regex = new Regex($@"(?:extern\s+\""C\""\s+)?(?<return>[A-Za-z_][A-Za-z0-9_:<>\s*&]*?)\b{Regex.Escape(symbol)}\s*\((?<args>[^)]*)\)\s*(?:noexcept\s*)?\{{", RegexOptions.CultureInvariant);
-        foreach (Match match in regex.Matches(source))
+        foreach (Match match in regex.Matches(source, ReturnTypeRunStart(source, first)))
         {
             var open = match.Index + match.Length - 1;
             var close = FindMatching(source, open, '{', '}');
@@ -366,8 +371,41 @@ public static class RuntimeNativeGuestEffectAnalyzer
                 context.Success ? context.Groups["name"].Value : string.Empty);
             return true;
         }
-        definition = null!;
         return false;
+    }
+
+    // Where a definition of the symbol at `first` (its first occurrence) can
+    // start: at the run of return-type characters in front of it, or at an
+    // `extern "C"` before that run. No match of the definition pattern starts
+    // earlier (a later occurrence's run starts at or after this one), so
+    // scanning from here finds the same matches as scanning the whole file
+    // without trying each earlier position, which made the index take most of
+    // a minute.
+    private static int ReturnTypeRunStart(string source, int first)
+    {
+        static bool InRun(char c) =>
+            char.IsAsciiLetterOrDigit(c) || c is '_' or ':' or '<' or '>' or '*' or '&' || char.IsWhiteSpace(c);
+
+        var start = first;
+        while (start > 0 && InRun(source[start - 1]))
+            --start;
+
+        // `extern "C"` and the white space between them.
+        var quote = start - 1;
+        if (quote < 2 || source[quote] != '"' || source[quote - 1] != 'C' || source[quote - 2] != '"')
+            return start;
+
+        var space = quote - 3;
+        var spaceEnd = space;
+        while (space >= 0 && char.IsWhiteSpace(source[space]))
+            --space;
+
+        const string keyword = "extern";
+        var keywordStart = space - keyword.Length + 1;
+        if (space == spaceEnd || keywordStart < 0 ||
+            string.CompareOrdinal(source, keywordStart, keyword, 0, keyword.Length) != 0)
+            return start;
+        return keywordStart;
     }
 
     private static GuestAbiContract CompleteContextContract(GuestCallBoundaryFlags extra = GuestCallBoundaryFlags.None) =>

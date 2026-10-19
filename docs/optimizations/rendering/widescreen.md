@@ -24,6 +24,28 @@ anamorphic: the TV stretches it back.
    (0x80797F68), because the display is 1.7647:1, not 1.7778:1. The HUD
    keeps its 854×480 layout, 0.8% narrower than square on 960×544.
 
+Outside the Vita two settings drop the 960×544 picture
+(`runtime/src/graphics_host.cpp`):
+
+- **`MH3_RESOLUTION=native`**: the target follows the window's (on the web
+  the canvas's) pixel size: the largest 16:9 (or 4:3) picture that fits,
+  centred. The per-axis scaling above takes any size.
+- **`MH3_ASPECT=window`** (ultrawide): the picture takes the window's
+  aspect. Once a frame the game's camera aspect (its constant 0x80797F68 and
+  the screen record's +0x0C copy) follows the target's, so the 3D view
+  widens instead of stretching. The 2D layer keeps its 854×480 aspect
+  (`runtime/src/native_render_state.cpp`): orthographic draws, and 3D drawn
+  in a viewport smaller than the screen (a menu's preview), land in a
+  16:9 box; the field HUD's parts put their box against an edge (the clock
+  and gauges left, the map, the item box and the quest menu right:
+  `kAnchors` in `hud_draw.cpp`, the draw state's `anchor`), the rest in the
+  middle. Text a part queues for the font flush keeps its part's edge (the
+  queue positions it appended, `native_ui.cpp`). A draw whose vertices
+  span the whole picture (a fade, a loading backdrop) fills the width
+  (`NativeWideDrawScope`), and a draw without a viewport of its own takes
+  the whole screen's instead of the backend's last one, which may be a
+  box. The pointer maps onto the middle box, where its cursor is drawn.
+
 ## Why
 
 The Vita's screen is 960×544; drawing the game's widescreen mode at that

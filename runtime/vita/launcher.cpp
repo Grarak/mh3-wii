@@ -15,6 +15,7 @@
 #include "upscaling.h"
 #include "frame_limit.h"
 #include "msaa.h"
+#include "ssaa.h"
 #include "language.h"
 #include "../src/net/online.h"
 #include <aurora/aurora.h>
@@ -31,7 +32,12 @@
 #else
 #include "controller_host.h"
 #include "../native/mh3_classic_map.h"
+#include <SDL3/SDL.h>
 #include <chrono>
+#include <cmath>
+#endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -232,13 +238,14 @@ uint32_t LiveButtons() {
     return held;
 #else
     // The host's controls as the game's Classic Controller (docs/vita-controls.md),
-    // its buttons by position on the Vita: B is Cross, A Circle, X Triangle,
-    // Y Square, Plus Start.
+    // its buttons by what they do in the game's menus: A (Enter, F) selects as
+    // Cross, B (Space, Backspace) goes back as Circle, X and Y (E) edit as
+    // Triangle. Plus (Esc) is left out: Esc confirming would surprise.
     const auto pad = ReadLiveController();
     static constexpr std::pair<uint16_t, uint32_t> map[] = {
-        {MH3_CL_UP, Button::Up},       {MH3_CL_DOWN, Button::Down},   {MH3_CL_LEFT, Button::Left},    {MH3_CL_RIGHT, Button::Right},
-        {MH3_CL_B, Button::Cross},     {MH3_CL_A, Button::Circle},    {MH3_CL_X, Button::Triangle},   {MH3_CL_Y, Button::Square},
-        {MH3_CL_PLUS, Button::Start},  {MH3_CL_MINUS, Button::Select}, {MH3_CL_L, Button::L2},        {MH3_CL_R, Button::R2}};
+        {MH3_CL_UP, Button::Up},      {MH3_CL_DOWN, Button::Down},    {MH3_CL_LEFT, Button::Left},  {MH3_CL_RIGHT, Button::Right},
+        {MH3_CL_A, Button::Cross},    {MH3_CL_B, Button::Circle},     {MH3_CL_X, Button::Triangle}, {MH3_CL_Y, Button::Triangle},
+        {MH3_CL_MINUS, Button::Select}, {MH3_CL_L, Button::L2},       {MH3_CL_R, Button::R2}};
     uint32_t held = 0;
 
     for (const auto& [classic, button] : map)
@@ -259,6 +266,83 @@ uint32_t LiveButtons() {
     return held;
 #endif
 }
+#ifndef __vita__
+// The mouse while the menus run (hosts): an SDL event watch collects its
+// moves, clicks and wheel on the launcher's screen, and a click no longer
+// captures it for the camera (SetMouseLook).
+struct MouseEvents {
+    bool moved = false, clicked = false, back = false;
+
+    // The last position on the screen (ScreenWidth x ScreenHeight), -1 off
+    // the picture.
+    float x = -1, y = -1;
+
+    // Wheel notches, up positive.
+    float wheel = 0;
+};
+
+std::mutex mouseLock;
+MouseEvents mouseEvents;
+
+// A window point in SDL's coordinates on the launcher's screen.
+bool OnScreen(SDL_WindowID id, float x, float y, float& screenX, float& screenY) {
+    SDL_Window* window = SDL_GetWindowFromID(id);
+    const float density = window ? SDL_GetWindowPixelDensity(window) : 1.f;
+    float pictureX, pictureY;
+
+    if (!PointOnPicture(x * density, y * density, pictureX, pictureY))
+        return false;
+
+    screenX = pictureX * ScreenWidth;
+    screenY = pictureY * ScreenHeight;
+    return true;
+}
+
+bool SDLCALL WatchMouse(void*, SDL_Event* event) {
+    std::lock_guard lock(mouseLock);
+    auto& mouse = mouseEvents;
+
+    if (event->type == SDL_EVENT_MOUSE_MOTION) {
+        if (!OnScreen(event->motion.windowID, event->motion.x, event->motion.y, mouse.x, mouse.y))
+            mouse.x = mouse.y = -1;
+
+        mouse.moved = true;
+    } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN && event->button.button == SDL_BUTTON_LEFT) {
+        if (OnScreen(event->button.windowID, event->button.x, event->button.y, mouse.x, mouse.y))
+            mouse.clicked = true;
+    } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN && event->button.button == SDL_BUTTON_RIGHT)
+        mouse.back = true;
+    else if (event->type == SDL_EVENT_MOUSE_WHEEL)
+        mouse.wheel += event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event->wheel.y : event->wheel.y;
+
+    return true;
+}
+
+// The events since the last call; whole wheel notches only (a touchpad's
+// fractions add up).
+MouseEvents TakeMouse() {
+    std::lock_guard lock(mouseLock);
+    MouseEvents taken = mouseEvents;
+    taken.wheel = std::trunc(mouseEvents.wheel);
+    mouseEvents.wheel -= taken.wheel;
+    mouseEvents.moved = mouseEvents.clicked = mouseEvents.back = false;
+    return taken;
+}
+
+// The menus' hold on the mouse, from the screen's start to the hand-off.
+struct MouseScope {
+    MouseScope() {
+        TakeMouse();
+        SDL_AddEventWatch(WatchMouse, nullptr);
+        SetMouseLook(false);
+    }
+
+    ~MouseScope() {
+        SDL_RemoveEventWatch(WatchMouse, nullptr);
+        SetMouseLook(true);
+    }
+};
+#endif
 
 // The last launcher frame; dialogs draw over it.
 std::vector<Rectangle> shown;
@@ -390,7 +474,7 @@ void Message(const std::string& text) {
         messageFont->Text(frame, 180, top + 24 + 26 * i, lines[i], ink, 600);
 
     Rect(frame, 180, top + height - 52, 600, 2, ink);
-    messageFont->Text(frame, 180, top + height - 42, "X OK", ink, 600);
+    messageFont->Text(frame, 180, top + height - 42, "Enter OK", ink, 600);
     const uint64_t opened = Microseconds();
 
     // Buttons held when it opens do not close it.
@@ -411,6 +495,10 @@ void Message(const std::string& text) {
 
         const uint32_t held = LiveButtons();
 
+        // Or either mouse button.
+        if (const auto mouse = TakeMouse(); mouse.clicked || mouse.back)
+            break;
+
         if (held & ~previous & (Button::Cross | Button::Circle | Button::Start))
             break;
 
@@ -418,12 +506,59 @@ void Message(const std::string& text) {
     }
 }
 
+#ifdef __EMSCRIPTEN__
+// The browser's text prompt, on the page's thread (which it holds until the
+// prompt closes): a name of up to `length` printable Latin characters.
+Status TypeName(std::string& name, const std::string& what, size_t length) {
+    const std::string title = "The " + what + " (at most " + std::to_string(length) + " characters)";
+    std::array<char, 256> typed{};
+    const int entered = MAIN_THREAD_EM_ASM_INT(
+        {
+            const text = prompt(UTF8ToString($0), UTF8ToString($1));
+
+            if (text === null)
+                return 0;
+
+            stringToUTF8(text, $2, $3);
+            return 1;
+        },
+        title.c_str(), name.c_str(), typed.data(), typed.size());
+
+    std::string key = what;
+    std::replace(key.begin(), key.end(), ' ', '-');
+
+    if (!entered) {
+        Log("%s prompt closed without a name", key.c_str());
+        return {};
+    }
+
+    std::string value = typed.data();
+
+    for (char c : value)
+        if (c < 32 || c > 126)
+            return Status::Error("Use printable Latin characters for " + what + "s");
+
+    // Leading and trailing spaces would make names that look the same.
+    value.erase(0, value.find_first_not_of(' '));
+    value.erase(value.find_last_not_of(' ') + 1);
+
+    if (value.size() > length)
+        return Status::Error("Use at most " + std::to_string(length) + " characters for " + what + "s");
+
+    if (!value.empty())
+        name = std::move(value);
+
+    Log("%s: %s", what.c_str(), name.c_str());
+    return {};
+}
+#else
 // No system keyboard on a development host: the name stays as it is.
 Status TypeName(const std::string& name, std::string what, size_t) {
     std::replace(what.begin(), what.end(), ' ', '-');
     Log("%s keyboard: the Vita's system keyboard; the host keeps \"%s\"", what.c_str(), name.c_str());
     return {};
 }
+#endif
 #endif
 class Input {
   public:
@@ -478,8 +613,88 @@ void Frame(std::vector<Rectangle>& rects) {
     }
 }
 
+// The rows' layout: the first visible row's top, the space between rows,
+// the rows' left edge and width.
 constexpr size_t VisibleRows = 7;
-void Draw(Font& font, const std::string& title, const std::vector<std::string>& rows, size_t selected, const std::string& detail, const std::string& footer) {
+constexpr float RowTop = 110, RowPitch = 43, RowLeft = 54, RowWidth = 848;
+#ifndef __vita__
+// The selected row's value arrows (a row that takes Left and Right): the
+// left one's left edge, where the right one starts.
+constexpr float ArrowsLeft = 826, ArrowsMiddle = 864;
+
+struct FooterPart {
+    std::string text;
+    uint32_t button; // 0: not a button
+};
+
+// A footer's parts (three spaces apart, each a button and what it does),
+// with the host's keys for the Vita's buttons (LiveButtons).
+std::vector<FooterPart> FooterParts(std::string_view footer) {
+    static constexpr struct {
+        std::string_view vita, host;
+        uint32_t button;
+    } keys[] = {{"X ", "Enter ", Button::Cross}, {"O ", "Space ", Button::Circle}, {"Triangle ", "E ", Button::Triangle}, {"D-pad ", "Arrows ", 0}, {"L / R ", "Q / Shift ", 0}};
+    std::vector<FooterPart> parts;
+
+    for (size_t at = 0; at < footer.size();) {
+        const size_t end = std::min(footer.find("   ", at), footer.size());
+        std::string_view part = footer.substr(at, end - at);
+        FooterPart host{std::string(part), 0};
+
+        for (const auto& key : keys)
+            if (part.starts_with(key.vita)) {
+                host = {std::string(key.host) + std::string(part.substr(key.vita.size())), key.button};
+                break;
+            }
+
+        parts.push_back(std::move(host));
+        at = end + 3;
+    }
+
+    return parts;
+}
+
+// The footer's buttons as drawn: where each starts and ends.
+struct FooterSpan {
+    float left, right;
+    uint32_t button;
+};
+
+std::vector<FooterSpan> footerSpans;
+
+// The visible row at a point of the screen, or `count` for none.
+size_t RowAt(float x, float y, size_t first, size_t count) {
+    const float top = RowTop - 2;
+
+    if (x < RowLeft || x > RowLeft + RowWidth || y < top)
+        return count;
+
+    const size_t slot = size_t((y - top) / RowPitch);
+
+    if (slot >= VisibleRows || y - top - slot * RowPitch > 36 || first + slot >= count)
+        return count;
+
+    return first + slot;
+}
+
+// The footer button at a point of the screen, or 0.
+uint32_t FooterButtonAt(float x, float y) {
+    if (y < 505 || y > 540)
+        return 0;
+
+    for (const auto& span : footerSpans)
+        if (x >= span.left && x <= span.right)
+            return span.button;
+
+    return 0;
+}
+#endif
+// `first` is the first visible row: on the Vita the selection is the last
+// visible row once the list scrolls; hosts scroll only to keep it in view,
+// so the row under the mouse stays put. `values`: the selected row takes
+// Left and Right (hosts draw arrows on it for the mouse).
+void Draw(Font& font, const std::string& title, const std::vector<std::string>& rows, size_t selected, size_t& first, const std::string& detail, const std::string& footer,
+          [[maybe_unused]] bool values) {
     auto& rects = shown;
     Frame(rects);
     Rect(rects, 42, 46, 876, 48, ink);
@@ -494,17 +709,29 @@ void Draw(Font& font, const std::string& title, const std::vector<std::string>& 
     if (!position.empty())
         font.Text(rects, 900 - font.Width(position), 58, position, light, positionWidth);
 
-    const size_t first = selected >= VisibleRows ? selected - (VisibleRows - 1) : 0;
+#ifdef __vita__
+    first = selected >= VisibleRows ? selected - (VisibleRows - 1) : 0;
+#else
+    first = std::min(std::clamp(first, selected >= VisibleRows ? selected - (VisibleRows - 1) : 0, selected), rows.size() > VisibleRows ? rows.size() - VisibleRows : 0);
+#endif
 
     for (size_t row = first; row < std::min(first + VisibleRows, rows.size()); ++row) {
-        const float y = 110 + (row - first) * 43;
+        const float y = RowTop + (row - first) * RowPitch;
+        float width = 810;
 
         if (row == selected) {
-            Rect(rects, 54, y - 2, 848, 36, ink);
-            Rect(rects, 54, y - 2, 6, 36, gold);
+            Rect(rects, RowLeft, y - 2, RowWidth, 36, ink);
+            Rect(rects, RowLeft, y - 2, 6, 36, gold);
+#ifndef __vita__
+            if (values) {
+                font.Text(rects, ArrowsLeft + 10, y + 4, "<", gold, 20);
+                font.Text(rects, ArrowsMiddle + 10, y + 4, ">", gold, 20);
+                width = ArrowsLeft - 72 - 10;
+            }
+#endif
         }
 
-        font.Text(rects, 72, y + 4, rows[row], row == selected ? gold : ink, 810);
+        font.Text(rects, 72, y + 4, rows[row], row == selected ? gold : ink, width);
     }
 
     // More rows above or below the visible ones.
@@ -520,7 +747,23 @@ void Draw(Font& font, const std::string& title, const std::vector<std::string>& 
     for (size_t i = 0; i < std::min<size_t>(lines.size(), 2); ++i)
         font.Text(rects, 64, 430 + 28 * i, lines[i], ink, 820);
 
+#ifdef __vita__
     font.Text(rects, 45, 513, footer, light, 890);
+#else
+    // Each part on its own, its button clickable (FooterButtonAt).
+    footerSpans.clear();
+    float x = 45;
+
+    for (const auto& part : FooterParts(footer)) {
+        const float width = font.Width(part.text);
+        font.Text(rects, x, 513, part.text, light, std::max(0.f, 935 - x));
+
+        if (part.button)
+            footerSpans.push_back({x, x + width, part.button});
+
+        x += width + font.Width("   ");
+    }
+#endif
     PresentScreen(&rects);
     Wait(8000);
 }
@@ -673,6 +916,59 @@ const char* OnOff(bool on) {
     return on ? "ON" : "OFF";
 }
 
+// The main menu's rows. The web build connects nowhere: it leaves out the
+// City and the online settings (the online quests, played offline, stay).
+// Its WebGPU renderer supersamples instead of multisampling.
+enum class Item { Start, Village, City, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Language, Online };
+
+constexpr Item MainItems[]{Item::Start,
+                           Item::Village,
+#ifndef __EMSCRIPTEN__
+                           Item::City,
+#endif
+                           Item::Quests,
+                           Item::Create,
+                           Item::Cheats,
+                           Item::Widescreen,
+                           Item::Upscaling,
+                           Item::FrameLimit,
+#ifdef __EMSCRIPTEN__
+                           Item::Ssaa,
+#else
+                           Item::Msaa,
+#endif
+                           Item::Language,
+#ifndef __EMSCRIPTEN__
+                           Item::Online
+#endif
+};
+
+size_t MainRow(Item item) {
+    return size_t(std::find(std::begin(MainItems), std::end(MainItems), item) - std::begin(MainItems));
+}
+
+// The Framelimit row's choices, in order: the Vita's VBlank modes and off;
+// the web adds caps at common PC rates and a typed one (the last).
+constexpr FrameLimit CustomFrameCap{FrameLimitMode::Cap, 0};
+#ifdef __EMSCRIPTEN__
+constexpr FrameLimit FrameLimits[]{{FrameLimitMode::VSync},     {FrameLimitMode::HalfVSync}, {FrameLimitMode::Cap, 30},  {FrameLimitMode::Cap, 60},
+                                   {FrameLimitMode::Cap, 120},  {FrameLimitMode::Cap, 144},  {FrameLimitMode::Cap, 165}, {FrameLimitMode::Cap, 240},
+                                   {FrameLimitMode::Off},       CustomFrameCap};
+#else
+constexpr FrameLimit FrameLimits[]{{FrameLimitMode::VSync}, {FrameLimitMode::HalfVSync}, {FrameLimitMode::Off}};
+#endif
+
+// A limit's choice: the typed cap's for a cap among none of them (the first
+// where there is none).
+size_t FrameLimitChoice(FrameLimit limit) {
+    const auto found = std::find(std::begin(FrameLimits), std::end(FrameLimits), limit);
+
+    if (found != std::end(FrameLimits))
+        return size_t(found - std::begin(FrameLimits));
+
+    return limit.mode == FrameLimitMode::Cap && std::end(FrameLimits)[-1] == CustomFrameCap ? std::size(FrameLimits) - 1 : 0;
+}
+
 // The cheats of a group, in table order.
 std::vector<size_t> GroupCheats(std::string_view group) {
     std::vector<size_t> list;
@@ -734,15 +1030,22 @@ void LoadSettings(const std::filesystem::path& base) {
             continue;
         }
 
-        // Saved as 60, 30 or off (on from before the 30 mode: 60).
+        // vsync, half, off or cap:N (60 and 30 from before the caps).
         if (key == "framelimit") {
-            SetFrameLimitSetting(value == "off" ? 0 : value == "30" ? 30 : 60);
+            if (const auto limit = ParseFrameLimit(value))
+                SetFrameLimitSetting(*limit);
+
             continue;
         }
 
         // Saved as off, 2x or 4x (on from before the 2x mode: 4x).
         if (key == "msaa") {
             SetMsaaSetting(value == "2x" ? 2 : value == "4x" || value == "on" ? 4 : 1);
+            continue;
+        }
+
+        if (key == "ssaa") {
+            SetSsaaSetting(value == "2x" ? 2 : value == "4x" ? 4 : 1);
             continue;
         }
 
@@ -772,8 +1075,12 @@ Status SaveSettings(const std::filesystem::path& base) {
     {
         std::ofstream file(temporary, std::ios::trunc);
         const auto onOff = [](bool on) { return on ? "on" : "off"; };
-        file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << (FrameLimitSetting() ? std::to_string(FrameLimitSetting()) : "off")
+        file << "widescreen=" << onOff(WidescreenSetting().value_or(true)) << "\nupscaling=" << onOff(UpscalingSetting()) << "\nframelimit=" << FrameLimitText(FrameLimitSetting())
+#ifdef __EMSCRIPTEN__
+             << "\nssaa=" << (SsaaSetting() == 1 ? "off" : SsaaSetting() == 2 ? "2x" : "4x")
+#else
              << "\nmsaa=" << (MsaaSetting() == 1 ? "off" : MsaaSetting() == 2 ? "2x" : "4x")
+#endif
              << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
         file.close();
 
@@ -791,6 +1098,9 @@ Status SaveSettings(const std::filesystem::path& base) {
 // the launcher no longer draws: nothing fails from there on.
 Status Menu(std::unique_ptr<Font>& font, bool& started) {
     StartScreen();
+#ifndef __vita__
+    MouseScope mouseScope;
+#endif
 
     // The empty page: messages before the menu (kubridge, game data) draw over it.
     Frame(shown);
@@ -838,7 +1148,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     const char* userDirectory = std::getenv("MH3_USER_DIR");
     const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
     Page page = Page::Main;
-    size_t selected = 0;
+    size_t selected = 0, first = 0;
 
     // Where the hunter selection leads: Quests, or a start in the village or the City.
     enum class Then { Quests, Village, City } then = Then::Quests;
@@ -850,8 +1160,11 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
     // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
-    uint32_t frameLimit = FrameLimitSetting();
-    uint32_t msaa = MsaaSetting();
+    FrameLimit frameLimit = FrameLimitSetting();
+    uint32_t msaa = MsaaSetting(), ssaa = SsaaSetting();
+
+    // The web's typed cap, while another limit is chosen.
+    uint32_t customFps = FrameLimitChoice(frameLimit) == std::size(FrameLimits) - 1 && frameLimit.mode == FrameLimitMode::Cap ? frameLimit.fps : 90;
     std::string onlineServer = OnlineServerSetting();
     bool skipTls = SkipTlsSetting();
 
@@ -912,7 +1225,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     Input input;
     const auto enter = [&](Page next) {
         page = next;
-        selected = 0;
+        selected = first = 0;
         Log("page %s", PageName(next));
     };
 
@@ -935,40 +1248,97 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         std::string title, detail, footer = "X Select   O Back   D-pad Move";
         std::vector<std::string> rows;
 
+        // The selected row takes Left and Right.
+        bool values = false;
+
         switch (page) {
         case Page::Main: {
             title = "Main menu";
-            rows = {"Start game",
-                    "Village",
-                    "City (online)",
-                    "Quests",
-                    "Create custom quest",
-                    "Cheats",
-                    std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
-                    std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
-                    "Framelimit: " + (frameLimit ? std::to_string(frameLimit) + " FPS" : std::string("OFF")),
-                    std::string("MSAA: ") + (msaa == 1 ? "OFF" : msaa == 2 ? "2x" : "4x"),
-                    std::string("Language: ") + languages[language].name,
-                    "Online settings: " + onlineServer + (skipTls ? " (no TLS)" : "")};
             const std::string cheats = ActiveCheats();
-            const std::string details[] = {"Continue through the game's title and character selection." + cheats,
-                                           "Straight into Moga Village with an existing hunter, past the title." + cheats,
-                                           "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." +
-                                               (LauncherCheats::EnabledCount() ? " Online play is blocked while cheats are on." : "") + cheats,
-                                           "Start a quest directly with an existing hunter." + cheats,
-                                           "Make a hunt or capture quest of your own: a map and one or two large monsters.",
-                                           "Gameplay toggles for this launch." + cheats,
-                                           widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display.",
-                                           upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work.",
-                                           frameLimit == 60   ? "60 fps: the game waits for each frame to be drawn before the next, and every frame is shown."
-                                           : frameLimit == 30 ? "30 fps: every frame stays on screen for two refreshes: steadier motion where the game cannot hold 60."
-                                                              : "The game runs ahead of drawing; frames it outruns are dropped and motion can judder.",
-                                           msaa == 1   ? "No antialiasing. MSAA smooths edges but can reduce performance: about 5% fewer fps at 2x and 15% at 4x in big fights."
-                                           : msaa == 2 ? "2x multisample antialiasing: smoother edges. Can reduce performance: about 5% fewer fps in big fights (4x: about 15%)."
-                                                       : "4x multisample antialiasing: the smoothest edges. Can reduce performance: about 15% fewer fps in big fights (2x: about 5%).",
-                                           "The game's text, menus and keyboard: English, French, German, Italian or Spanish.",
-                                           "The server the game's City mode connects to."};
-            detail = details[std::min<size_t>(selected, 11)];
+            const auto samples = [](uint32_t n) { return n == 1 ? "OFF" : n == 2 ? "2x" : "4x"; };
+
+            // An item's row and what it does.
+            const auto describe = [&](Item item) -> std::pair<std::string, std::string> {
+                switch (item) {
+                case Item::Start:
+                    return {"Start game", "Continue through the game's title and character selection." + cheats};
+                case Item::Village:
+                    return {"Village", "Straight into Moga Village with an existing hunter, past the title." + cheats};
+                case Item::City:
+                    return {"City (online)", "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." +
+                                                 (LauncherCheats::EnabledCount() ? " Online play is blocked while cheats are on." : "") + cheats};
+                case Item::Quests:
+                    return {"Quests", "Start a quest directly with an existing hunter." + cheats};
+                case Item::Create:
+                    return {"Create custom quest", "Make a hunt or capture quest of your own: a map and one or two large monsters."};
+                case Item::Cheats:
+                    return {"Cheats", "Gameplay toggles for this launch." + cheats};
+                case Item::Widescreen:
+                    return {std::string("Widescreen: ") + (widescreen ? "ON (16:9)" : "OFF (4:3)"),
+                            widescreen ? "The game's own 16:9 mode on the whole display." : "4:3, with bars at the sides of the display."};
+                case Item::Upscaling:
+#ifdef __vita__
+                    return {std::string("Upscaling: ") + (upscaling ? "ON (544 lines)" : "OFF (448 lines)"),
+#else
+                    return {std::string("Upscaling: ") + (upscaling ? "ON" : "OFF (448 lines)"),
+#endif
+                            upscaling ? "Renders at the display's full resolution." : "Renders the Wii's 448 lines and scales them to the display: less GPU work."};
+                case Item::FrameLimit: {
+                    const std::string fps = std::to_string(frameLimit.fps) + " FPS";
+#ifdef __EMSCRIPTEN__
+                    // The browser shows frames at the display's refresh rate.
+                    switch (frameLimit.mode) {
+                    case FrameLimitMode::VSync:
+                        return {"Framelimit: VSync", "A frame for each refresh of the display (60, 120, 144 Hz...): every frame is shown, motion is even."};
+                    case FrameLimitMode::HalfVSync:
+                        return {"Framelimit: Half VSync", "A frame for every second refresh of the display: steadier motion where the game cannot keep up with it."};
+                    case FrameLimitMode::Cap:
+                        if (FrameLimits[FrameLimitChoice(frameLimit)] == CustomFrameCap)
+                            return {"Framelimit: Custom (" + fps + ")", "At most this many frames a second (Enter types it); the display shows the newest at each refresh."};
+
+                        return {"Framelimit: " + fps, "At most " + fps + "; the display shows the newest frame at each refresh, so off its rate motion can judder."};
+                    case FrameLimitMode::Off:
+                        return {"Framelimit: Unlimited", "As many frames as the game makes; the display shows the newest at each refresh, and motion can judder."};
+                    }
+#else
+                    switch (frameLimit.mode) {
+                    case FrameLimitMode::VSync:
+                        return {"Framelimit: 60 FPS", "60 fps: the game waits for each frame to be drawn before the next, and every frame is shown."};
+                    case FrameLimitMode::HalfVSync:
+                        return {"Framelimit: 30 FPS", "30 fps: every frame stays on screen for two refreshes: steadier motion where the game cannot hold 60."};
+                    case FrameLimitMode::Cap:
+                        return {"Framelimit: " + fps, "At most " + fps + " (MH3_FRAME_LIMIT); frames the display outruns are dropped."};
+                    case FrameLimitMode::Off:
+                        return {"Framelimit: OFF", "The game runs ahead of drawing; frames it outruns are dropped and motion can judder."};
+                    }
+#endif
+                    return {};
+                }
+                case Item::Msaa:
+                    return {std::string("MSAA: ") + samples(msaa),
+                            msaa == 1   ? "No antialiasing. MSAA smooths edges but can reduce performance: about 5% fewer fps at 2x and 15% at 4x in big fights."
+                            : msaa == 2 ? "2x multisample antialiasing: smoother edges. Can reduce performance: about 5% fewer fps in big fights (4x: about 15%)."
+                                        : "4x multisample antialiasing: the smoothest edges. Can reduce performance: about 15% fewer fps in big fights (2x: about 5%)."};
+                case Item::Ssaa:
+                    return {std::string("SSAA: ") + samples(ssaa),
+                            ssaa == 1   ? "No antialiasing. SSAA renders more pixels and filters them down: smoother edges and textures, at 2x or 4x the GPU work."
+                            : ssaa == 2 ? "2x supersampling: 1.41 times the width and height, filtered down. About twice the GPU work."
+                                        : "4x supersampling: twice the width and height, filtered down: the smoothest picture. About four times the GPU work."};
+                case Item::Language:
+                    return {std::string("Language: ") + languages[language].name, "The game's text, menus and keyboard: English, French, German, Italian or Spanish."};
+                case Item::Online:
+                    return {"Online settings: " + onlineServer + (skipTls ? " (no TLS)" : ""), "The server the game's City mode connects to."};
+                }
+
+                return {};
+            };
+
+            for (const Item item : MainItems)
+                rows.push_back(describe(item).first);
+
+            const Item item = MainItems[std::min(selected, std::size(MainItems) - 1)];
+            detail = describe(item).second;
+            values = item == Item::FrameLimit || item == Item::Msaa || item == Item::Ssaa || item == Item::Language;
             footer = "X Select   D-pad Move";
             break;
         }
@@ -1050,6 +1420,8 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             const char* details[] = {
 #ifdef __vita__
                 "X opens the keyboard.",
+#elif defined(__EMSCRIPTEN__)
+                "Enter opens the browser's text prompt.",
 #else
                 "The keyboard is the Vita's; the host keeps the name.",
 #endif
@@ -1065,6 +1437,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 edit.storageKey.empty() ? "Saves a new custom quest." : "Saves the changes to this custom quest."};
             const size_t row = std::min<size_t>(selected, 10);
             detail = details[row];
+            values = row >= 1 && row <= 9;
             footer = row == 0 ? "X Keyboard   O Back   D-pad Move" : row == 10 ? "X Save   O Back   D-pad Move" : "Left / Right Change   O Back   D-pad Move";
             break;
         }
@@ -1110,6 +1483,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
             const size_t cheat = groupCheats[std::min(selected, groupCheats.size() - 1)];
             detail = cheats[cheat].detail;
+            values = LauncherCheats::Choices(cheat) || LauncherCheats::TextLength(cheat);
             footer = LauncherCheats::Choices(cheat) ? "X Toggle   Left / Right Value   O Back   L / R Page"
                      : LauncherCheats::TextLength(cheat) ? "X Toggle   Left / Right Type the name   O Back   L / R Page"
                                                          : "X Toggle   O Back   D-pad Move   L / R Page";
@@ -1121,8 +1495,32 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             rows = {"No quests available"};
 
         selected = std::min(selected, rows.size() - 1);
-        Draw(*font, title, rows, selected, detail, footer);
-        const uint32_t buttons = input.Read();
+        Draw(*font, title, rows, selected, first, detail, footer, values);
+        uint32_t buttons = input.Read();
+#ifndef __vita__
+        // The mouse: the row under it is selected as it moves, a click
+        // accepts it (on the selected row's arrows: changes its value) or
+        // presses a footer button, the right button goes back and the wheel
+        // moves through the rows.
+        const auto mouse = TakeMouse();
+        const size_t pointed = RowAt(mouse.x, mouse.y, first, rows.size());
+
+        if (mouse.clicked && pointed == selected && values && mouse.x >= ArrowsLeft)
+            buttons |= mouse.x < ArrowsMiddle ? Button::Left : Button::Right;
+        else if (mouse.clicked && pointed < rows.size()) {
+            selected = pointed;
+            buttons |= Button::Cross;
+        } else if (mouse.clicked)
+            buttons |= FooterButtonAt(mouse.x, mouse.y);
+        else if (mouse.moved && pointed < rows.size())
+            selected = pointed;
+
+        if (mouse.back)
+            buttons |= Button::Circle;
+
+        if (mouse.wheel)
+            selected = size_t(std::clamp<long>(long(selected) - long(mouse.wheel), 0, long(rows.size()) - 1));
+#endif
 
         if (buttons & Button::Up)
             selected = (selected + rows.size() - 1) % rows.size();
@@ -1151,17 +1549,17 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 if (editorParent == Page::Custom)
                     MH3_RETURN_IF_ERROR(LoadCustomQuests(user, custom));
                 else
-                    selected = 4;
+                    selected = MainRow(Item::Create);
 
                 break;
             case Page::Saves:
             case Page::Categories:
                 enter(Page::Main);
-                selected = then == Then::Village ? 1 : then == Then::City ? 2 : 3;
+                selected = MainRow(then == Then::Village ? Item::Village : then == Then::City ? Item::City : Item::Quests);
                 break;
             case Page::Cheats:
                 enter(Page::Main);
-                selected = 5;
+                selected = MainRow(Item::Cheats);
                 break;
             case Page::CheatList:
                 enter(Page::Cheats);
@@ -1169,7 +1567,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 break;
             case Page::Online:
                 enter(Page::Main);
-                selected = 10;
+                selected = MainRow(Item::Online);
                 break;
             case Page::Main:
                 break;
@@ -1182,6 +1580,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         const auto act = [&]() -> Status {
             const bool accept = buttons & (Button::Cross | Button::Start);
             const int direction = (buttons & Button::Left) ? -1 : (buttons & Button::Right) ? 1 : 0;
+            const auto onMain = [&](Item item) { return page == Page::Main && MainItems[selected] == item; };
 
             if (page == Page::Editor && (direction || accept)) {
                 if (selected == 0 && accept)
@@ -1284,7 +1683,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                         enter(Page::Custom);
                     } else {
                         enter(Page::Main);
-                        selected = 4;
+                        selected = MainRow(Item::Create);
                     }
                 }
 
@@ -1318,25 +1717,45 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
             }
 
-            if (page == Page::Main && selected == 8 && (accept || direction)) {
-                constexpr uint32_t limits[] = {60, 30, 0};
-                const int index = frameLimit == 60 ? 0 : frameLimit == 30 ? 1 : 2;
-                frameLimit = limits[(index + 3 + (direction ? direction : 1)) % 3];
+            if (onMain(Item::FrameLimit) && (accept || direction)) {
+                const size_t count = std::size(FrameLimits), index = FrameLimitChoice(frameLimit);
+                FrameLimit next = FrameLimits[(index + count + (direction ? direction : 1)) % count];
+
+                // Enter on the typed cap types another.
+                if (FrameLimits[index] == CustomFrameCap && !direction) {
+                    std::string typed = std::to_string(customFps);
+                    MH3_RETURN_IF_ERROR(TypeName(typed, "frame limit in frames a second", 4));
+                    const auto limit = ParseFrameLimit("cap:" + typed);
+
+                    if (!limit)
+                        return Status::Error("The frame limit is a number of frames a second from " + std::to_string(MinFrameCap) + " to " + std::to_string(MaxFrameCap));
+
+                    customFps = limit->fps;
+                    next = CustomFrameCap;
+                }
+
+                frameLimit = next == CustomFrameCap ? FrameLimit{FrameLimitMode::Cap, customFps} : next;
                 SetFrameLimitSetting(frameLimit);
-                Log("framelimit %u", unsigned(frameLimit));
+                Log("framelimit %s", FrameLimitText(frameLimit).c_str());
                 return SaveSettings(base);
             }
 
-            if (page == Page::Main && selected == 9 && (accept || direction)) {
+            if ((onMain(Item::Msaa) || onMain(Item::Ssaa)) && (accept || direction)) {
                 constexpr uint32_t modes[] = {1, 2, 4};
-                const int index = msaa == 1 ? 0 : msaa == 2 ? 1 : 2;
-                msaa = modes[(index + 3 + (direction ? direction : 1)) % 3];
-                SetMsaaSetting(msaa);
-                Log("msaa %ux", unsigned(msaa));
+                uint32_t& samples = onMain(Item::Msaa) ? msaa : ssaa;
+                const int index = samples == 1 ? 0 : samples == 2 ? 1 : 2;
+                samples = modes[(index + 3 + (direction ? direction : 1)) % 3];
+
+                if (onMain(Item::Msaa))
+                    SetMsaaSetting(samples);
+                else
+                    SetSsaaSetting(samples);
+
+                Log("%s %ux", onMain(Item::Msaa) ? "msaa" : "ssaa", unsigned(samples));
                 return SaveSettings(base);
             }
 
-            if (page == Page::Main && selected == 10 && (accept || direction)) {
+            if (onMain(Item::Language) && (accept || direction)) {
                 language = (language + languages.size() + (direction ? direction : 1)) % languages.size();
                 SetLanguageSetting(languages[language].system);
                 Log("language %s", languages[language].code);
@@ -1362,19 +1781,26 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 return {};
 
             switch (page) {
-            case Page::Main:
-                if (selected == 0) {
+            case Page::Main: {
+                const Item item = MainItems[selected];
+
+                if (item == Item::Start) {
                     start("title screen");
                     return {};
                 }
 
-                if (selected >= 1 && selected <= 3) {
-                    then = selected == 1 ? Then::Village : selected == 2 ? Then::City : Then::Quests;
+                if (item == Item::Village || item == Item::City || item == Item::Quests) {
+                    then = item == Item::Village ? Then::Village : item == Item::City ? Then::City : Then::Quests;
                     saves = ProbeSaves(user);
 
                     if (saves.empty()) {
+#ifdef __EMSCRIPTEN__
+                        Message("No hunter save was found. Village and Quests need an existing character: choose Start game and create one through the game's own "
+                                "screens, or reload the page and import your Monster Hunter Tri save there.");
+#else
                         Message("No hunter save was found. Village, City and Quests need an existing character: choose Start game and create one through the game's own "
                                 "screens, or copy your Monster Hunter Tri save.");
+#endif
                         break;
                     }
 
@@ -1388,7 +1814,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                         startMode();
                         return {};
                     }
-                } else if (selected == 4) {
+                } else if (item == Item::Create) {
                     edit = {};
                     edit.map = 1;
                     edit.monsters = {ScratchMonsters(1).front(), 0, 0};
@@ -1398,23 +1824,24 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     SetScratchCarrier(edit);
                     editorParent = Page::Main;
                     enter(Page::Editor);
-                } else if (selected == 5)
+                } else if (item == Item::Cheats)
                     enter(Page::Cheats);
-                else if (selected == 6) {
+                else if (item == Item::Widescreen) {
                     widescreen = !widescreen;
                     SetWidescreenSetting(widescreen);
                     Log("widescreen %s", widescreen ? "on" : "off");
-                } else if (selected == 7) {
+                } else if (item == Item::Upscaling) {
                     upscaling = !upscaling;
                     SetUpscalingSetting(upscaling);
                     Log("upscaling %s", upscaling ? "on" : "off");
-                } else
+                } else if (item == Item::Online)
                     enter(Page::Online);
 
-                if (selected >= 6 && selected <= 7)
+                if (item == Item::Widescreen || item == Item::Upscaling)
                     return SaveSettings(base);
 
                 break;
+            }
             case Page::Saves:
                 save = saves[selected];
 

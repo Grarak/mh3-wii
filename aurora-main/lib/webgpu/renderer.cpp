@@ -1,6 +1,5 @@
-// The renderer interface (gl/gl.hpp) on WebGPU, for the web build
-// (docs/optimizations/platforms/web-build.md). The GLES backend's immediate state model maps onto
-// WebGPU as follows:
+// The renderer interface (gl/gl.hpp) on WebGPU, for the web build. The GLES
+// backend's immediate state model maps onto WebGPU as follows:
 //
 // - State calls only record state. A draw opens the target's render pass on
 //   first use (a clear before it becomes the pass's load operation), finds or
@@ -63,6 +62,18 @@ Module Log("aurora::gl");
   std::fprintf(stderr, "Aurora WebGPU renderer: %s\n", message);
   std::fflush(stderr);
   std::abort();
+}
+
+// AURORA_WEBGPU_TRACE=1 logs each queue write of 256 KiB or more: what the
+// browser was handed before it dropped a device.
+void trace_write(const char* what, size_t bytes) {
+  static const bool enabled = [] {
+    const char* value = std::getenv("AURORA_WEBGPU_TRACE");
+    return value && std::strcmp(value, "1") == 0;
+  }();
+
+  if (enabled && bytes >= (256u << 10))
+    std::fprintf(stderr, "Aurora WebGPU write: %s %zu KiB\n", what, bytes >> 10);
 }
 
 // An entry point's failure stops the program. Without exceptions (release
@@ -331,14 +342,20 @@ public:
   void flush() {
     end_pass();
 
-    if (uniformCursor)
+    if (uniformCursor) {
+      trace_write("uniform staging", uniformCursor);
       g_queue.WriteBuffer(uniformBuffer, 0, uniformStaging.data(), (uniformCursor + 3) & ~3u);
+    }
 
-    if (vertexCursor)
+    if (vertexCursor) {
+      trace_write("vertex staging", vertexCursor);
       g_queue.WriteBuffer(vertexBuffer, 0, vertexStaging.data(), (vertexCursor + 3) & ~3u);
+    }
 
-    if (indexCursor)
+    if (indexCursor) {
+      trace_write("index staging", indexCursor);
       g_queue.WriteBuffer(indexBuffer, 0, indexStaging.data(), (indexCursor + 3) & ~3u);
+    }
 
     const auto commands = encoder.Finish();
     g_queue.Submit(1, &commands);
@@ -1341,6 +1358,7 @@ void upload_now(Renderer& r, const Texture& handle, uint32_t mip, uint32_t x, ui
   wgpu::TexelCopyTextureInfo destination{.texture = entry.texture, .mipLevel = mip, .origin = {x, y, 0}};
   wgpu::TexelCopyBufferLayout layout{.offset = 0, .bytesPerRow = rowBytes, .rowsPerImage = height};
   const wgpu::Extent3D size{width, height, 1};
+  trace_write("texture", size_t(rowBytes) * height);
   g_queue.WriteTexture(&destination, source, size_t(rowBytes) * height, &layout, &size);
 }
 } // namespace
@@ -1371,6 +1389,7 @@ void NativeMeshBuffer::create(const char* path, uint64_t offset, const void* pay
     descriptor.usage = wgpu::BufferUsage::Vertex | wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst;
     descriptor.size = (bytes + 3) & ~3u;
     auto buffer = g_device.CreateBuffer(&descriptor);
+    trace_write("model pack", descriptor.size);
     g_queue.WriteBuffer(buffer, 0, data.get(), descriptor.size);
     m_buffer = r.name();
     r.meshes.emplace(m_buffer, std::move(buffer));
@@ -1502,7 +1521,7 @@ void call(Task task) noexcept {
 
 // The browser paces requestAnimationFrame to the frames the GPU completes.
 // Queue completion cannot stand in: with a canvas texture in flight, headless
-// Chromium rejects onSubmittedWorkDone (docs/optimizations/platforms/web-build.md).
+// Chromium rejects onSubmittedWorkDone.
 bool gpu_frame_pending() noexcept {
   return false;
 }

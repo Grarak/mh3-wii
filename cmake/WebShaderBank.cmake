@@ -1,4 +1,4 @@
-# The WebGPU shader bank (docs/optimizations/platforms/web-build.md): every program the web build can
+# The WebGPU shader bank: every program the web build can
 # bind, converted from its GLSL ES source to WGSL at build time and embedded.
 #
 #   mh3_web_shader_bank(TARGET XXHASH_DIR)

@@ -11,6 +11,7 @@
 // MH3_PORT_CHECK=FieldHudDraw checks the port.
 #include "abi_bridge.h"
 #include "frame_split.h"
+#include "native_graphics.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
@@ -72,12 +73,20 @@ constexpr const char* kPartNames[Parts] = {"802E5718", "802DFF20", "802EC764", "
 double partMs[Parts];
 #endif
 
+// Where each part sits on a target wider than 16:9 (MH3_ASPECT=window): 0
+// the middle, 1 the left edge (the clock and the gauges, drawn from x -0.92 to
+// 0.38 of the 16:9 layer), 2 the right edge (the map, the item box and its
+// alternatives, from 0.45 to 0.96, and the quest menu).
+constexpr uint32_t kAnchors[Parts] = {0, 1, 1, 1, 1, 1, 2, 0, 2, 2, 2, 2, 2, 0, 0, 2, 0};
+
 uint32_t Timed(GuestCall& call, Part part, uint32_t function, std::initializer_list<uint32_t> arguments = {}) {
 #ifdef MH3_DEVELOPMENT
     const bool timed = mh3SplitDetail;
     const auto start = timed ? MH3SplitClock::now() : MH3SplitClock::time_point{};
 #endif
+    BeginNativeHudPart(kAnchors[part]);
     const uint32_t result = arguments.size() ? call(function, arguments) : call(function);
+    EndNativeHudPart();
 #ifdef MH3_DEVELOPMENT
     if (timed)
         partMs[part] += std::chrono::duration<double, std::milli>(MH3SplitClock::now() - start).count();

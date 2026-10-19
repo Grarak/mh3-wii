@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the web build (docs/optimizations/platforms/web-build.md) on localhost.
+"""Serve the web build on localhost.
 
     scripts/serve-web.py [BUILD_DIR] [--port 8080] [--disc IMAGE]
 

@@ -20,8 +20,8 @@ if(AURORA_GXM)
   enable_language(ASM)
 endif()
 
-# The WebGPU renderer (lib/webgpu) of the Emscripten web build
-# (docs/optimizations/platforms/web-build.md). The GLES and GXM builds never compile it.
+# The WebGPU renderer (lib/webgpu) of the Emscripten web build. The GLES and
+# GXM builds never compile it.
 option(AURORA_WEBGPU "Use the WebGPU renderer (Emscripten)" ${EMSCRIPTEN})
 
 if(AURORA_WEBGPU AND NOT EMSCRIPTEN)

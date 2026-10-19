@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert and embed the WebGPU shader bank (docs/optimizations/platforms/web-build.md).
+"""Convert and embed the WebGPU shader bank.
 
 Reads the GLSL ES stages that mh3-web-shader-bank wrote (glsl/KEY_STAGE.glsl
 and manifest.tsv) and converts each to WGSL: the declarations are rewritten to
@@ -20,8 +20,9 @@ Each WGSL stage starts with comment lines the backend reads
                                       KIND f/i/u, USE sample/fetch
 
 Bindings: group 0 holds the uniform blocks at their GL binding points (Draw 0,
-Scene 1, Palette 2, Shade 3, Material 4, Animated 5, UVTransform 0) and the
-loose uniforms of the vertex (6) and fragment (7) stage; group 1 holds the
+Scene 1, Palette 2, Shade 3, Material 4, Animated 5, View 6, UVTransform 0)
+and the loose uniforms of the vertex (6) and fragment (7) stage, which no
+stage with a View block has; group 1 holds the
 sampled textures in declaration order. Varyings get one location per name
 across all programs. Vertex outputs keep WebGPU's conventions: the GLSL ES
 stage writes GL clip space (y negated, z in [-w, w]), which a wrapper undoes.
@@ -39,14 +40,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-BLOCKS = {'Draw': 0, 'Scene': 1, 'Palette': 2, 'Shade': 3, 'Material': 4, 'Animated': 5, 'UVTransform': 0}
+BLOCKS = {'Draw': 0, 'Scene': 1, 'Palette': 2, 'Shade': 3, 'Material': 4, 'Animated': 5, 'View': 6, 'UVTransform': 0}
 LOOSE_BINDING = {'v': 6, 'f': 7}
 
 # Fed by raw U8 matrix selector bytes (uint vertex formats on WebGPU).
 UINT_INPUTS = {'a_select', 'a_select0', 'a_select1', 'a_select2', 'a_bones'}
 
 # One location per varying name, shared by every vertex and fragment stage.
-VARYINGS = ['v_color0', 'v_uv0', 'v_uv1', 'v_uv2', 'v_fog', 'v_uv', 'v_atlas_uv', 'v_sample0', 'v_sample1', 'v_sample2', 'v_sample3']
+VARYINGS = ['v_color0', 'v_uv0', 'v_uv1', 'v_uv2', 'v_fog', 'v_uv', 'v_atlas_uv', 'v_sample0', 'v_sample1', 'v_sample2', 'v_sample3', 'v_base', 'v_slope']
 
 # The GL -> WebGPU clip space undo, after the stage's own main().
 POSITION = '''
@@ -147,6 +148,8 @@ def vulkan_glsl(preprocessed, stage):
             line = line.replace('main', 'aurora_main', 1)
         out.append(line)
     if loose_at is not None:
+        if f'View={BLOCKS["View"]}' in blocks and LOOSE_BINDING[stage] == BLOCKS['View']:
+            raise ValueError('A stage with the View block has loose uniforms at its binding')
         members = ' '.join(f'vec4 {name};' for name in loose)
         out[loose_at] = f'layout(std140, set=0, binding={LOOSE_BINDING[stage]}) uniform AuroraLoose{stage.upper()} {{ {members} }};'
     text = '\n'.join(out).replace('gl_VertexID', 'gl_VertexIndex')
