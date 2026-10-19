@@ -154,10 +154,10 @@ MH3_DEVELOPMENT=ON scripts/build-web.sh   # development: statistics and debug to
 scripts/serve-web.py build/web            # play it at http://localhost:8080/
 ```
 
-`build/web` then holds the whole site: `index.html`, `mh3-web.js`, `MH3.js`,
-`MH3.wasm` and `MH3.data` (the launcher's font). The first build also
-converts every shader to WGSL, which later builds take from
-`~/.cache/mh3-web-shader-bank`. A release page always opens the launcher; a
+The site is six files in `build/web`: `index.html`, `mh3-web.js`,
+`isolation.js`, `MH3.js`, `MH3.wasm` and `MH3.data` (the launcher's font).
+The first build also converts every shader to WGSL, which later builds take
+from `~/.cache/mh3-web-shader-bank`. A release page always opens the launcher; a
 development page also takes the command line from its address
 (`?args=--quest+19001+--area+1&env=MH3_STATS=1`), which
 `scripts/web-check.mjs` uses to test the web build in headless Chromium.
@@ -165,11 +165,13 @@ development page also takes the command line from its address
 ## Playing in a browser
 
 `scripts/serve-web.py build/web` serves the page at `http://localhost:8080/`;
-browsers run it only from `localhost` or over HTTPS. Open it in Chrome or Edge
-113 or newer (Firefox and Safari where WebGPU is turned on), choose your disc
-image and press Start. The page copies the image into the browser's storage
-once (keep its size free on disk: 2.4 GB for the RVZ), and keeps it, your
-saves and the settings between visits. The setup panel imports a save
+browsers run it only from `localhost` or over HTTPS. Any static HTTPS host
+works too (GitHub Pages: publish those six files): the page then adds the
+cross-origin isolation headers through a service worker and reloads once.
+Open it in Chrome or Edge 113 or newer (Firefox and Safari where WebGPU is
+turned on), choose your disc image and press Start. The page copies the
+image into the browser's storage once (keep its size free on disk: 2.4 GB
+for the RVZ), and keeps it, your saves and the settings between visits. The setup panel imports a save
 (Dolphin's `Wii/title/00010000/524d4850` folder, or `saves` from Linux or the
 Vita) and sets the display and mouse options and a frame counter
 (<kbd>F2</kbd> during play). Start opens the Vita launcher's menus (the game,

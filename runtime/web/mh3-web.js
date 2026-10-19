@@ -486,9 +486,25 @@ async function start() {
   canvas.focus();
 }
 
+// Pthreads need SharedArrayBuffer, which only a cross-origin isolated page
+// has. Where the host sends no COOP/COEP headers, the service worker
+// isolation.js adds them, and the page reloads once under it.
+async function isolate() {
+  if (!window.isSecureContext || !navigator.serviceWorker || navigator.serviceWorker.controller)
+    return false;
+
+  status('Enabling cross-origin isolation');
+  await navigator.serviceWorker.register('isolation.js');
+  await navigator.serviceWorker.ready;
+  location.reload();
+  return true;
+}
+
 async function setup() {
   if (!crossOriginIsolated) {
-    status('This page needs cross-origin isolation (SharedArrayBuffer): serve it with the COOP/COEP headers of scripts/serve-web.py.');
+    if (!(await isolate()))
+      status('This page needs cross-origin isolation (SharedArrayBuffer): serve it over HTTPS or from localhost, with service workers allowed.');
+
     return;
   }
 

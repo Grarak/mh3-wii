@@ -51,3 +51,4 @@ endif()
 
 configure_file(web/index.html "${CMAKE_BINARY_DIR}/index.html" COPYONLY)
 configure_file(web/mh3-web.js "${CMAKE_BINARY_DIR}/mh3-web.js" @ONLY)
+configure_file(web/isolation.js "${CMAKE_BINARY_DIR}/isolation.js" COPYONLY)
