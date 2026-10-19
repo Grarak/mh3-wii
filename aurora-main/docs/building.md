@@ -1,8 +1,8 @@
 # Building
 
 > Retained upstream instructions. This MH3 copy uses a different GLES/GXM
-> backend and fatal GX guards. Follow the [README](../../README.md) and the
-> [dependency note](../../docs/aurora-dependency.md) for this checkout.
+> backend and fatal GX guards. Follow the [README](../../README.md) for this
+> checkout.
 
 ## Prerequisites
 

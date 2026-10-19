@@ -1,4 +1,4 @@
-// Monster control for debugging (development builds; docs/monster-control.md):
+// Monster control for debugging (development builds):
 // a trace of the actions monsters start, and commands that start chosen
 // actions, repeat them, freeze, turn and place a monster.
 #pragma once

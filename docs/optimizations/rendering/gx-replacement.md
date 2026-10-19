@@ -28,8 +28,6 @@ point was ported to C that produces typed native draws:
   ([deferred model preparation](deferred-model-preparation.md)), UI, fonts
   and HUD, NW4R effects ([particle batching](particle-batching.md)), the
   THP movie, scene feedback and glare ([scene feedback](scene-feedback.md)).
-  `docs/native-gx-original-calls.json` is the inventory of the original GX
-  callers.
 - **The GX SDK itself stops the game.** `runtime/src/gx_services.cpp`
   (generated once from the GX entry table) holds 201 natives covering the SDK's GX
   interval (0x804B3BE0-0x804BB8A0) and named GX leaves outside it, each a
@@ -90,7 +88,7 @@ Game-specific: the list of GX callers and what each one means. The order
 that worked here:
 
 1. Build a call inventory: every translated function that calls a GX entry
-   (this repository's is `docs/native-gx-original-calls.json`, 213 callers),
+   (213 callers here),
    grouped into families by what they draw.
 2. Make the GX SDK fatal first, so every unported caller shows up with a
    backtrace instead of rendering wrong.

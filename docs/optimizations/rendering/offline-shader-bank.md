@@ -77,10 +77,7 @@ for (unsigned model = 0; model < NativeShaderModelCount; ++model)
 Generic: the bank format, the CMake function, the Docker image and the
 runtime lookup (`aurora-main/lib/gxm/shader_bank.cpp`) do not depend on
 MH3. Any renderer whose programs are a function of a finite key can use
-them. The web build does the same for WebGPU (`cmake/WebShaderBank.cmake`):
-it converts the key domain's GLSL and the fixed programs, 4,187 vertex and
-604 fragment stages, to WGSL with glslang and naga and embeds 65 MB of WGSL
-as 1.6 MB ([web build](../platforms/web-build.md)).
+them.
 
 Requirement: Sony's `psp2cgc` (a Windows program from the official SDK),
 which this project cannot distribute. Without it the options are an own

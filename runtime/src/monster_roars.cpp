@@ -25,7 +25,7 @@
 // on sight, the others through the enemy fuzz's A: entries).
 //
 // The kinds (work +3) are labeled by the dispatcher that reaches each
-// function (docs/monster-control.md); the descriptions of what a monster does
+// function; the descriptions of what a monster does
 // were written under earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"

@@ -18,11 +18,8 @@ title key from the ticket).
   reads an ISO, RVZ or WIA image where it lies, with 64-bit positioned reads.
   A native decoder (`runtime/src/rom_decoder.cpp`) decrypts partition sectors
   and decompresses RVZ/WIA groups (Zstandard, bzip2, LZMA, LZMA2); partition
-  hashes are neither rebuilt nor checked ([ROM decoder](../../rom-decoder.md)).
-  The first launch writes only the boot, FST, DOL and IOS metadata (about
-  7 MB) to `disc/`. The web build first copies the image into the browser's
-  Origin Private File System (streamed, 2.4 GB for the RVZ) and reads it
-  there in place through WasmFS ([web build](../platforms/web-build.md)).
+  hashes are neither rebuilt nor checked. The first launch writes only the
+  boot, FST, DOL and IOS metadata (about 7 MB) to `disc/`.
 - **`/dev/di` answered from the image** (`runtime/src/ios.cpp`): inquiry,
   reads, status and cover commands. A synchronous read copies straight into
   guest RAM.

@@ -24,7 +24,7 @@ namespace PortCheck {
 
 #ifdef MH3_DEVELOPMENT
 namespace {
-// MH3_PORT_CHECK (port_check.h, docs/flags.md): port names or `all`, fuzz
+// MH3_PORT_CHECK (port_check.h): port names or `all`, fuzz
 // entries (P:/E:/C:0xADDR) and the options.
 const DevOptions& Options() {
     static const DevOptions options("MH3_PORT_CHECK", {"every", "originals", "dump", "fuzz-after", "fuzz-samples", "fuzz-demo", "fuzz-frames", "tolerance"}, DevOptions::Words::Allowed);

@@ -39,7 +39,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80048890, MH3_ClearDrawBuckets, "ClearDrawBuckets"
   `MH3_PORT_CHECK=Name` runs both from one RAM and register snapshot and
   reports every differing word (`runtime/include/port_check.h`). Rarely
   reached ports (player actions, enemy checks) are fuzzed with
-  `P:0xADDR`/`E:0xADDR`/`C:0xADDR` items ([flags](../../flags.md)). Ports
+  `P:0xADDR`/`E:0xADDR`/`C:0xADDR` items. Ports
   that ran clean for long enough drop their check.
 - Ports may trade bit-exactness for speed where the difference is checked
   with a tolerance (the separate multiply-add of
@@ -59,7 +59,7 @@ where they are described:
 | Collision and land queries | ground candidate lists, the land sweep, hit spheres | [compact native data](compact-native-data.md) |
 | Step-length dependent logic | shells, enemy turning, player actions, timers | [variable step](../simulation/variable-step.md) |
 | Wii Remote pointer | the game's copy of KPAD (0x800450AC..0x800468A0), the pointer and cursor (0x80043C10..0x80044DDC), pointing at monsters for the log (0x802DB354) | `runtime/src/pad_pointer.cpp`, `log_pointer.cpp`, [controller input](../system/controller-input.md) |
-| Cheats | wrappers that change arguments or results | [cheats](../../cheats.md) |
+| Cheats | wrappers that change arguments or results | `runtime/src/cheats.cpp`, `cheat_*.cpp` |
 
 ## Why
 
@@ -131,7 +131,7 @@ Game-specific: which functions are hot, their addresses, and the structure
 offsets they use. The order that worked here:
 
 1. Profile on the slowest target (a sampling profiler on the Vita, or `perf`
-   on an ARM board; [profiling](../../profiling.md)) and list the translated
+   on an ARM board) and list the translated
    functions by self time.
 2. Port leaves first (math, accessors), then their callers; a port that calls
    back into translated code still pays for the guest call boundary.

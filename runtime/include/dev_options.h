@@ -1,4 +1,4 @@
-// Development option strings (docs/flags.md). Each development tool reads one
+// Development option strings. Each development tool reads one
 // variable holding a comma-separated list of items: a bare word (a flag the
 // tool knows, or a list entry such as a path or a port name) or name=value:
 //
@@ -130,7 +130,7 @@ private:
     }
 
     void Unknown(std::string_view item) const {
-        std::fprintf(stderr, "MH3: %s: unknown option '%.*s' (docs/flags.md)\n", variable_, int(item.size()), item.data());
+        std::fprintf(stderr, "MH3: %s: unknown option '%.*s'\n", variable_, int(item.size()), item.data());
     }
 
     const char* variable_;

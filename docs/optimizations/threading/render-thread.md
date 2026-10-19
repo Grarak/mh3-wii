@@ -33,10 +33,7 @@ a render thread draws it:
   thread has core 2 alone, see [core layout](core-layout.md)), replays
   packets in order, prepares models
   ([deferred model preparation](../rendering/deferred-model-preparation.md)), writes
-  uniforms into the GPU frame slot, draws and presents. On the web the
-  browser's main thread does this from a `requestAnimationFrame` loop
-  instead of a thread, because WebGPU objects belong to it
-  ([web build](../platforms/web-build.md)).
+  uniforms into the GPU frame slot, draws and presents.
 - **The 3D scene is recorded on a draw thread** (Vita core 1) beside the
   next logic step, in every build since the commit "Overlap the draw in
   release builds and fix their compile", into the same packet

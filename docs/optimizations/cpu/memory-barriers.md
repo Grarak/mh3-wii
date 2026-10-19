@@ -39,8 +39,6 @@ The Pi 5's Cortex-A76 hides barriers: on it the changes stayed within the
 run-to-run spread (port-check functions 0.27 → 0.10% of samples,
 `ResourceMemory` 0.27 → 0.01%). The A9 does not, so barrier work is judged
 by counts in the binary and by the Vita profile, not by Pi timings.
-[Profiling](../../profiling.md#barriers-on-arm32) has the census command
-and the barriers still on hot paths.
 
 ## Example
 

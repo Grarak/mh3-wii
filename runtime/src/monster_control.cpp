@@ -1,4 +1,4 @@
-// Monster control for debugging, RMHP08 (docs/monster-control.md).
+// Monster control for debugging, RMHP08.
 //
 // A monster's action is a pair of bytes in its work, mode (+0x1E5) and sub
 // (+0x1E6), started by EnemySetAction (0x80128624). The game's side is

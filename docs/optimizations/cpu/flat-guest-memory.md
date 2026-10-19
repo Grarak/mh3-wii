@@ -35,11 +35,6 @@ swap (`runtime/include/guest_flat_memory.h`).
   aliases first (MEM1 → `0xB0000000`, MEM2 → `0xC0000000`, locked cache →
   `0xB4000000`) into fixed views of one backing block reserved through the
   kubridge kernel plugin ([Vita platform](../platforms/vita-platform-layer.md)).
-- **Web:** WebAssembly has no virtual memory, so the aliases fold as on the
-  Vita, into linear memory below the static data (`-sGLOBAL_BASE`): MEM1 at
-  16 MiB, the locked cache at 80 MiB, MEM2 at 272 MiB, ending at 336 MiB
-  ([web build](../platforms/web-build.md)). Stray accesses are not reported there, as
-  WebAssembly has no signals.
 - **The locked cache is plain memory.** A locked-cache DMA (the DMAU/DMAL
   registers) is a synchronous `memcpy` (`TransferLockedCache`,
   `runtime/src/ppc_helpers.cpp`). g3d's lock request (0x80502DD0) is a native

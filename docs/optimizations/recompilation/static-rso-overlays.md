@@ -62,8 +62,7 @@ PROFILES = {
 }
 ```
 
-The build's translation step (`scripts/translate.py`,
-[translation](../../translation.md)) runs the profiles whose inputs changed
+The build's translation step (`scripts/translate.py`) runs the profiles whose inputs changed
 in parallel after the main translation.
 
 ## Applying it to another Wii game

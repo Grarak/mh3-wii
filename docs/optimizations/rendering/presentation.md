@@ -41,11 +41,6 @@ On the Vita (`aurora-main/lib/gxm/device.cpp`,
 - **Linux/GLES** requests swap interval 0 and admits a frame the same way,
   polling a GL fence with a zero timeout (`gl::gpu_frame_pending`,
   `aurora-main/lib/gl/gl.cpp`).
-- **Web** ([web build](../platforms/web-build.md)): the browser's main thread replays
-  packets from a `requestAnimationFrame` loop, and a present appears when
-  the callback returns. The backend reports no pending GPU frame, so the
-  browser's frame rate paces the render loop and, through the limiter, the
-  game.
 - **Display-locked steps** (Vita, frame limit on): frames reach the
   screen a VBlank apart through the packet ring and the display queue, but
   a step measured as the game thread's time between frame starts varied

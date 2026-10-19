@@ -1,4 +1,4 @@
-// MH3_PORT_CHECK=Name,Name... or all (development builds, docs/flags.md):
+// MH3_PORT_CHECK=Name,Name... or all (development builds):
 // checks native ports against the translated originals they replace. From one RAM and register
 // snapshot the original runs, then (restored) the port; every word of
 // MEM1/MEM2 that ends up different is reported, once per distinct first

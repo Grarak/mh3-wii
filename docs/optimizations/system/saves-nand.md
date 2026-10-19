@@ -21,10 +21,7 @@ when set.
 - Wii ownership, permissions and attributes are kept in an extended
   attribute on Linux (`fsetxattr`), and in a journal beside the tree on the
   Vita (`nand-metadata.bin`; exFAT has no extended attributes,
-  `runtime/vita/nand.inc`). The Vita syncs writes with `sceIoSync`. The web
-  build keeps the tree in the browser's Origin Private File System, where
-  WasmFS has no extended attributes: every entry gets the title's default
-  owner and permissions ([web build](../platforms/web-build.md)).
+  `runtime/vita/nand.inc`). The Vita syncs writes with `sceIoSync`.
 - Paths are resolved relative to the tree: symlinks, `..` and special files
   are rejected; creation never truncates an existing file; recursive delete
   checks the whole tree before changing it and refuses open files.

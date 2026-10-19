@@ -42,8 +42,7 @@ The programs are written twice, GLSL ES 3.0 and Cg, in
 `runtime/src/native_shader_source.cpp`; variants are compile-time defines
 (textures 0-3, overlay, alpha test, fog, lighting: none, 1-8 spot lights
 or general; a texgen kind per texture role), plus specializations
-([shader specializations](shader-specializations.md)). The web build
-converts the GLSL to WGSL at build time ([web build](../platforms/web-build.md)). The
+([shader specializations](shader-specializations.md)). The
 vertex stage computes lighting and the whole fog amount (the clamped
 distance, the curve and the clamp), which the fragment stage blends by
 (commit "Compute fog per vertex and light far lights from the eye"); GX's

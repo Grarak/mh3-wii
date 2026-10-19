@@ -10,8 +10,7 @@ thread owns the graphics context. GX API and FIFO compatibility entry points
 deliberately panic. Dawn/WebGPU, Vulkan,
 D3D12 and Metal are not build targets in this checkout.
 
-See [the dependency note](../docs/aurora-dependency.md) for origin/build details
-and [GX replacement](../docs/optimizations/rendering/gx-replacement.md) for the
+See [GX replacement](../docs/optimizations/rendering/gx-replacement.md) for the
 current renderer. Use the repository's build scripts (see the
 [README](../README.md)); upstream Aurora build instructions describe a
 different renderer.

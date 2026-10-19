@@ -12,8 +12,8 @@
 //                           blend from motion channel 0 to 1 grows by 0.1 a
 //                           call once the motion is past frame 114 / 174
 //   0x8014DE50              Rathian's and Rathalos' dive (7.37): its moves
-//                           spread over a count of calls (the watch pass of
-//                           docs/monster-control.md found it)
+//                           spread over a count of calls (a watchpoint pass
+//                           found it)
 //   0x8014CF5C              their flying charge (7.22-7.29): its give-up,
 //                           braking and landing counted in calls
 //   0x8038A81C              Uragaan's roll: its curves turned and its holds
@@ -32,7 +32,7 @@
 // the others through the enemy fuzz's A: entries).
 //
 // The kinds (work +3) are labeled by the dispatcher that reaches each
-// function (docs/monster-control.md); the descriptions of what a monster does
+// function; the descriptions of what a monster does
 // were written under earlier labels, wrong for kinds 1-12.
 #include "abi_bridge.h"
 #include "enemy_work.h"

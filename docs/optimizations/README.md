@@ -120,5 +120,3 @@ on track when the Pi 5 reaches 4-5 times the speed wanted on the Vita
 | [Vita platform layer](platforms/vita-platform-layer.md) | the Wii hardware | Vita SDK limits (clock calls, semaphores, stdio) |
 | [Vita TLS lookups](platforms/vita-tls-lookups.md) | the SDK's emulated TLS chain | TLS helpers down to 0.2% of the game thread |
 | [Vita CDRAM budget](platforms/vita-cdram-budget.md) | the Wii's shared memory | all GPU data in video memory, never read back |
-| [Linux: GLES 3.0 and the Cortex-A9 build](platforms/linux-gles-and-arm32.md) | Aurora's WebGPU/Dawn renderer | test the Vita's CPU model and renderer structure on a Pi or another ARM Linux machine |
-| [Web build](platforms/web-build.md) | the Wii hardware, in a browser | the same game in a browser; not a performance target |

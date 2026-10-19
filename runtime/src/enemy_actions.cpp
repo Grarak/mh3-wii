@@ -1,6 +1,6 @@
 // Enemy actions, RMHP08: how a monster starts, picks and ends its actions.
 // C reconstructions (decompiled with Ghidra, checked against the
-// disassembly; docs/monster-control.md):
+// disassembly):
 //
 //   0x80128624 EnemySetAction (work, mode, sub, how): starts an action
 //   0x80126520 EnemyHandler (work, index): the species' handler `index`

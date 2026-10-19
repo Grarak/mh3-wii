@@ -443,10 +443,9 @@ render thread's time is mostly per-draw CPU work, which is what to cut:
   timing and counters per scene.
 - **psp2shaderperf**: cycles and register counts per program; check every
   new variant.
-- **A CPU profiler** on the Vita, flat or with stack snapshots
-  [doc: [profiling](../../profiling.md)].
+- **A CPU profiler** on the Vita, flat or with stack snapshots.
 - **`MH3_PROFILE=render`** and `census`: the render thread's time by part of
-  the replay, and the model draws per frame [doc: [flags](../../flags.md)].
+  the replay, and the model draws per frame.
 - Compare CPU and GPU only from the same run; profiles of separate runs
   cannot show overlap.
 

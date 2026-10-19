@@ -1,8 +1,5 @@
 # Variable game step
 
-[Variable-step sites](../../variable-step-sites.md) lists every adapted
-site, the mechanisms and the known leftovers.
-
 ## What the original does
 
 MH3's logic advances in fixed steps of 1/30 s (a *tick*). Its main loop

@@ -34,10 +34,7 @@ semantics that matter and gives up bit-exactness where it costs too much:
 
 The first two rows change results (by rounding); the others are exact. The
 64-bit Linux build keeps the exact fused forms; the arm32 builds (the Pi and
-the Vita) use the two-rounding multiply-add, and so does the web build:
-wasm32 takes the arm32 paths of the ISA headers. There the FP control
-register is a software word, and WebAssembly always keeps denormals, so
-FPSCR[NI] flushes nothing ([web build](../platforms/web-build.md)).
+the Vita) use the two-rounding multiply-add.
 
 ## Why
 

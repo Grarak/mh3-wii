@@ -4,8 +4,8 @@
  * contributors; MIT AND Apache-2.0 WITH LLVM-exception, see
  * toolchain/THIRD-PARTY-NOTICES.md).
  *
- * The earlier nod ROM decoder's Rust archive supplied these to the whole program
- * (docs/rom-decoder.md#vita-runtime-helpers). Without them the SDK's newlib ones
+ * The earlier nod ROM decoder's Rust archive supplied these to the whole
+ * program. Without them the SDK's newlib ones
  * would apply: a byte loop for memmove and a scalar loop for memset. This
  * keeps the helpers the game was profiled with. The public memcpy,
  * memmove and memset stay the SDK's routes to sceClib.

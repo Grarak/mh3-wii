@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sends commands to a running game's debug port (docs/debug-port.md) and
+"""Sends commands to a running game's debug port and
 prints each answer.
 
   debug-port.py [--port [HOST:]PORT] COMMAND...   each argument one command

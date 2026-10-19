@@ -1,4 +1,4 @@
-// Native Wii disc image decoder: ISO, WIA and RVZ (docs/rom-decoder.md).
+// Native Wii disc image decoder: ISO, WIA and RVZ.
 //
 // Implements the C bridge in vita/rom_decoder.h for RomImage. It returns the
 // bytes the nod 1.4.4 bridge returned for the same calls: disc reads give
