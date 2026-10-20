@@ -33,7 +33,7 @@ bool SkipTlsSetting();
 void SetSkipTlsSetting(bool skip);
 
 // The tag in front of the hunter's name on the lobby server, so players on
-// other platforms see who plays on a Vita: "[PV]" on the Vita, none
+// other platforms see who plays on a Vita: "PV " on the Vita, none
 // elsewhere; MH3_ONLINE_NAME_TAG sets another (empty: none). The save keeps
 // the plain name.
 std::string OnlineNameTag();

@@ -162,13 +162,13 @@ Each guest thread that runs gets a 1 MiB host thread; online play starts
 five or six. The waits use timed re-checks, which the Vita's condition
 variables need (lost wakeups).
 
-Other players see a Vita player's name with `[PV]` in front
+Other players see a Vita player's name with `PV ` in front
 (`online_name.cpp`). The game sends the hunter's name to the lobby server
 once, when a Capcom ID is picked (ReqUserObject), and the server hands that
 copy to everyone: the City's player list, the quest board, search, friends
 and chat. Only that copy gets the tag; the save keeps the plain name. A
 tagged name holds at most 16 bytes, the longest name the game's own name
-entry makes, so a name longer than 12 characters loses its end there.
+entry makes, so a name longer than 13 characters loses its end there.
 `MH3_ONLINE_NAME_TAG` sets another tag on any platform (empty: none).
 
 ## Running
@@ -214,6 +214,6 @@ MH3_ONLINE_CA=MH3SP/cert/ca.der MH3_ONLINE_HOSTS='*.mh3sp.com=127.0.0.1' \
 | `MH3_ONLINE_HOSTS=name=ip,...` | answer these host names (`*.domain` for a whole domain) without DNS |
 | `MH3_ONLINE_PORTS=from=to,...` | connect to `to` instead of port `from` (the NAS's port 80) |
 | `MH3_ONLINE_ADDRESSES=from=to,...` | reach IPv4 address `from` at `to`, and read packets from `to` as from `from` (a server that names its ZeroTier address, reached from a Vita on the LAN) |
-| `MH3_ONLINE_NAME_TAG=TEXT` | put TEXT in front of the hunter's name on the lobby server (default `[PV]` on the Vita, none elsewhere) |
+| `MH3_ONLINE_NAME_TAG=TEXT` | put TEXT in front of the hunter's name on the lobby server (default `PV ` on the Vita, none elsewhere) |
 | `MH3_ONLINE_AUTO=id=,server=,gate=,city=,post=QUEST` or `...,join=N` | development builds: the autopilot takes a `--city` launch through the online screens into a quest (`runtime/src/net/online_auto.cpp`); `city=-1` stops in the gate (Loc Lac's streets) |
 | `MH3_TRACE=net` | development builds: log sockets, connects, lookups and TLS sessions |

@@ -88,7 +88,7 @@ std::string OnlineNameTag() {
         return value;
 
 #ifdef __vita__
-    return "[PV]";
+    return "PV ";
 #else
     return "";
 #endif
