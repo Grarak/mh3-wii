@@ -47,6 +47,7 @@ uint32_t current_frame() noexcept;
 #include <string>
 #include <unordered_map>
 #include <map>
+#include <set>
 #include <tuple>
 #include <vector>
 
@@ -327,9 +328,10 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 }
 
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
-    // Every field in its own bits: vertex and lighting 2, lights 4, model and
-    // textures 2, texgens 3 each.
-    const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 2 | uint64_t(variant.lights) << 4 | uint64_t(variant.model) << 8 | uint64_t(variant.textures) << 10 |
+    // Every field in its own bits: vertex and lighting 2, lights 4, model 2,
+    // texgens 3 each, textures 3, the chain form 4.
+    const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 2 | uint64_t(variant.lights) << 4 | uint64_t(variant.model) << 8 | uint64_t(variant.textures) << 33 |
+                         uint64_t(variant.chain) << 36 |
                          uint64_t(variant.overlay) << 12 | uint64_t(variant.alpha_test) << 13 | uint64_t(variant.fog) << 14 | uint64_t(variant.texgen[0]) << 15 | uint64_t(variant.texgen[1]) << 18 |
                          uint64_t(variant.texgen[2]) << 21 | uint64_t(variant.linear_fog) << 24 | uint64_t(variant.pure_modulate) << 25 | uint64_t(variant.target_alpha_one) << 26 |
                          uint64_t(variant.material_gpu) << 27 | uint64_t(variant.dynamic) << 28 | uint64_t(variant.basic_lerp) << 29 | uint64_t(variant.skinned) << 30 |
@@ -368,7 +370,7 @@ aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
         desc.vertex = std::move(sources.glsl_vertex);
         desc.fragment = std::move(sources.glsl_fragment);
 #endif
-        desc.samplers = {{"u_texture0", 0}, {"u_texture1", 1}, {"u_texture2", 2}};
+        desc.samplers = {{"u_texture0", 0}, {"u_texture1", 1}, {"u_texture2", 2}, {"u_texture3", 3}, {"u_texture4", 4}};
         desc.blocks = {{"Draw", 0}, {"Scene", 1}, {"Palette", 2}, {"Shade", 3}, {"Material", 4}, {"Animated", 5}, {"View", 6}};
         program = std::make_shared<aurora::gl::Program>(std::move(desc));
 #ifdef MH3_DEVELOPMENT
@@ -448,24 +450,40 @@ ShadeLighting ShadeChannels(const mh3_shade_material& shading, mh3_shade_vertex&
     return lighting;
 }
 
-// Fragment-side per-role texture units (GX map IDs) and LOD bias.
-std::array<uint8_t, 3> ShadeTextures(const mh3_shade_material& shading, float bias[4]) {
-    std::array<uint8_t, 3> units{};
+// Fragment-side per-role texture units (GX map IDs) and LOD bias: roles
+// 0..2 in bias[0..2] (the Shade block's texture_bias, w zero), CHAIN's mask
+// roles 3 and 4 in bias[4..5]. A CHAIN form's gap samples nothing.
+using ShadeUnits = std::array<uint8_t, NativeShaderChainTextures>;
+ShadeUnits ShadeTextures(const mh3_shade_material& shading, float bias[6]) {
+    ShadeUnits units{};
 
-    for (unsigned role = 0; role < 3; ++role) {
-        bias[role] = 0.f;
+    for (unsigned role = 0; role < NativeShaderChainTextures; ++role) {
+        float& b = bias[role < 3 ? role : role + 1];
+        b = 0.f;
 
-        if (role >= shading.textures)
+        if (role >= shading.textures || shading.texture_map[role] >= 8)
             continue;
 
         const unsigned map = shading.texture_map[role];
         (void)Texture(map);
         units[role] = uint8_t(map);
-        bias[role] = aurora::native_texture_shader_lod_bias(map);
+        b = aurora::native_texture_shader_lod_bias(map);
     }
 
     bias[3] = 0.f;
     return units;
+}
+
+// The Shade block's texture biases (and CHAIN's mask biases), after
+// mh3_shade_fill: the block is written once, never read back (uncached CDRAM
+// on the Vita).
+void ShadeBias(const mh3_shade_material& shading, const float bias[6], mh3_shade_fragment& fragment) {
+    std::memcpy(fragment.texture_bias, bias, 4 * sizeof(float));
+
+    if (shading.model == MH3_SHADE_CHAIN) {
+        fragment.shading.chain.texture_bias[0] = bias[4];
+        fragment.shading.chain.texture_bias[1] = bias[5];
+    }
 }
 
 void RequireEarlyDepth(const mh3_shade_material& shading) {
@@ -599,7 +617,11 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.vertex = vertex;
     variant.lighting = lighting.kind;
     variant.lights = lighting.lights;
-    variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate : shading.model == MH3_SHADE_LAYERS ? NativeShaderModel::Layers : NativeShaderModel::Basic;
+    variant.model = shading.model == MH3_SHADE_MODULATE ? NativeShaderModel::Modulate :
+                    shading.model == MH3_SHADE_LAYERS   ? NativeShaderModel::Layers :
+                    shading.model == MH3_SHADE_CHAIN    ? NativeShaderModel::Chain :
+                                                          NativeShaderModel::Basic;
+    variant.chain = shading.model == MH3_SHADE_CHAIN ? shading.chain : 0;
     variant.pure_modulate = shading.pure_modulate != 0;
     variant.basic_lerp = BasicLerp(shading);
     variant.raster_product = shading.raster_product != 0;
@@ -611,6 +633,29 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.linear_fog = variant.fog && (render.fogSource.type & 7) < 4;
     return variant;
 }
+
+#ifdef MH3_DEVELOPMENT
+// CHAIN samples its masks (roles 3 and 4) at role 0's coordinate: report a
+// draw whose mask coordinates differ (once per structure).
+void CheckMaskCoordinates(const ShadeEntry& entry, const mh3_model_gpu_draw_inputs& inputs) {
+    static std::set<uint64_t> reported;
+    const auto& shading = entry.shading;
+    const auto& base = inputs.texgen[shading.texture_coordinate[0] & 7];
+
+    for (unsigned role = 3; role < shading.textures; ++role) {
+        if (shading.texture_coordinate[role] >= 8)
+            continue;
+
+        const auto& mask = inputs.texgen[shading.texture_coordinate[role]];
+        const bool same = mask.source_row == base.source_row && mask.projection == base.projection && mask.normalize == base.normalize && mask.indexed == base.indexed &&
+                          mask.main_identity == base.main_identity && mask.post_identity == base.post_identity &&
+                          (mask.main_identity || !std::memcmp(&mask.main, &base.main, sizeof mask.main)) && (mask.post_identity || !std::memcmp(&mask.post, &base.post, sizeof mask.post));
+
+        if (!same && reported.insert(entry.key).second)
+            std::fprintf(stderr, "[shade] chain material %016llx: mask role %u's coordinate differs from role 0's\n", (unsigned long long)entry.key, role);
+    }
+}
+#endif
 
 // The pure modulate fragment with fog takes the fog blend folded into the
 // vertex colour (fog_blend in native_shader_source.cpp): draw.channel.w bit
@@ -1380,7 +1425,9 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     // Built here and copied once: the frame's uniform memory is uncached CDRAM
     // on the Vita, where clearing it and then writing the fields cost twice.
     // Only up to the last texture role's texgen: the program reads no other.
-    const uint32_t vertexBytes = MH3_SHADE_VERTEX_BYTES(shading.textures);
+    // CHAIN's mask roles 3 and 4 have no texgen of their own (role 0's).
+    const unsigned texgenRoles = std::min<unsigned>(shading.textures, 3);
+    const uint32_t vertexBytes = MH3_SHADE_VERTEX_BYTES(texgenRoles);
     mh3_shade_vertex vertex;
     std::memset(&vertex, 0, vertexBytes);
     const auto lighting = ShadeChannels(shading, vertex);
@@ -1448,9 +1495,14 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     } else if (gpu)
         srtRoles = ShadeSrtRoles(shading, srt);
 
+#ifdef MH3_DEVELOPMENT
+    if (shading.model == MH3_SHADE_CHAIN)
+        CheckMaskCoordinates(entry, inputs);
+#endif
+
     std::array<NativeShaderTexgen, 3> kinds{};
 
-    for (unsigned role = 0; role < shading.textures; ++role) {
+    for (unsigned role = 0; role < texgenRoles; ++role) {
         const unsigned coordinate = shading.texture_coordinate[role];
 
         if (coordinate >= 8)
@@ -1502,7 +1554,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         vertex.channel[3] |= kFoldFog;
 
     std::memcpy(vertexBlock, &vertex, vertexBytes);
-    float bias[4];
+    float bias[6];
     const auto units = ShadeTextures(shading, bias);
     variant.skinned = skinned;
     std::copy(kinds.begin(), kinds.end(), variant.texgen);
@@ -1541,8 +1593,8 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
         blocks = ShadeGpuBlocks(memory, paletteBytes, *materialBlock, *animatedBlock);
     } else {
-        std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
         mh3_shade_fill(&shading, &material, block);
+        ShadeBias(shading, bias, block->fragment);
         blocks = ShadeBlocks(memory, shading.model, paletteBytes);
     }
 
@@ -1590,10 +1642,10 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
     const auto lighting = ShadeChannels(shading, *vertexBlock);
     std::array<uint8_t, 3> coordinates{};
 
-    for (unsigned role = 0; role < shading.textures; ++role)
+    for (unsigned role = 0; role < std::min<unsigned>(shading.textures, 3); ++role)
         coordinates[role] = shading.texture_coordinate[role] < 8 ? shading.texture_coordinate[role] : 0;
 
-    float bias[4];
+    float bias[6];
     const auto units = ShadeTextures(shading, bias);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Geometry, lighting);
 
@@ -1619,8 +1671,8 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
         blocks = ShadeGpuBlocks(memory, 0, *materialBlock, *animatedBlock);
     } else {
-        std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
         mh3_shade_fill(&shading, &Mat(render), block);
+        ShadeBias(shading, bias, block->fragment);
         blocks = ShadeBlocks(memory, shading.model, 0);
     }
 
@@ -1698,7 +1750,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     }
 
     quad.mode[3] = draw.viewport[4] <= draw.viewport[5];
-    float bias[4];
+    float bias[6];
     const auto units = ShadeTextures(shading, bias);
     auto variant = ShadeVariant(shading, NativeShaderVertex::Quad, lighting);
     variant.vertex_lerp = lerp != nullptr;
@@ -1728,8 +1780,8 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
         variant.dynamic = entry.dynamic && !ResolvesOnCpu(entry);
         blocks = ShadeGpuBlocks(memory, sizeof(ShadeQuad), *materialBlock, *animatedBlock);
     } else {
-        std::memcpy(block->fragment.texture_bias, bias, sizeof bias);
         mh3_shade_fill(&shading, &Mat(render), block);
+        ShadeBias(shading, bias, block->fragment);
         blocks = ShadeBlocks(memory, shading.model, sizeof(ShadeQuad));
     }
 

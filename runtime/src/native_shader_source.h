@@ -18,10 +18,11 @@ inline constexpr unsigned NativeShaderVertexCount = 3;
 enum class NativeShaderModel : uint8_t {
     Basic,
     Modulate,
-    Layers
-}; // MH3_SHADE_BASIC / MH3_SHADE_MODULATE / MH3_SHADE_LAYERS
+    Layers,
+    Chain
+}; // MH3_SHADE_BASIC / MH3_SHADE_MODULATE / MH3_SHADE_LAYERS / MH3_SHADE_CHAIN
 
-inline constexpr unsigned NativeShaderModelCount = 3;
+inline constexpr unsigned NativeShaderModelCount = 4;
 
 // Mesh texgen per role, fixed at compile time. Identity and Affine read the
 // role's coordinate attribute (no projection, normalize, post or palette).
@@ -49,8 +50,10 @@ enum class NativeShaderTexgen : uint8_t {
 
 inline constexpr unsigned NativeShaderTexgenCount = 5;
 
-// Texture roles of a classified material (mh3_shade_material::textures).
+// Texture roles of a classified material (mh3_shade_material::textures);
+// CHAIN's masks add roles 3 and 4 at role 0's coordinates.
 inline constexpr unsigned NativeShaderMaxTextures = 3;
+inline constexpr unsigned NativeShaderChainTextures = 5;
 
 struct NativeShaderVariant {
     // Vertex stage
@@ -61,6 +64,10 @@ struct NativeShaderVariant {
     // Fragment stage
     NativeShaderModel model = NativeShaderModel::Modulate;
     uint8_t textures = 0;
+
+    // Chain only: the form (mh3_shade_chain_forms), which fixes the steps
+    // and the roles sampled.
+    uint8_t chain = 0;
     bool overlay = false;
     bool alpha_test = false;
     bool fog = false;
@@ -102,7 +109,7 @@ struct NativeShaderVariant {
 };
 
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 20, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 21, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
 // the GXM shader bank holds one program per key (docs/optimizations/rendering/offline-shader-bank.md).
@@ -121,6 +128,7 @@ struct NativeShaderVertexKey {
 struct NativeShaderFragmentKey {
     NativeShaderModel model = NativeShaderModel::Modulate;
     uint8_t textures = 0;
+    uint8_t chain = 0;             // only Chain
     bool overlay = false;
     bool alpha_test = false;
     bool fog = false;
@@ -136,7 +144,8 @@ struct NativeShaderFragmentKey {
 };
 
 // Throw std::invalid_argument outside the domain: Spot with more than
-// NativeShaderMaxLights lights, more than NativeShaderMaxTextures textures, or
+// NativeShaderMaxLights lights, more than NativeShaderMaxTextures textures
+// (Chain: a form outside mh3_shade_chain_forms), or
 // an Srt role without material_gpu (its post SRT is in the Animated block).
 NativeShaderVertexKey NativeShaderVertexKeyOf(const NativeShaderVariant& variant);
 NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& variant);

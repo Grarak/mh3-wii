@@ -243,10 +243,10 @@ struct StreamedBlock {
 
 StreamedBlock g_streamedMaterial, g_streamedAnimated;
 
-// Program -> sampler units currently assigned to u_texture0..2 and their locations.
+// Program -> sampler units currently assigned to u_texture0..4 and their locations.
 struct ShadedSamplers {
-  std::array<GLint, 3> location{-1, -1, -1};
-  std::array<int, 3> unit{-1, -1, -1};
+  std::array<GLint, 5> location{-1, -1, -1, -1, -1};
+  std::array<int, 5> unit{-1, -1, -1, -1, -1};
 };
 
 std::unordered_map<GLuint, ShadedSamplers> g_shadedSamplers;
@@ -1754,16 +1754,16 @@ void bind_shaded_blocks(const ShadedBlocks& blocks) {
   bind_uniform_range(6, g_shadeViewBuffer, 0, blocks.viewBytes);
 }
 
-void bind_shaded_samplers(GLuint program, const std::array<uint8_t, 3>& units) {
+void bind_shaded_samplers(GLuint program, const ShadedTextureUnits& units) {
   auto [entry, inserted] = g_shadedSamplers.try_emplace(program);
   auto& samplers = entry->second;
 
   if (inserted)
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < units.size(); ++i) {
       const char name[] = {'u', '_', 't', 'e', 'x', 't', 'u', 'r', 'e', char('0' + i), 0};
       samplers.location[i] = glGetUniformLocation(program, name);
     }
-  for (unsigned i = 0; i < 3; ++i)
+  for (unsigned i = 0; i < units.size(); ++i)
     if (samplers.location[i] >= 0 && samplers.unit[i] != units[i]) {
       glUniform1i(samplers.location[i], units[i]);
       samplers.unit[i] = units[i];
@@ -1772,7 +1772,7 @@ void bind_shaded_samplers(GLuint program, const std::array<uint8_t, 3>& units) {
 } // namespace
 
 void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
-                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+                      GLuint program, const ShadedBlocks& blocks, const ShadedTextureUnits& textureUnits) {
   if (!aurora::native_frame_drawing_allowed() || !indexCount)
     return;
 
@@ -1844,7 +1844,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 }
 
 void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, const AuroraNativeQuadLerp* lerp, uint32_t quads, GLuint program, const ShadedBlocks& blocks,
-                       const std::array<uint8_t, 3>& textureUnits) noexcept {
+                       const ShadedTextureUnits& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
     return;
 
@@ -1910,7 +1910,7 @@ void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, const AuroraNativ
 }
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
-                          const std::array<uint8_t, 3>& textureUnits) noexcept {
+                          const ShadedTextureUnits& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
     return;
 

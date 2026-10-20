@@ -226,7 +226,7 @@ struct PrecomputedCopy {
   uint32_t count = 0;
   std::array<const void*, 5> vertexBuffers{};
   std::array<const void*, 4> fragmentBuffers{};
-  std::array<SceGxmTexture, 3> textures{};
+  std::array<SceGxmTexture, 5> textures{};
 };
 
 struct PrecomputedRecord {
@@ -499,7 +499,7 @@ public:
   // Vertex BUFFER[0] Draw, [1] Scene, [2] Palette, [4] View; fragment
   // BUFFER[0] Shade, [1] Scene. Sampler slot r reads the texture bound at unit
   // units[r].
-  void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units) {
+  void prepare_shaded(NativeProgram& native, PatchedProgram& program, const ShadedBlocks& blocks, const ShadedTextureUnits& units) {
     bind_program(program, shaded_blend(native));
     draws.bind_shaded(blocks.draw, blocks.drawBytes, blocks.shadeOffset, blocks.shadeBytes, blocks.paletteOffset, blocks.paletteBytes, blocks.scene, blocks.sceneBytes, blocks.view,
                       blocks.viewBytes);
@@ -651,7 +651,7 @@ public:
 
   // draw_shaded_mesh's draw through the record of this draw's occurrence in
   // the frame; false when it must be drawn the plain way.
-  bool draw_precomputed(NativeProgram& native, const std::shared_ptr<PatchedProgram>& program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& units, const void* vertices,
+  bool draw_precomputed(NativeProgram& native, const std::shared_ptr<PatchedProgram>& program, const ShadedBlocks& blocks, const ShadedTextureUnits& units, const void* vertices,
                         const void* indices, uint32_t count) {
     if (precomputedOff)
       return false;
@@ -1981,7 +1981,7 @@ SceGxmAttributeFormat attribute_format(MeshAttributeFormat format, unsigned& com
 } // namespace
 
 void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
-                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+                      GLuint program, const ShadedBlocks& blocks, const ShadedTextureUnits& textureUnits) {
   if (!aurora::native_frame_drawing_allowed() || !indexCount)
     return;
 
@@ -2032,7 +2032,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 }
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
-                          const std::array<uint8_t, 3>& textureUnits) noexcept {
+                          const ShadedTextureUnits& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !geometry.index_count)
     return;
 
@@ -2059,7 +2059,7 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
 }
 
 void draw_shaded_quads(const AuroraNativeQuadVertex* vertices, const AuroraNativeQuadLerp* lerp, uint32_t quads, GLuint program, const ShadedBlocks& blocks,
-                       const std::array<uint8_t, 3>& textureUnits) noexcept {
+                       const ShadedTextureUnits& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !quads || quads > MaxNativeQuads)
     return;
 

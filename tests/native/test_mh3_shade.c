@@ -253,31 +253,6 @@ static void overlay_family(void) {
  * ras.a (GX outputs the last stage whatever its register). The overlay
  * holds all three roles, so it is dropped: colour keeps the base texture and
  * alpha samples map 3 instead of the zero left in prev. */
-static void overlay_alpha_map(void) {
-  mh3_native_material_state s;
-  base(&s);
-  s.pixel.values[MH3_PIXEL_ALPHA_COMPARE0] = 6; /* GEQUAL 100 */
-  s.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0] = 100;
-  s.pixel.values[MH3_PIXEL_ALPHA_COMPARE1] = 3; /* LEQUAL 255 */
-  s.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1] = 255;
-  stage(&s, 0, pass(15, 8, 10, 15, 0, 3), pass(7, 7, 7, 7, 0, 0), 0, 0, 0, 0);
-  stage(&s, 1, pass(15, 8, 14, 6, 1, 0), pass(7, 7, 7, 0, 0, 0), 1, 7, 15, 0);
-  stage(&s, 2, pass(6, 0, 8, 15, 0, 0), pass(7, 7, 7, 0, 0, 0), 2, 7, 0, 0);
-  stage(&s, 3, pass(14, 15, 12, 0, 0, 0), pass(7, 4, 5, 7, 0, 1), 3, 0, 0, 0);
-  mh3_shade_material m;
-  mh3_shade_classify(&s, &m);
-  assert(!m.overlay && m.alpha_test && m.textures == 2);
-  assert(m.texture_map[0] == 0 && m.texture_map[1] == 3 && m.texture_coordinate[1] == 3);
-  const float tex[3][4] = {{0.2f, 0.4f, 0.6f, 0.f},
-                           {0.9f, 0.1f, 0.5f, 0.75f},
-                           {0.f, 0.f, 0.f, 0.f}},
-              ras[4] = {0.5f, 0.5f, 0.5f, 0.8f};
-  check(&m, &s, 1, 3, tex, ras, 0.75f * 0.8f);
-
-  for (unsigned k = 0; k < 3; ++k)
-    check(&m, &s, 0, k, tex, ras, tex[0][k] * ras[k]);
-}
-
 static void layers(void) {
   mh3_native_material_state s;
   base(&s);
@@ -454,6 +429,166 @@ static void city_wall(void) {
 
     check(&m, &s, 1, 3, tex, ras[r], clamp01(tex[0][3] * ka + tex[1][3] * (1.f - ka)) * ras[r][3]);
   }
+}
+
+/* The CHAIN program's arithmetic (native_shader_source.cpp), lane k (3:
+ * alpha), with the texture of each role's map from tex. */
+static float chain_lane(const mh3_shade_material *m, const mh3_shade_draw *d,
+                        unsigned k, const float tex[8][4], const float ras[4]) {
+  const mh3_shade_chain_uniforms *u = &d->fragment.shading.chain;
+  const mh3_shade_chain_form *f = &mh3_shade_chain_forms[m->chain];
+  float t[5][4];
+
+  for (unsigned r = 0; r < 5; ++r)
+    for (unsigned i = 0; i < 4; ++i)
+      t[r][i] = r < m->textures && m->texture_map[r] < 8
+                    ? tex[m->texture_map[r]][i]
+                    : 1.f;
+
+  if (k == 3) {
+    const float a = u->alpha_select[0] * t[0][3] + u->alpha_select[1] * t[1][3] +
+                    u->alpha_select[2] * t[2][3] + u->alpha_select[3] * t[3][3] +
+                    u->alpha_select2[0] * t[4][3] + u->alpha_select2[1] * ras[3] +
+                    u->alpha_select2[2];
+    return clamp01(a * (ras[3] * u->alpha_factor[0] + u->alpha_factor[1]));
+  }
+
+  float x = clamp01(t[0][k] * (ras[k] * u->base_v[k] + u->base_c[k]));
+
+  for (unsigned i = 0; i < f->steps; ++i) {
+    const mh3_shade_chain_step_uniforms *q = &u->step[i];
+    const float layer = f->layer[i] != MH3_SHADE_NO_ROLE ? t[f->layer[i]][k] : 1.f;
+    const float mask = f->mask[i] != MH3_SHADE_NO_ROLE ? t[f->mask[i]][k] : 1.f;
+    const float p = clamp01((x * (ras[k] * q->keep_v[k] + q->keep_c[k]) +
+                             layer * (ras[k] * q->layer_v[k] + q->layer_c[k])) *
+                            q->s[k]);
+    x += (p - x) * (mask * q->mask_scale[k] + q->mask_offset[k]);
+  }
+
+  return x;
+}
+
+/* Ceadeus's body (em020 b_asme_0): the lit base, a masked environment map,
+ * then a masked rim map; five textures, the masks at the base's coordinate:
+ *   c2 = t0 ras; prev = sat(c2 + t1 k1); c0 = mix(c2, prev, t2);
+ *   prev = sat(c0 + t3 k0); prev = mix(c0, prev, t4); alpha t0.a ras.a. */
+static void chain_masked_layers(void) {
+  mh3_native_material_state s;
+  base(&s);
+  stage(&s, 0, pass(15, 8, 10, 15, 0, 3), pass(7, 4, 5, 7, 0, 0), 0, 4, 0, 0);
+  stage(&s, 1, pass(15, 8, 14, 6, 0, 0), pass(7, 7, 7, 0, 0, 0), 1, 6, 13, 0);
+  stage(&s, 2, pass(6, 0, 8, 15, 0, 1), pass(7, 7, 7, 0, 0, 0), 2, 6, 0, 0);
+  stage(&s, 3, pass(15, 8, 14, 2, 0, 0), pass(7, 7, 7, 0, 0, 0), 3, 6, 12, 0);
+  stage(&s, 4, pass(2, 0, 8, 15, 0, 0), pass(7, 0, 6, 7, 0, 0), 4, 6, 0, 0);
+  const uint8_t k0[3] = {200, 180, 160}, k1[3] = {90, 120, 150};
+
+  for (unsigned i = 0; i < 3; ++i) {
+    s.konst[0].rgba[i] = k0[i];
+    s.konst[1].rgba[i] = k1[i];
+  }
+
+  mh3_shade_material m;
+  assert(mh3_shade_classify(&s, &m) == (MH3_SHADE_EXACT | MH3_SHADE_FOLDED));
+  assert(m.model == MH3_SHADE_CHAIN && m.textures == 5);
+  /* layers in roles 1 and 2, masks in roles 3 and 4 */
+  assert(m.texture_map[0] == 0 && m.texture_map[1] == 1 && m.texture_map[2] == 3 &&
+         m.texture_map[3] == 2 && m.texture_map[4] == 4);
+  mh3_shade_draw d;
+  memset(&d, 0, sizeof d);
+  mh3_shade_fill(&m, &s, &d);
+  const float tex[8][4] = {{0.6f, 0.3f, 0.9f, 0.5f}, {0.7f, 0.9f, 0.4f, 0.1f},
+                           {0.5f, 0.2f, 0.8f, 0.3f}, {0.9f, 0.6f, 0.7f, 0.2f},
+                           {0.25f, 1.f, 0.6f, 0.4f}},
+              ras[2][4] = {{0.4f, 0.8f, 0.2f, 0.6f}, {1.f, 0.9f, 0.7f, 1.f}};
+
+  for (unsigned r = 0; r < 2; ++r) {
+    for (unsigned k = 0; k < 3; ++k) {
+      const float c2 = tex[0][k] * ras[r][k];
+      const float c0 = c2 + tex[2][k] * (clamp01(c2 + tex[1][k] * k1[k] / 255.f) - c2);
+      const float glow = clamp01(c0 + tex[3][k] * k0[k] / 255.f);
+      near(chain_lane(&m, &d, k, tex, ras[r]), c0 + tex[4][k] * (glow - c0));
+    }
+
+    near(chain_lane(&m, &d, 3, tex, ras[r]), tex[0][3] * ras[r][3]);
+  }
+}
+
+/* Lagiacrus's spines (em015 bsm_2): the masked environment map, lit, then
+ * a glow added after the lighting, in the konst colour k3:
+ *   c2 = t0; prev = sat(c2 + t1 k1); prev = mix(c2, prev, t2);
+ *   prev = prev ras; prev = sat(prev + t3 k3); alpha ras.a. */
+static void chain_lit_glow(void) {
+  mh3_native_material_state s;
+  base(&s);
+  stage(&s, 0, pass(15, 8, 14, 15, 0, 3), pass(7, 7, 7, 7, 0, 0), 0, 6, 0, 0);
+  stage(&s, 1, pass(15, 8, 14, 6, 0, 0), pass(7, 7, 7, 7, 0, 0), 1, 6, 13, 0);
+  stage(&s, 2, pass(6, 0, 8, 15, 0, 0), pass(7, 7, 7, 7, 0, 0), 2, 6, 0, 0);
+  stage(&s, 3, pass(15, 0, 10, 15, 0, 0), pass(7, 6, 5, 7, 0, 0), 255, 4, 0, 0);
+  stage(&s, 4, pass(15, 8, 14, 0, 0, 0), pass(7, 7, 7, 0, 0, 0), 3, 6, 15, 0);
+  const uint8_t k1[3] = {255, 255, 255}, k3[3] = {100, 220, 255};
+
+  for (unsigned i = 0; i < 3; ++i) {
+    s.konst[1].rgba[i] = k1[i];
+    s.konst[3].rgba[i] = k3[i];
+  }
+
+  mh3_shade_material m;
+  assert(mh3_shade_classify(&s, &m) == (MH3_SHADE_EXACT | MH3_SHADE_FOLDED));
+  assert(m.model == MH3_SHADE_CHAIN && m.textures == 4 && m.chain == 4);
+  mh3_shade_draw d;
+  memset(&d, 0, sizeof d);
+  mh3_shade_fill(&m, &s, &d);
+  const float tex[8][4] = {{0.6f, 0.3f, 0.9f, 0.5f}, {0.7f, 0.9f, 0.4f, 0.1f},
+                           {0.5f, 0.2f, 0.8f, 0.3f}, {0.9f, 0.6f, 0.7f, 0.2f}},
+              ras[4] = {0.4f, 0.8f, 0.2f, 0.6f};
+
+  for (unsigned k = 0; k < 3; ++k) {
+    const float c2 = tex[0][k];
+    const float lit = (c2 + tex[2][k] * (clamp01(c2 + tex[1][k] * k1[k] / 255.f) - c2)) * ras[k];
+    near(chain_lane(&m, &d, k, tex, ras), clamp01(lit + tex[3][k] * k3[k] / 255.f));
+  }
+
+  near(chain_lane(&m, &d, 3, tex, ras), ras[3]);
+}
+
+/* Alatreon's wings (em024 basm_2): the masked environment map at twice its
+ * sum, and the alpha from a fourth map that the last stage writes to a0
+ * (the TEV's output is the last stage's): textures 0, 1 and the mask 2, the
+ * alpha map 3, which takes the free role 2 (its own coordinate). */
+static void chain_alpha_map(void) {
+  mh3_native_material_state s;
+  base(&s);
+  s.pixel.values[MH3_PIXEL_ALPHA_COMPARE0] = 6; /* GEQUAL 100 */
+  s.pixel.values[MH3_PIXEL_ALPHA_REFERENCE0] = 100;
+  s.pixel.values[MH3_PIXEL_ALPHA_COMPARE1] = 3; /* LEQUAL 255 */
+  s.pixel.values[MH3_PIXEL_ALPHA_REFERENCE1] = 255;
+  stage(&s, 0, pass(15, 8, 10, 15, 0, 3), pass(7, 7, 7, 7, 0, 0), 0, 0, 0, 0);
+  stage(&s, 1, pass(15, 8, 14, 6, 1, 0), pass(7, 7, 7, 0, 0, 0), 1, 6, 15, 0);
+  stage(&s, 2, pass(6, 0, 8, 15, 0, 0), pass(7, 7, 7, 0, 0, 0), 2, 6, 0, 0);
+  stage(&s, 3, pass(14, 15, 12, 0, 0, 0), pass(7, 4, 5, 7, 0, 1), 3, 0, 0, 0);
+  const uint8_t k3[3] = {255, 65, 30};
+
+  for (unsigned i = 0; i < 3; ++i)
+    s.konst[3].rgba[i] = k3[i];
+
+  mh3_shade_material m;
+  assert(mh3_shade_classify(&s, &m) == (MH3_SHADE_EXACT | MH3_SHADE_FOLDED));
+  assert(m.model == MH3_SHADE_CHAIN && m.alpha_test && m.textures == 4 && m.chain == 1);
+  assert(m.texture_map[2] == 3 && m.texture_coordinate[2] == 3 && m.texture_map[3] == 2);
+  mh3_shade_draw d;
+  memset(&d, 0, sizeof d);
+  mh3_shade_fill(&m, &s, &d);
+  const float tex[8][4] = {{0.2f, 0.4f, 0.6f, 0.f}, {0.3f, 0.1f, 0.5f, 0.2f},
+                           {0.7f, 0.5f, 0.25f, 0.f}, {0.9f, 0.1f, 0.5f, 0.75f}},
+              ras[4] = {0.5f, 0.5f, 0.5f, 0.8f};
+
+  for (unsigned k = 0; k < 3; ++k) {
+    const float c2 = tex[0][k] * ras[k];
+    near(chain_lane(&m, &d, k, tex, ras), c2 + tex[2][k] * (clamp01(2.f * (c2 + tex[1][k] * k3[k] / 255.f)) - c2));
+  }
+
+  near(chain_lane(&m, &d, 3, tex, ras), 0.75f * 0.8f);
+  near(d.fragment.alpha_range[0], 99.5f / 255.f);
 }
 
 static void approximations(void) {
@@ -647,17 +782,21 @@ int main(void) {
   assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_BASIC) == 48 + 544);
   assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_MODULATE) == 48 + 112);
   assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_LAYERS) == 48 + 176);
+  assert(MH3_SHADE_FRAGMENT_BYTES(MH3_SHADE_CHAIN) == 48 + 432);
+  assert(offsetof(mh3_shade_chain_uniforms, alpha_select) == 32 + 3 * 112);
   basic_texture_times_raster();
   konst_and_register();
   folded_multiply();
   color_mapped_text();
   particle_lerp();
   overlay_family();
-  overlay_alpha_map();
   layers();
   sea_surface();
   cave_ice();
   city_wall();
+  chain_masked_layers();
+  chain_lit_glow();
+  chain_alpha_map();
   split_color_alpha();
   approximations();
   fog();

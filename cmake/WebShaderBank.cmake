@@ -30,6 +30,7 @@ function(mh3_web_shader_bank target xxhash_dir)
     "${root}/aurora-main/lib/gfx/fixed_shader_sources.cpp")
   set(headers
     "${root}/runtime/src/native_shader_source.h"
+    "${root}/runtime/native/mh3_shade_chain.h"
     "${root}/aurora-main/lib/gfx/shader_source.hpp"
     "${root}/aurora-main/lib/gfx/fixed_shader_sources.hpp"
     "${root}/aurora-main/lib/gfx/depth_peek_shaders.hpp"

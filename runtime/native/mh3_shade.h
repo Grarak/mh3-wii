@@ -20,11 +20,21 @@
  *          separately: stages that add a texture times the vertex colour or a
  *          constant each (the Deserted Island sea surface, A-p09-uv-suimen*),
  *          then at most one multiply by the vertex colour or a constant.
+ * CHAIN:   x = saturate(t0 * (vertex * kv + kc)), then up to three steps
+ *          x = mix(x, saturate((x * (vertex * keep_v + keep_c) + T * (vertex *
+ *          layer_v + layer_c)) * s), M * mask_scale + mask_offset) on the
+ *          colour, with the layer texture T and the mask M each a role or 1;
+ *          alpha = saturate(A * (vertex * kv + kc)), A a role's alpha, the
+ *          vertex alpha or 1. The monsters' base + masked environment map +
+ *          rim or glow map materials (Ceadeus's b_asme, Deviljho's basm, ...):
+ *          up to five textures, the masks (roles 3 and 4) at role 0's
+ *          coordinates.
  * Multi-stage programs are folded into this form when exact: prev * x
  * multiplies, prev + X layers (up to three), mix(A, prev, C) over a single
  * product and stages that leave prev alone. */
 #include "mh3_model_state.h"
 #include "mh3_material_state.h"
+#include "mh3_shade_chain.h"
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -78,6 +88,19 @@ typedef struct mh3_shade_layers {
     float kv[4][4], kc[4][4], s[4], mv[4], mc[4];
 } mh3_shade_layers;
 
+/* CHAIN: the base factor, per step the keep, layer and mask coefficients and
+ * the scale, the alpha source select (roles 0..3; role 4, vertex, one) and
+ * factor (x kv, y kc), the LOD bias of roles 3 and 4 (GLES sampling). */
+typedef struct mh3_shade_chain_step_uniforms {
+    float keep_v[4], keep_c[4], layer_v[4], layer_c[4], mask_scale[4], mask_offset[4], s[4];
+} mh3_shade_chain_step_uniforms;
+
+typedef struct mh3_shade_chain_uniforms {
+    float base_v[4], base_c[4];
+    mh3_shade_chain_step_uniforms step[3];
+    float alpha_select[4], alpha_select2[4], alpha_factor[4], texture_bias[4];
+} mh3_shade_chain_uniforms;
+
 /* The View block (mesh vertex stage, binding 6 / vertex BUFFER[4]): the
  * projection and viewport, shared by the draws that use them; a new block
  * only when they change. */
@@ -108,6 +131,7 @@ typedef struct mh3_shade_fragment {
         mh3_shade_basic basic;
         mh3_shade_modulate modulate;
         mh3_shade_layers layers;
+        mh3_shade_chain_uniforms chain;
     } shading;
 } mh3_shade_fragment;
 
@@ -120,12 +144,14 @@ typedef struct mh3_shade_draw {
 enum {
     MH3_SHADE_BASIC,
     MH3_SHADE_MODULATE,
-    MH3_SHADE_LAYERS
+    MH3_SHADE_LAYERS,
+    MH3_SHADE_CHAIN
 };
 #define MH3_SHADE_FRAGMENT_OFFSET 512u
 #define MH3_SHADE_VERTEX_BYTES(textures) ((uint32_t)offsetof(mh3_shade_vertex, texgen) + (uint32_t)(textures) * (uint32_t)sizeof(mh3_shade_texgen))
 #define MH3_SHADE_FRAGMENT_BYTES(model) \
-    (48u + ((model) == MH3_SHADE_MODULATE ? (uint32_t)sizeof(mh3_shade_modulate) : (model) == MH3_SHADE_LAYERS ? (uint32_t)sizeof(mh3_shade_layers) : (uint32_t)sizeof(mh3_shade_basic)))
+    (48u + ((model) == MH3_SHADE_MODULATE ? (uint32_t)sizeof(mh3_shade_modulate) : (model) == MH3_SHADE_LAYERS ? (uint32_t)sizeof(mh3_shade_layers) : \
+            (model) == MH3_SHADE_CHAIN ? (uint32_t)sizeof(mh3_shade_chain_uniforms) : (uint32_t)sizeof(mh3_shade_basic)))
 #define MH3_SHADE_DRAW_BYTES(model) (MH3_SHADE_FRAGMENT_OFFSET + MH3_SHADE_FRAGMENT_BYTES(model))
 /* Per vertex ze = fog.x / (fog.y - depth * fog.w) (perspective; fog.x = a * 2^24,
  * fog.w = 2^(24 - shift)) or fog.x * depth (shape.z set: orthographic); the
@@ -186,9 +212,19 @@ enum {
     MH3_SHADE_CHANNEL1 = 64  /* approximation: colour channel 1 shaded as channel 0 */
 };
 
+/* CHAIN: one step's factors (constants; _v multiplies the vertex colour). */
+typedef struct mh3_shade_chain_step {
+    mh3_shade_constant keep_v, keep_c, layer_v, layer_c, mask_scale, mask_offset;
+    uint8_t complement; /* the mask is 1 - (M * mask_scale + mask_offset) */
+    uint8_t scale;      /* GX encoding */
+} mh3_shade_chain_step;
+
 typedef struct mh3_shade_material {
     uint8_t textures, overlay, alpha_test, quality, model;
-    uint8_t texture_map[3], texture_coordinate[3];
+    /* Roles 0..2 have their own coordinates; CHAIN's roles 3 and 4 (masks)
+     * sample at role 0's. A role inside textures without a texture (a CHAIN
+     * form's gap) has map 255. */
+    uint8_t texture_map[5], texture_coordinate[5];
     mh3_shade_equation color, alpha;
     mh3_shade_constant overlay_scale;
     /* LAYERS: input[r] is texture role r's factor (offset + scale * vertex),
@@ -200,6 +236,11 @@ typedef struct mh3_shade_material {
     /* Cached exact form: saturate(texture0 * vertex), RGBA independently.
      * Only literal zero/one references qualify; draw-time register values do not. */
     uint8_t pure_modulate;
+    /* CHAIN: the form, the base factor, the steps, the alpha source (a role,
+     * MH3_SHADE_CHAIN_ALPHA_VERTEX or _ONE) and factor. */
+    uint8_t chain, chain_alpha_source;
+    mh3_shade_constant chain_base_v, chain_base_c, chain_alpha_v, chain_alpha_c;
+    mh3_shade_chain_step chain_step[3];
 } mh3_shade_material;
 
 /* Pure function of the material's structural fields; returns quality flags. */

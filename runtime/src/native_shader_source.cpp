@@ -27,6 +27,7 @@
 // are static * picked animated palette entries, evaluated from uniforms only.
 #include "native_shader_source.h"
 #include "fatal.h"
+#include "../native/mh3_shade_chain.h"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -643,6 +644,91 @@ void main() {
 }
 )GLSL";
 
+// CHAIN (mh3_shade.h): x = saturate(t0 * (v * base_v + base_c)), then per
+// step x = mix(x, saturate((x * (v * keep_v + keep_c) + L * (v * layer_v +
+// layer_c)) * s), M * mask_scale + mask_offset) with the form's layer and mask
+// roles L and M (one without), on the colour; alpha = saturate(A * (v.a *
+// alpha_factor.x + alpha_factor.y)), A the selected role's alpha, v.a or one.
+// Roles 3 and 4 sample at role 0's coordinate. Its own program text: the
+// other models' programs stay as they were.
+constexpr const char* GlslChainFragment = R"GLSL(
+struct Step {
+    vec4 keep_v;
+    vec4 keep_c;
+    vec4 layer_v;
+    vec4 layer_c;
+    vec4 mask_scale;
+    vec4 mask_offset;
+    vec4 s;
+};
+layout(std140) uniform Shade {
+    vec4 texture_bias;
+    vec4 overlay;
+    vec4 alpha_range;
+    vec4 base_v;
+    vec4 base_c;
+    Step step[3];
+    vec4 alpha_select;
+    vec4 alpha_select2;
+    vec4 alpha_factor;
+    vec4 mask_bias;
+} shade;
+in vec4 v_color0;
+in vec2 v_uv0;
+in vec2 v_uv1;
+in vec2 v_uv2;
+in vec4 v_fog;
+uniform sampler2D u_texture0;
+uniform sampler2D u_texture1;
+uniform sampler2D u_texture2;
+uniform sampler2D u_texture3;
+uniform sampler2D u_texture4;
+out vec4 frag_color;
+vec3 chain_step(int i, vec3 x, vec3 v, vec3 layer, vec3 mask) {
+    Step k = shade.step[i];
+    vec3 p = clamp((x * (v * k.keep_v.rgb + k.keep_c.rgb) + layer * (v * k.layer_v.rgb + k.layer_c.rgb)) * k.s.rgb, 0.0, 1.0);
+    return mix(x, p, mask * k.mask_scale.rgb + k.mask_offset.rgb);
+}
+void main() {
+    vec4 one = vec4(1.0), t1 = one, t2 = one, t3 = one, t4 = one;
+    vec4 t0 = texture(u_texture0, v_uv0, shade.texture_bias.x);
+#if ROLES & 2
+    t1 = texture(u_texture1, v_uv1, shade.texture_bias.y);
+#endif
+#if ROLES & 4
+    t2 = texture(u_texture2, v_uv2, shade.texture_bias.z);
+#endif
+#if ROLES & 8
+    t3 = texture(u_texture3, v_uv0, shade.mask_bias.x);
+#endif
+#if ROLES & 16
+    t4 = texture(u_texture4, v_uv0, shade.mask_bias.y);
+#endif
+    vec4 v = v_color0;
+    vec3 x = clamp(t0.rgb * (v.rgb * shade.base_v.rgb + shade.base_c.rgb), 0.0, 1.0);
+    x = chain_step(0, x, v.rgb, LAYER0.rgb, MASK0.rgb);
+#if STEPS > 1
+    x = chain_step(1, x, v.rgb, LAYER1.rgb, MASK1.rgb);
+#endif
+#if STEPS > 2
+    x = chain_step(2, x, v.rgb, LAYER2.rgb, MASK2.rgb);
+#endif
+    float a = dot(shade.alpha_select, vec4(t0.a, t1.a, t2.a, t3.a)) + dot(shade.alpha_select2.xyz, vec3(t4.a, v.a, 1.0));
+    vec4 result = vec4(x, clamp(a * (v.a * shade.alpha_factor.x + shade.alpha_factor.y), 0.0, 1.0));
+#if ALPHA_TEST
+    if (result.a < shade.alpha_range.x || result.a >= shade.alpha_range.y)
+        discard;
+#endif
+#if FOG
+    result.rgb = result.rgb * v_fog.w + v_fog.rgb;
+#endif
+#if TARGET_ALPHA_ONE
+    result.a = 1.0;
+#endif
+    frag_color = result;
+}
+)GLSL";
+
 // ------------------------------------------------------------------- Cg (GXM)
 // Matrices are stored as three row vectors (GX 3x4); float4x3 column-major makes
 // mul(v, M) match GLSL's v * mat3x4.
@@ -1213,6 +1299,80 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
 }
 )CG";
 
+// The CHAIN program in Cg (GlslChainFragment), half precision as the others.
+constexpr const char* CgChainFragment = R"CG(
+#define real half
+#define real3 half3
+#define real4 half4
+struct Step {
+    float4 keep_v;
+    float4 keep_c;
+    float4 layer_v;
+    float4 layer_c;
+    float4 mask_scale;
+    float4 mask_offset;
+    float4 s;
+};
+struct Shade {
+    float4 texture_bias;
+    float4 overlay;
+    float4 alpha_range;
+    float4 base_v;
+    float4 base_c;
+    Step step[3];
+    float4 alpha_select;
+    float4 alpha_select2;
+    float4 alpha_factor;
+    float4 mask_bias;
+};
+uniform Shade shade : BUFFER[0];
+real3 chain_step(int i, real3 x, real3 v, real3 layer, real3 mask) {
+    real3 p = saturate((x * (v * real3(shade.step[i].keep_v.rgb) + real3(shade.step[i].keep_c.rgb)) +
+                        layer * (v * real3(shade.step[i].layer_v.rgb) + real3(shade.step[i].layer_c.rgb))) * real3(shade.step[i].s.rgb));
+    return lerp(x, p, mask * real3(shade.step[i].mask_scale.rgb) + real3(shade.step[i].mask_offset.rgb));
+}
+real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, real4 v_fog : TEXCOORD3,
+            uniform sampler2D u_texture0 : TEXUNIT0, uniform sampler2D u_texture1 : TEXUNIT1, uniform sampler2D u_texture2 : TEXUNIT2,
+            uniform sampler2D u_texture3 : TEXUNIT3, uniform sampler2D u_texture4 : TEXUNIT4) : COLOR {
+    real4 one = real4(1.0h, 1.0h, 1.0h, 1.0h), t1 = one, t2 = one, t3 = one, t4 = one;
+    real4 t0 = tex2D(u_texture0, v_uv0);
+#if ROLES & 2
+    t1 = tex2D(u_texture1, v_uv1);
+#endif
+#if ROLES & 4
+    t2 = tex2D(u_texture2, v_uv2);
+#endif
+#if ROLES & 8
+    t3 = tex2D(u_texture3, v_uv0);
+#endif
+#if ROLES & 16
+    t4 = tex2D(u_texture4, v_uv0);
+#endif
+    real4 v = v_color0;
+    real3 x = saturate(t0.rgb * (v.rgb * real3(shade.base_v.rgb) + real3(shade.base_c.rgb)));
+    x = chain_step(0, x, v.rgb, LAYER0.rgb, MASK0.rgb);
+#if STEPS > 1
+    x = chain_step(1, x, v.rgb, LAYER1.rgb, MASK1.rgb);
+#endif
+#if STEPS > 2
+    x = chain_step(2, x, v.rgb, LAYER2.rgb, MASK2.rgb);
+#endif
+    real a = dot(real4(shade.alpha_select), real4(t0.a, t1.a, t2.a, t3.a)) + dot(real3(shade.alpha_select2.xyz), real3(t4.a, v.a, 1.0h));
+    real4 result = real4(x, saturate(a * (v.a * real(shade.alpha_factor.x) + real(shade.alpha_factor.y))));
+#if ALPHA_TEST
+    if (result.a < shade.alpha_range.x || result.a >= shade.alpha_range.y)
+        discard;
+#endif
+#if FOG
+    result.rgb = result.rgb * v_fog.w + v_fog.rgb;
+#endif
+#if TARGET_ALPHA_ONE
+    result.a = 1.0h;
+#endif
+    return result;
+}
+)CG";
+
 std::string Define(const char* name, int value) {
     return std::string("#define ") + name + " " + std::to_string(value) + "\n";
 }
@@ -1286,7 +1446,26 @@ std::string GlslVertex(const NativeShaderVertexKey& key) {
     return std::string(GlslPrelude) + VertexDefines(key) + (mesh ? TexgenOutputs(key, false) : "") + GlslScene + GlslDraw + (mesh ? GlslAnimated : "") + GlslVertexCommon + main;
 }
 
+// A CHAIN form's steps, roles and the layer and mask each step reads.
+std::string ChainDefines(const NativeShaderFragmentKey& key) {
+    const auto& form = mh3_shade_chain_forms[key.chain];
+    const auto role = [](uint8_t r) { return r == MH3_SHADE_NO_ROLE ? std::string("one") : "t" + std::to_string(r); };
+    std::string out = Define("STEPS", form.steps) + Define("ROLES", form.roles) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
+                      Define("LINEAR_FOG", key.linear_fog) + Define("TARGET_ALPHA_ONE", key.target_alpha_one);
+
+    for (unsigned i = 0; i < 3; ++i) {
+        const auto n = std::to_string(i);
+        out += "#define LAYER" + n + " " + role(i < form.steps ? form.layer[i] : MH3_SHADE_NO_ROLE) + "\n";
+        out += "#define MASK" + n + " " + role(i < form.steps ? form.mask[i] : MH3_SHADE_NO_ROLE) + "\n";
+    }
+
+    return out;
+}
+
 std::string GlslFragmentSource(const NativeShaderFragmentKey& key) {
+    if (key.model == NativeShaderModel::Chain)
+        return std::string(GlslPrelude) + ChainDefines(key) + GlslChainFragment;
+
     return std::string(GlslPrelude) + FragmentDefines(key) + GlslScene + GlslShade + GlslAnimated + GlslFragment;
 }
 
@@ -1325,7 +1504,34 @@ bool NativeShaderFoldsFog(const NativeShaderVariant& variant) {
     return variant.fog && PureModulate(variant);
 }
 
+// The roles a CHAIN form samples: the highest one and those below it.
+unsigned ChainTextures(unsigned chain) {
+    unsigned textures = 0;
+
+    for (unsigned r = 0; r < NativeShaderChainTextures; ++r)
+        if (mh3_shade_chain_forms[chain].roles & (1u << r))
+            textures = r + 1;
+
+    return textures;
+}
+
 NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& variant) {
+    if (variant.model == NativeShaderModel::Chain) {
+        if (variant.chain >= MH3_SHADE_CHAIN_FORMS)
+            Invalid("a chain form outside mh3_shade_chain_forms");
+
+        // Only the form and the alpha, fog and target options reach the program.
+        NativeShaderFragmentKey key;
+        key.model = variant.model;
+        key.chain = variant.chain;
+        key.textures = uint8_t(ChainTextures(variant.chain));
+        key.alpha_test = variant.alpha_test;
+        key.fog = variant.fog;
+        key.linear_fog = variant.fog && variant.linear_fog;
+        key.target_alpha_one = variant.target_alpha_one;
+        return key;
+    }
+
     if (variant.textures > NativeShaderMaxTextures)
         Invalid("more than three texture roles");
 
@@ -1393,9 +1599,11 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
 
     for (unsigned model = 0; model < NativeShaderModelCount; ++model)
         for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
+            for (unsigned chain = 0; chain < (model == unsigned(NativeShaderModel::Chain) ? MH3_SHADE_CHAIN_FORMS : 1u); ++chain)
             for (unsigned flags = 0; flags < 2048; ++flags) {
                 v.model = NativeShaderModel(model);
                 v.textures = uint8_t(textures);
+                v.chain = uint8_t(chain);
                 v.overlay = flags & 1;
                 v.alpha_test = flags & 2;
                 v.fog = flags & 4;
@@ -1422,6 +1630,9 @@ std::string NativeShaderCgVertex(const NativeShaderVertexKey& key) {
 }
 
 std::string NativeShaderCgFragment(const NativeShaderFragmentKey& key) {
+    if (key.model == NativeShaderModel::Chain)
+        return ChainDefines(key) + CgChainFragment;
+
     return std::string(CgScene) + FragmentDefines(key) + CgShade + CgAnimated + CgFragment;
 }
 
@@ -1467,8 +1678,9 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
 }
 
 std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
-    static constexpr const char* models[NativeShaderModelCount] = {"basic", "modulate", "layers"};
-    return std::string(models[unsigned(key.model)]) + "_t" + std::to_string(key.textures) + (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
+    static constexpr const char* models[NativeShaderModelCount] = {"basic", "modulate", "layers", "chain"};
+    return std::string(models[unsigned(key.model)]) + (key.model == NativeShaderModel::Chain ? std::to_string(key.chain) : "") + "_t" + std::to_string(key.textures) +
+           (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
            (key.basic_lerp ? (key.vertex_lerp ? "_vlerp" : "_lerp") : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }

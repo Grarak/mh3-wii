@@ -178,13 +178,18 @@ struct PipelineKey {
   }
 };
 
+// A program samples at most five textures (the CHAIN programs' u_texture0..4).
+constexpr uint32_t MaxTextureSlots = 5;
+using TextureUnits = std::array<int, MaxTextureSlots>;
+
 struct TextureGroupKey {
   const void* layout = nullptr;
-  std::array<GLuint, 4> textures{};
-  std::array<GLuint, 4> samplers{};
+  std::array<GLuint, MaxTextureSlots> textures{};
+  std::array<GLuint, MaxTextureSlots> samplers{};
   bool operator==(const TextureGroupKey&) const = default;
   friend uint32_t FastHashValue(const TextureGroupKey& k) {
-    return FastHash(k.layout, k.textures[0], k.textures[1], k.textures[2], k.textures[3], k.samplers[0], k.samplers[1], k.samplers[2], k.samplers[3]);
+    return FastHash(k.layout, k.textures[0], k.textures[1], k.textures[2], k.textures[3], k.textures[4], k.samplers[0], k.samplers[1], k.samplers[2], k.samplers[3],
+                    k.samplers[4]);
   }
 };
 
@@ -909,12 +914,12 @@ public:
   // ---- Bindings ----
 
   // Group 1 for the program's slots: slot k reads the texture at units[k].
-  const wgpu::BindGroup* texture_group(const ProgramEntry& program, const std::array<int, 4>& units) {
+  const wgpu::BindGroup* texture_group(const ProgramEntry& program, const TextureUnits& units) {
     if (program.slots.empty())
       return nullptr;
 
-    if (program.slots.size() > 4)
-      AURORA_THROW(std::runtime_error("A program samples more than four textures"));
+    if (program.slots.size() > MaxTextureSlots)
+      AURORA_THROW(std::runtime_error("A program samples more than five textures"));
 
     TextureGroupKey key;
     key.layout = program.textureLayout.Get();
@@ -1035,7 +1040,7 @@ public:
   }
 
   // Records one draw with its pipeline and groups; the caller binds buffers.
-  bool prepare(GLuint id, ProgramEntry& program, uint32_t layoutId, const std::array<uint32_t, UniformBindings>& offsets, const std::array<int, 4>& units,
+  bool prepare(GLuint id, ProgramEntry& program, uint32_t layoutId, const std::array<uint32_t, UniformBindings>& offsets, const TextureUnits& units,
                const char* vertexEntry = "main", const char* fragmentEntry = "main") {
     if (!begin_pass() || viewport_empty())
       return false;
@@ -1820,7 +1825,7 @@ GLuint Program::get() noexcept {
       Slot slot{texture.name, -1, texture.kind, texture.sampled};
 
       if (entry.shaded) {
-        // u_texture0..2: the role, bound per draw to a GX map unit.
+        // u_texture0..4: the role, bound per draw to a GX map unit.
         slot.unit = texture.name.back() - '0';
       } else {
         const auto found = std::find_if(m_desc.samplers.begin(), m_desc.samplers.end(), [&](const auto& sampler) { return sampler.first == texture.name; });
@@ -2042,7 +2047,7 @@ void draw_fullscreen(GLuint program) noexcept {
     r.reserve(r.fixed_bytes(entry), 0, 0);
     std::array<uint32_t, UniformBindings> offsets{};
     r.fixed_offsets(entry, offsets);
-    std::array<int, 4> units{-1, -1, -1, -1};
+    TextureUnits units{-1, -1, -1, -1, -1};
 
     for (uint32_t k = 0; k < entry.slots.size() && k < units.size(); ++k)
       units[k] = entry.slots[k].unit;
@@ -2203,7 +2208,7 @@ bool uint_input(unsigned location) {
 } // namespace
 
 void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, const ShadedMeshInputs& inputs, uint32_t vertexOffset, uint32_t vertexCount, uint32_t indexOffset, uint32_t indexCount,
-                      GLuint program, const ShadedBlocks& blocks, const std::array<uint8_t, 3>& textureUnits) {
+                      GLuint program, const ShadedBlocks& blocks, const ShadedTextureUnits& textureUnits) {
   if (!aurora::native_frame_drawing_allowed() || !indexCount || !program)
     return;
 
@@ -2263,7 +2268,7 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
     auto& entry = r.programs.at(program);
     r.state.program = program;
 
-    if (!r.prepare(program, entry, layoutId, offsets, {textureUnits[0], textureUnits[1], textureUnits[2], -1}))
+    if (!r.prepare(program, entry, layoutId, offsets, {textureUnits[0], textureUnits[1], textureUnits[2], textureUnits[3], textureUnits[4]}))
       return;
 
     r.pass.encoder.SetVertexBuffer(0, mesh->second, vertexOffset, uint64_t(vertexCount) * layout.stride);
@@ -2274,10 +2279,10 @@ void draw_shaded_mesh(const NativeMeshBuffer& buffer, const MeshLayout& layout, 
 }
 
 // The web build records no compact quads (runtime: MH3 effect quads).
-void draw_shaded_quads(const AuroraNativeQuadVertex*, const AuroraNativeQuadLerp*, uint32_t, GLuint, const ShadedBlocks&, const std::array<uint8_t, 3>&) noexcept {}
+void draw_shaded_quads(const AuroraNativeQuadVertex*, const AuroraNativeQuadLerp*, uint32_t, GLuint, const ShadedBlocks&, const ShadedTextureUnits&) noexcept {}
 
 void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const std::array<uint8_t, 3>& coordinates, GLuint program, const ShadedBlocks& blocks,
-                          const std::array<uint8_t, 3>& textureUnits) noexcept {
+                          const ShadedTextureUnits& textureUnits) noexcept {
   if (!aurora::native_frame_drawing_allowed() || !geometry.index_count || !program)
     return;
 
@@ -2305,7 +2310,7 @@ void draw_shaded_geometry(const AuroraNativeMaterialGeometry& geometry, const st
     auto& entry = r.programs.at(program);
     r.state.program = program;
 
-    if (!r.prepare(program, entry, layoutId, offsets, {textureUnits[0], textureUnits[1], textureUnits[2], -1}))
+    if (!r.prepare(program, entry, layoutId, offsets, {textureUnits[0], textureUnits[1], textureUnits[2], textureUnits[3], textureUnits[4]}))
       return;
 
     r.pass.encoder.SetVertexBuffer(0, r.vertexBuffer, vertexOffset, vertexBytes);
