@@ -20,14 +20,14 @@ The Vita build ships every program it can bind, compiled by Sony's
   enumerate every value of every field. The bank is that whole domain plus
   the fixed GLSL programs (texture copy and palette conversion, depth peek,
   scene feedback), translated to Cg by the runtime's own converter, and 8
-  hand-written utility programs: 4,222 vertex and 1,006 fragment stages in
+  hand-written utility programs: 4,222 vertex and 1,066 fragment stages in
   all (the skinned variants doubled the mesh vertex programs; the CHAIN
-  forms added 108 fragment programs).
+  forms added 168 fragment programs).
 - `cmake/GxmShaderBank.cmake` builds a host generator that writes the Cg,
   compiles each stage with `psp2cgc` under Wine in Docker (cached by a hash
   of compiler, options and source), and packs the result: a zstd
   dictionary trained on the bank, then one zstd frame per program. The
-  5,228-stage bank is about 28 MB of GXP, embedded as 2.2 MB (the build's
+  5,288-stage bank is about 28 MB of GXP, embedded as 2.2 MB (the build's
   `shader_bank.json`). A program is decompressed the first time it is bound.
 - Release builds link no shader compiler; a miss stops the game.
   Development builds report a miss and fall back to the runtime compiler

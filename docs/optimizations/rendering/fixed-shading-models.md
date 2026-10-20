@@ -29,16 +29,22 @@ four hand-written programs (`runtime/native/mh3_shade.h`):
   each stage adds a texture times the vertex colour or a constant, then at
   most one multiply (the Deserted Island sea surface, whose alpha BASIC had
   reduced wrongly: the sea showed the seabed).
-- **CHAIN**: the large monsters' bodies, `x = sat(t0·(v·kv + kc))`, then up
-  to three steps `x = mix(x, sat((x·keep + L·f)·s), M)`: a lit base, an
-  environment map masked by a second texture, a rim or glow map added
-  unlit, a closing multiply by the vertex colour. Up to five textures; the
-  masks (roles 3 and 4) sample at the base's coordinate, so the vertex
+- **CHAIN**: the large monsters' bodies and a few map materials,
+  `x0 = x = sat(t0·(v·kv + kc) + kd)`, then up to three steps
+  `x = mix(x, sat((x·keep + x0·kb + L·f)·s), M)`: a lit base, an
+  environment map masked by a second texture (or a texture's alpha), a rim
+  or glow map added unlit, a multiply by the vertex colour. The alpha is one
+  source times its factor, or a clamped weighted sum of sources times a
+  second source. Up to five textures; the masks that find no free role of
+  their own (roles 3 and 4) sample at the base's coordinate, so the vertex
   programs keep three texture generators. Each form (the steps' layer and
-  mask roles, `runtime/native/mh3_shade_chain.h`) is one program. Ceadeus's
-  body is five stages and five textures: the base alone drew him two to
-  three times too dark in his lair, without the specular highlight and the
-  rim light.
+  mask roles, whether a step reads the base, whether the alpha is a sum,
+  `runtime/native/mh3_shade_chain.h`) is one program. Ceadeus's body is
+  five stages and five textures: the base alone drew him two to three times
+  too dark in his lair, without the specular highlight and the rim light.
+  The Tundra's lightmapped ground (`sat(2·ras·sat(2·mix(c0, t0·k, t1)))`) and
+  a water layer whose colour the fallback drew black take forms of their
+  own.
 
 `runtime/native/mh3_shade.c` folds multi-stage programs into these forms
 where that is exact (multiplies, up to three added layers, stages that
@@ -66,12 +72,13 @@ alpha compare becomes a discard interval.
   topologies; one-stage materials are 92%, and the top three topologies
   cover 92.5%. On the 45 packs of the Alatreon quest (3,549 materials) the
   classifier reproduces 97.6% exactly and MODULATE covers 98.6%. Run over
-  the whole disc, it reproduces all but 182 materials exactly: 167 only
-  lose an indirect warp, and 15 fall back (map materials in the Tundra
-  and the flooded areas, four monster parts). CHAIN took 27 from the
-  fallbacks, the bodies of ten large monsters.
+  the whole disc, it reproduces all but 173 materials exactly: 172 lose
+  only an indirect warp, and Ceadeus's eye falls back to a program whose
+  colour is exact but for its warp. CHAIN took 39 materials from the
+  fallbacks: the bodies of ten large monsters, the Tundra's lightmapped
+  ground and a water layer.
 - **Cost.** psp2shaderperf estimates: the fixed MODULATE program with one
-  texture 10 cycles per fragment, CHAIN 24 to 38 (five textures and fog),
+  texture 10 cycles per fragment, CHAIN 22 to 47 (38 for Ceadeus's five textures with fog),
   against 46-175 for the TEV-generated programs it replaced; the common vertex programs 56.5 (unlit) to 185 (four
   spot lights) against 271-848 (the general lighting and texgen variant
   still costs 848).

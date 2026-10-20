@@ -421,6 +421,15 @@ static void fold_channel(classifier *c, int alpha, unsigned start, unsigned coun
     c->stage = start;
     stage_equation(c, alpha, eq);
 
+    /* d alone (the mix vanishes) as the product d * 1, which the folds take
+     * (the Tundra's snow cover, A-p31-kabuseyukii-L: d = texture, then
+     * prev * ras * 2). Only when the first pass fell back. */
+    if (c->extended && is_zero(&eq->input[0]) && (is_zero(&eq->input[1]) || is_zero(&eq->input[2])) && !is_zero(&eq->input[3]) && !eq->bias && !eq->subtract) {
+        eq->input[1] = eq->input[3];
+        eq->input[2] = constant_term(constant(MH3_SHADE_CONSTANT_ONE, 0, 0));
+        eq->input[3] = zero_term();
+    }
+
     for (unsigned i = start + 1; i < count; ++i) {
         const mh3_pack_tev_pass *p = pass_of(c, i, alpha);
         c->stage = i;
@@ -899,15 +908,18 @@ static uint8_t classify_pass(const mh3_native_material_state *state, mh3_shade_m
 }
 
 /* ---- CHAIN: a base, then masked steps ----
- * The stages are walked once per channel with symbolic register values: a
- * term (a texture, the vertex colour or one, times vertex * v + c), the chain
- * after n steps, or a step's pending result saturate((x * keep + layer) * s)
- * that a later mix(x, pending, mask) or any other use completes. The first
- * textured term a stage writes is the base. */
+ * The stages are walked once per channel with symbolic register values. A
+ * colour value is a term (a texture or one, times vertex * v + c, plus a
+ * constant d), the chain after n steps, or a step's pending result
+ * saturate((x * keep + x0 * keep_base + layer) * s) that a later mix(x,
+ * pending, mask) or any other use completes. The first textured term a stage
+ * writes is the base x0. An alpha value is saturate(sum w_i A_i) * B *
+ * (vertex * v + c). Every term is non-negative, so the stages' clamps of a
+ * sum are the sum's one clamp. */
 typedef struct {
-    int8_t texture;  /* index into chain_walk's textures, -1 none */
-    uint8_t vertex;  /* alpha: the source is the vertex alpha */
-    mh3_shade_constant v, c; /* times vertex * v + c */
+    int8_t texture;             /* index into chain_walk's textures, -1 none */
+    uint8_t alpha;              /* colour: the texture's alpha in every lane */
+    mh3_shade_constant v, c, d; /* source * (vertex * v + c) + d */
 } chain_term;
 
 enum {
@@ -924,14 +936,32 @@ typedef struct {
     int8_t layer;
 } chain_value;
 
+/* Alpha sources: a walk texture, or these. */
+enum {
+    CHAIN_SOURCE_ONE = -1,
+    CHAIN_SOURCE_VERTEX = -2
+};
+
+typedef struct {
+    uint8_t terms; /* 0: zero */
+    int8_t source[MH3_SHADE_CHAIN_ALPHA_TERMS], times;
+    mh3_shade_constant weight[MH3_SHADE_CHAIN_ALPHA_TERMS];
+    mh3_shade_constant v, c; /* times vertex * v + c */
+} chain_alpha;
+
 typedef struct {
     const mh3_native_material_state *state;
     uint8_t map[8], coordinate[8], textures;
     int8_t base;
-    mh3_shade_constant base_v, base_c;
+    mh3_shade_constant base_v, base_c, base_d;
     mh3_shade_chain_step step[3];
     int8_t layer[3], mask[3];
+    uint8_t mask_alpha;
     unsigned length;
+
+    /* the alpha channel's registers; written: an alpha stage wrote it */
+    chain_alpha alpha[4];
+    uint8_t alpha_written[4];
 } chain_walk;
 
 static const mh3_shade_constant chain_zero = {{MH3_SHADE_CONSTANT_ZERO, MH3_SHADE_CONSTANT_ONE}, {0, 0}, {0, 0}};
@@ -963,68 +993,70 @@ static int chain_constant_product(const mh3_shade_constant *a, const mh3_shade_c
     return 1;
 }
 
+static int chain_scale_constant(mh3_shade_constant *k, uint8_t scale) {
+    static const uint8_t eighths[4] = {8, 16, 32, 4};
+
+    if (!scale)
+        return 1;
+
+    const mh3_shade_constant s = constant(MH3_SHADE_CONSTANT_FRACTION, eighths[scale & 3], 0);
+    return chain_constant_product(k, &s, k);
+}
+
 static chain_term chain_constant(mh3_shade_constant k) {
-    chain_term t = {-1, 0, chain_zero, k};
+    chain_term t = {-1, 0, chain_zero, k, chain_zero};
     return t;
 }
 
 static int chain_term_zero(const chain_term *t) {
-    return chain_static_zero(&t->c) && chain_static_zero(&t->v);
+    return chain_static_zero(&t->c) && chain_static_zero(&t->v) && chain_static_zero(&t->d);
+}
+
+/* A constant: no texture, no vertex factor, no offset. */
+static int chain_term_constant(const chain_term *t) {
+    return t->texture < 0 && chain_static_zero(&t->v) && chain_static_zero(&t->d);
 }
 
 static int chain_term_one(const chain_term *t) {
-    return t->texture < 0 && !t->vertex && chain_static_zero(&t->v) && chain_static_one(&t->c);
+    return chain_term_constant(t) && chain_static_one(&t->c);
 }
 
-/* x * y as one term: at most one source, a vertex factor only on one side
- * (alpha: vertex * vertex moves one into the source). */
-static int chain_product(chain_term x, chain_term y, int alpha, chain_term *out) {
+/* x * y as one term: one texture at most, a vertex factor or an offset only
+ * when the other side is a constant. */
+static int chain_product(chain_term x, chain_term y, chain_term *out) {
     if (chain_term_zero(&x) || chain_term_zero(&y)) {
         *out = chain_constant(chain_zero);
         return 1;
     }
 
-    const int vx = !chain_static_zero(&x.v), vy = !chain_static_zero(&y.v);
+    if (chain_term_constant(&x)) {
+        const chain_term t = x;
+        x = y;
+        y = t;
+    }
 
-    if (vx && vy) {
-        /* alpha: (vertex * k) * (vertex * v + c) is the vertex alpha times k (v, c) */
-        if (!alpha)
+    /* y is the constant or the second factor */
+    if (!chain_term_constant(&y)) {
+        const int vx = !chain_static_zero(&x.v), vy = !chain_static_zero(&y.v);
+
+        if ((x.texture >= 0 && y.texture >= 0) || (vx && vy) || !chain_static_zero(&x.d) || !chain_static_zero(&y.d))
             return 0;
 
-        chain_term *pure = NULL;
+        /* (S v + c) * (T v' + c'): one source, one vertex factor */
+        chain_term t = x.texture >= 0 ? x : y;
+        const chain_term *factor = vx ? &x : &y, *k = vx ? &y : &x;
 
-        if (x.texture < 0 && !x.vertex && chain_static_zero(&x.c))
-            pure = &x;
-        else if (y.texture < 0 && !y.vertex && chain_static_zero(&y.c))
-            pure = &y;
-
-        if (!pure)
+        if (!chain_constant_product(&factor->v, &k->c, &t.v) || !chain_constant_product(&factor->c, &k->c, &t.c))
             return 0;
 
-        chain_term *other = pure == &x ? &y : &x;
-
-        if (other->texture >= 0 || other->vertex)
-            return 0;
-
-        chain_term t = {-1, 1, chain_zero, chain_zero};
-
-        if (!chain_constant_product(&pure->v, &other->v, &t.v) || !chain_constant_product(&pure->v, &other->c, &t.c))
-            return 0;
-
+        t.d = chain_zero;
         *out = t;
         return 1;
     }
 
-    if ((x.texture >= 0 || x.vertex) && (y.texture >= 0 || y.vertex))
-        return 0;
+    chain_term t = x;
 
-    chain_term t = x.texture >= 0 || x.vertex ? x : y;
-    const chain_term *factor = vx ? &x : &y, *k = vx ? &y : &x;
-    t.texture = x.texture >= 0 ? x.texture : y.texture;
-    t.vertex = (uint8_t)(x.vertex | y.vertex);
-
-    /* (v * fv + fc) * kc: k has no vertex part */
-    if (!chain_constant_product(&factor->v, &k->c, &t.v) || !chain_constant_product(&factor->c, &k->c, &t.c))
+    if (!chain_constant_product(&x.v, &y.c, &t.v) || !chain_constant_product(&x.c, &y.c, &t.c) || !chain_constant_product(&x.d, &y.c, &t.d))
         return 0;
 
     *out = t;
@@ -1032,13 +1064,7 @@ static int chain_product(chain_term x, chain_term y, int alpha, chain_term *out)
 }
 
 static int chain_scale(chain_term *t, uint8_t scale) {
-    static const uint8_t eighths[4] = {8, 16, 32, 4};
-
-    if (!scale)
-        return 1;
-
-    const mh3_shade_constant s = constant(MH3_SHADE_CONSTANT_FRACTION, eighths[scale & 3], 0);
-    return chain_constant_product(&t->v, &s, &t->v) && chain_constant_product(&t->c, &s, &t->c);
+    return chain_scale_constant(&t->v, scale) && chain_scale_constant(&t->c, scale) && chain_scale_constant(&t->d, scale);
 }
 
 static int chain_texture(chain_walk *w, const mh3_pack_tev_stage *stage) {
@@ -1062,31 +1088,19 @@ static int chain_identity_swap(const chain_walk *w, uint8_t table) {
     return (swap->known & 15) != 15 || (swap->rgba[0] == 0 && swap->rgba[1] == 1 && swap->rgba[2] == 2 && swap->rgba[3] == 3);
 }
 
-/* A stage argument; 0 when it has no chain form. */
-static int chain_argument(chain_walk *w, unsigned index, int alpha, uint8_t value, const chain_value registers[4], const uint8_t written[2][4], chain_value *out) {
+/* konst selectors 0..7 are the fractions 1, 7/8, ..., 1/8. */
+static mh3_shade_constant chain_konst(uint8_t selector, int alpha) {
+    if (selector < 8)
+        return selector ? constant(MH3_SHADE_CONSTANT_FRACTION, (uint8_t)(8 - selector), 0) : chain_one;
+
+    return constant(MH3_SHADE_CONSTANT_KONST, alpha ? (uint8_t)(selector | 0x80) : selector, (uint8_t)alpha);
+}
+
+/* A texture, the vertex colour or a constant as a stage reads it; 0 when the
+ * argument is none of these (the caller handles registers). */
+static int chain_leaf(chain_walk *w, unsigned index, int alpha, uint8_t value, chain_term *out) {
     const mh3_pack_tev_stage *stage = &w->state->tev[index];
-    memset(out, 0, sizeof *out);
-    out->kind = CHAIN_TERM;
-    out->term = chain_constant(chain_zero);
-
-    if (alpha ? value < 4 : value < 8) {
-        const unsigned reg = alpha ? value : value / 2u;
-        const int replicate = !alpha && (value & 1);
-
-        /* A colour argument reading a register's alpha: constant unless an
-         * alpha stage wrote it. */
-        if (replicate ? written[1][reg] : 0)
-            return 0;
-
-        if (!replicate && registers[reg].kind != CHAIN_REGISTER) {
-            *out = registers[reg];
-            return 1;
-        }
-
-        out->term = chain_constant(constant(MH3_SHADE_CONSTANT_REGISTER, (uint8_t)reg, (uint8_t)(alpha || replicate)));
-        return 1;
-    }
-
+    *out = chain_constant(chain_zero);
     const uint8_t texture = alpha ? ALPHA_TEXTURE : COLOR_TEXTURE, raster = alpha ? ALPHA_RASTER : COLOR_RASTER;
 
     if (value == texture) {
@@ -1095,8 +1109,8 @@ static int chain_argument(chain_walk *w, unsigned index, int alpha, uint8_t valu
         if (t < 0 || !chain_identity_swap(w, stage->texture_swap))
             return 0;
 
-        out->term.texture = (int8_t)t;
-        out->term.c = chain_one;
+        out->texture = (int8_t)t;
+        out->c = chain_one;
         return 1;
     }
 
@@ -1107,19 +1121,14 @@ static int chain_argument(chain_walk *w, unsigned index, int alpha, uint8_t valu
         if ((stage->raster_channel != 0 && stage->raster_channel != 2 && stage->raster_channel != 4) || !chain_identity_swap(w, stage->raster_swap))
             return 0;
 
-        out->term.v = chain_one;
-        out->term.c = chain_zero;
+        out->v = chain_one;
+        out->c = chain_zero;
         return 1;
     }
 
-    /* konst selectors 0..7 are the fractions 1, 7/8, ..., 1/8 */
-    const uint8_t konst = alpha ? stage->konst_alpha : stage->konst_color;
-    const mh3_shade_constant konst_value = konst < 8 ? (konst ? constant(MH3_SHADE_CONSTANT_FRACTION, (uint8_t)(8 - konst), 0) : chain_one) :
-                                                       constant(MH3_SHADE_CONSTANT_KONST, alpha ? (uint8_t)(konst | 0x80) : konst, (uint8_t)alpha);
-
     if (alpha) {
         if (value == ALPHA_KONST)
-            out->term.c = konst_value;
+            out->c = chain_konst(stage->konst_alpha, 1);
         else if (value != ALPHA_ZERO)
             return 0;
 
@@ -1128,19 +1137,286 @@ static int chain_argument(chain_walk *w, unsigned index, int alpha, uint8_t valu
 
     switch (value) {
     case COLOR_ONE:
-        out->term.c = chain_one;
+        out->c = chain_one;
         return 1;
     case COLOR_HALF:
-        out->term.c = constant(MH3_SHADE_CONSTANT_HALF, 0, 0);
+        out->c = constant(MH3_SHADE_CONSTANT_HALF, 0, 0);
         return 1;
     case COLOR_KONST:
-        out->term.c = konst_value;
+        out->c = chain_konst(stage->konst_color, 0);
         return 1;
     case COLOR_ZERO:
         return 1;
     default:
         return 0; /* replicated texture or raster alpha */
     }
+}
+
+/* ---- the alpha channel ---- */
+static chain_alpha chain_alpha_zero(void) {
+    chain_alpha a;
+    memset(&a, 0, sizeof a);
+    a.times = CHAIN_SOURCE_ONE;
+    a.v = chain_zero;
+    a.c = chain_one;
+    return a;
+}
+
+/* source * (vertex * v + c) */
+static chain_alpha chain_alpha_single(int8_t source, mh3_shade_constant v, mh3_shade_constant c) {
+    chain_alpha a = chain_alpha_zero();
+    a.terms = 1;
+    a.source[0] = source;
+    a.weight[0] = chain_one;
+    a.v = v;
+    a.c = c;
+    return a;
+}
+
+static chain_alpha chain_alpha_of(const chain_term *t) {
+    if (chain_term_zero(t))
+        return chain_alpha_zero();
+
+    return chain_alpha_single(t->texture >= 0 ? t->texture : CHAIN_SOURCE_ONE, t->v, t->c);
+}
+
+/* One source, weight one, no second source. */
+static int chain_alpha_simple(const chain_alpha *a) {
+    return a->terms == 1 && a->times == CHAIN_SOURCE_ONE && chain_static_one(&a->weight[0]);
+}
+
+static int chain_alpha_argument(chain_walk *w, unsigned index, uint8_t value, chain_alpha *out) {
+    if (value < 4) {
+        if (w->alpha_written[value]) {
+            *out = w->alpha[value];
+            return 1;
+        }
+
+        *out = chain_alpha_single(CHAIN_SOURCE_ONE, chain_zero, constant(MH3_SHADE_CONSTANT_REGISTER, value, 1));
+        return 1;
+    }
+
+    chain_term t;
+
+    if (!chain_leaf(w, index, 1, value, &t))
+        return 0;
+
+    *out = chain_alpha_of(&t);
+    return 1;
+}
+
+/* A simple value's factor (vertex * v + c) folded into x's: one vertex part
+ * at most; vertex * vertex moves one vertex into a source slot. */
+static int chain_alpha_factor(chain_alpha *x, chain_alpha y) {
+    const int vx = !chain_static_zero(&x->v), vy = !chain_static_zero(&y.v);
+
+    if (vx && vy) {
+        /* A pure vertex factor (c zero) becomes a source: the term's when it
+         * is one, else the second. */
+        int8_t *slot = chain_alpha_simple(x) && x->source[0] == CHAIN_SOURCE_ONE ? &x->source[0] : x->times == CHAIN_SOURCE_ONE ? &x->times : NULL;
+
+        if (slot && chain_static_zero(&y.c)) {
+            y.c = y.v;
+            y.v = chain_zero;
+        } else if (slot && chain_static_zero(&x->c)) {
+            x->c = x->v;
+            x->v = chain_zero;
+        } else
+            return 0;
+
+        *slot = CHAIN_SOURCE_VERTEX;
+    }
+
+    const int y_vertex = !chain_static_zero(&y.v);
+    const mh3_shade_constant *factor_v = y_vertex ? &y.v : &x->v, *factor_c = y_vertex ? &y.c : &x->c, *k = y_vertex ? &x->c : &y.c;
+    mh3_shade_constant v, c;
+
+    if (!chain_constant_product(factor_v, k, &v) || !chain_constant_product(factor_c, k, &c))
+        return 0;
+
+    x->v = v;
+    x->c = c;
+    return 1;
+}
+
+/* x * y: one side a sum at most, the other a simple source. */
+static int chain_alpha_product(chain_alpha x, chain_alpha y, chain_alpha *out) {
+    if (!x.terms || !y.terms) {
+        *out = chain_alpha_zero();
+        return 1;
+    }
+
+    if (!chain_alpha_simple(&y)) {
+        const chain_alpha t = x;
+        x = y;
+        y = t;
+    }
+
+    if (!chain_alpha_simple(&y))
+        return 0;
+
+    const int8_t source = y.source[0];
+
+    if (source != CHAIN_SOURCE_ONE) {
+        if (chain_alpha_simple(&x) && x.source[0] == CHAIN_SOURCE_ONE)
+            x.source[0] = source;
+        else if (x.times == CHAIN_SOURCE_ONE)
+            x.times = source;
+        else
+            return 0;
+    }
+
+    if (!chain_alpha_factor(&x, y))
+        return 0;
+
+    *out = x;
+    return 1;
+}
+
+/* x + y: constant factors fold into the weights. */
+static int chain_alpha_sum(chain_alpha x, const chain_alpha *y, chain_alpha *out) {
+    if (!y->terms) {
+        *out = x;
+        return 1;
+    }
+
+    if (!x.terms) {
+        *out = *y;
+        return 1;
+    }
+
+    chain_alpha s = chain_alpha_zero();
+    const chain_alpha *parts[2] = {&x, y};
+
+    for (unsigned p = 0; p < 2; ++p) {
+        const chain_alpha *a = parts[p];
+
+        /* a clamped sum times a constant other than one cannot be reopened */
+        if (a->times != CHAIN_SOURCE_ONE || !chain_static_zero(&a->v) || (a->terms > 1 && !chain_static_one(&a->c)))
+            return 0;
+
+        for (unsigned i = 0; i < a->terms; ++i) {
+            if (s.terms == MH3_SHADE_CHAIN_ALPHA_TERMS || !chain_constant_product(&a->weight[i], &a->c, &s.weight[s.terms]))
+                return 0;
+
+            s.source[s.terms++] = a->source[i];
+        }
+    }
+
+    *out = s;
+    return 1;
+}
+
+/* A stage's scale: inside the clamp of a sum, else on the factor. */
+static int chain_alpha_scale(chain_alpha *a, uint8_t scale) {
+    if (!scale || !a->terms)
+        return 1;
+
+    if (a->terms > 1 && a->times == CHAIN_SOURCE_ONE && chain_static_zero(&a->v) && chain_static_one(&a->c)) {
+        for (unsigned i = 0; i < a->terms; ++i)
+            if (!chain_scale_constant(&a->weight[i], scale))
+                return 0;
+
+        return 1;
+    }
+
+    return chain_scale_constant(&a->v, scale) && chain_scale_constant(&a->c, scale);
+}
+
+static int chain_alpha_constant(const chain_alpha *a) {
+    return chain_alpha_simple(a) && a->source[0] == CHAIN_SOURCE_ONE && chain_static_zero(&a->v);
+}
+
+/* One alpha stage. */
+static int chain_alpha_stage(chain_walk *w, unsigned index, chain_alpha *out) {
+    const mh3_pack_tev_pass *p = &w->state->tev[index].alpha;
+    chain_alpha a, b, c, d;
+
+    if (!chain_alpha_argument(w, index, p->a, &a) || !chain_alpha_argument(w, index, p->b, &b) || !chain_alpha_argument(w, index, p->c, &c) ||
+        !chain_alpha_argument(w, index, p->d, &d))
+        return 0;
+
+    if (passthrough(p, 1)) {
+        *out = d;
+        return 1;
+    }
+
+    if (p->operation || p->bias)
+        return 0;
+
+    chain_alpha m;
+
+    if (!c.terms)
+        m = a;
+    else if (chain_alpha_constant(&c) && chain_static_one(&c.c))
+        m = b;
+    else if (!a.terms) {
+        if (!chain_alpha_product(b, c, &m))
+            return 0;
+    } else if (!b.terms && chain_alpha_constant(&c)) {
+        /* mix(a, 0, k) = a (1 - k) */
+        mh3_shade_constant rest;
+        chain_alpha k;
+
+        if (!complement(&c.c, &rest))
+            return 0;
+
+        k = chain_alpha_single(CHAIN_SOURCE_ONE, chain_zero, rest);
+
+        if (!chain_alpha_product(a, k, &m))
+            return 0;
+    } else
+        return 0;
+
+    if (!chain_alpha_sum(d, &m, out))
+        return 0;
+
+    return chain_alpha_scale(out, p->scale);
+}
+
+/* ---- the colour channel ---- */
+
+/* A stage argument; 0 when it has no chain form. */
+static int chain_argument(chain_walk *w, unsigned index, uint8_t value, const chain_value registers[4], chain_value *out) {
+    memset(out, 0, sizeof *out);
+    out->kind = CHAIN_TERM;
+    out->term = chain_constant(chain_zero);
+
+    if (value < 8) {
+        const unsigned reg = value / 2u;
+
+        if (!(value & 1)) {
+            if (registers[reg].kind != CHAIN_REGISTER) {
+                *out = registers[reg];
+                return 1;
+            }
+
+            out->term = chain_constant(constant(MH3_SHADE_CONSTANT_REGISTER, (uint8_t)reg, 0));
+            return 1;
+        }
+
+        /* A register's alpha in every lane: a constant, or what an alpha
+         * stage wrote, a texture's alpha times a constant. */
+        if (!w->alpha_written[reg]) {
+            out->term = chain_constant(constant(MH3_SHADE_CONSTANT_REGISTER, (uint8_t)reg, 1));
+            return 1;
+        }
+
+        const chain_alpha *a = &w->alpha[reg];
+
+        if (!a->terms)
+            return 1;
+
+        if (!chain_alpha_simple(a) || a->source[0] < 0 || !chain_static_zero(&a->v))
+            return 0;
+
+        out->term.texture = a->source[0];
+        out->term.alpha = 1;
+        out->term.c = a->c;
+        return 1;
+    }
+
+    return chain_leaf(w, index, 0, value, &out->term);
 }
 
 static int chain_is_term(const chain_value *v) {
@@ -1164,6 +1440,11 @@ static int chain_current(chain_walk *w, const chain_value *v) {
     return 1;
 }
 
+/* The base x0 after later steps. */
+static int chain_is_base(const chain_walk *w, const chain_value *v) {
+    return v->kind == CHAIN_VALUE && !v->length && w->length;
+}
+
 static chain_value chain_at(const chain_walk *w) {
     chain_value v;
     memset(&v, 0, sizeof v);
@@ -1172,32 +1453,38 @@ static chain_value chain_at(const chain_walk *w) {
     return v;
 }
 
-/* saturate((x * keep + layer) * s) over the current chain. */
-static chain_value chain_pending(const chain_walk *w, chain_term keep, chain_term layer, uint8_t scale) {
-    chain_value v;
-    memset(&v, 0, sizeof v);
-    v.kind = CHAIN_PENDING;
-    v.length = (uint8_t)w->length;
-    v.step.keep_v = keep.v;
-    v.step.keep_c = keep.c;
-    v.step.layer_v = layer.v;
-    v.step.layer_c = layer.c;
-    v.step.scale = scale;
-    v.layer = layer.texture;
-    return v;
+/* saturate((x * keep + x0 * keep_base + layer) * s) over the current chain. */
+static int chain_pending(const chain_walk *w, chain_term keep, mh3_shade_constant keep_base, chain_term layer, uint8_t scale, chain_value *out) {
+    if (keep.texture >= 0 || layer.alpha || !chain_static_zero(&keep.d) || !chain_static_zero(&layer.d))
+        return 0;
+
+    memset(out, 0, sizeof *out);
+    out->kind = CHAIN_PENDING;
+    out->length = (uint8_t)w->length;
+    out->step.keep_v = keep.v;
+    out->step.keep_c = keep.c;
+    out->step.keep_base = keep_base;
+    out->step.layer_v = layer.v;
+    out->step.layer_c = layer.c;
+    out->step.scale = scale;
+    out->layer = layer.texture;
+    return 1;
 }
 
 /* mix(x, pending, mask) (complement: mix(pending, x, mask)) as a step. */
 static int chain_masked(chain_walk *w, const chain_value *pending, const chain_term *mask, int complement) {
-    if (w->length == 3 || mask->vertex || !chain_static_zero(&mask->v))
+    if (w->length == 3 || !chain_static_zero(&mask->v))
         return 0;
 
     mh3_shade_chain_step step = pending->step;
 
     if (mask->texture >= 0) {
         step.mask_scale = mask->c;
-        step.mask_offset = chain_zero;
+        step.mask_offset = mask->d;
     } else {
+        if (!chain_static_zero(&mask->d))
+            return 0;
+
         step.mask_scale = chain_zero;
         step.mask_offset = mask->c;
     }
@@ -1206,17 +1493,39 @@ static int chain_masked(chain_walk *w, const chain_value *pending, const chain_t
     w->step[w->length] = step;
     w->layer[w->length] = pending->layer;
     w->mask[w->length] = mask->texture;
+
+    if (mask->alpha)
+        w->mask_alpha |= (uint8_t)(1u << w->length);
+
     ++w->length;
     return 1;
 }
 
+/* A stage's scale over the chain: a multiply step x * scale (the chain is
+ * in [0, 1], so the stage's clamp is the step's). */
+static int chain_scaled(chain_walk *w, uint8_t scale, chain_value *out) {
+    *out = chain_at(w);
+
+    if (!scale)
+        return 1;
+
+    chain_term keep = chain_constant(chain_one);
+    chain_value pending;
+
+    if (!chain_scale(&keep, scale) || !chain_pending(w, keep, chain_zero, chain_constant(chain_zero), 0, &pending) || !chain_current(w, &pending))
+        return 0;
+
+    *out = chain_at(w);
+    return 1;
+}
+
 /* One colour stage of the chain. */
-static int chain_color_stage(chain_walk *w, unsigned index, chain_value registers[4], const uint8_t written[2][4], chain_value *out) {
+static int chain_color_stage(chain_walk *w, unsigned index, const chain_value registers[4], chain_value *out) {
     const mh3_pack_tev_pass *p = &w->state->tev[index].color;
     chain_value a, b, c, d;
 
-    if (!chain_argument(w, index, 0, p->a, registers, written, &a) || !chain_argument(w, index, 0, p->b, registers, written, &b) ||
-        !chain_argument(w, index, 0, p->c, registers, written, &c) || !chain_argument(w, index, 0, p->d, registers, written, &d))
+    if (!chain_argument(w, index, p->a, registers, &a) || !chain_argument(w, index, p->b, registers, &b) || !chain_argument(w, index, p->c, registers, &c) ||
+        !chain_argument(w, index, p->d, registers, &d))
         return 0;
 
     if (passthrough(p, 0)) {
@@ -1227,58 +1536,71 @@ static int chain_color_stage(chain_walk *w, unsigned index, chain_value register
     if (p->operation || p->bias || !p->clamp)
         return 0;
 
-    const int a_zero = chain_is_term(&a) && chain_term_zero(&a.term);
+    const int a_zero = chain_is_term(&a) && chain_term_zero(&a.term), b_zero = chain_is_term(&b) && chain_term_zero(&b.term);
     const int d_zero = chain_is_term(&d) && chain_term_zero(&d.term);
     const int c_one = chain_is_term(&c) && chain_term_one(&c.term), c_zero = chain_is_term(&c) && chain_term_zero(&c.term);
 
-    /* b * c (a zero) or b (c one) as the added or multiplied part */
+    /* the mixed part: a (c zero), b (c one), b * c (a zero), a (1 - c) (b zero, c constant) */
     chain_value m;
     memset(&m, 0, sizeof m);
     m.kind = CHAIN_TERM;
-    int product = 0;
+    int product = 1;
 
-    if (c_zero) {
+    if (c_zero)
         m = a;
-        product = 1;
-    } else if (c_one) {
+    else if (c_one)
         m = b;
-        product = 1;
-    } else if (a_zero && chain_is_term(&b) && chain_is_term(&c)) {
-        if (!chain_product(b.term, c.term, 0, &m.term))
+    else if (a_zero && chain_is_term(&b) && chain_is_term(&c)) {
+        if (!chain_product(b.term, c.term, &m.term))
             return 0;
+    } else if (b_zero && chain_is_term(&a) && chain_is_term(&c) && chain_term_constant(&c.term)) {
+        mh3_shade_constant rest;
 
-        product = 1;
-    } else if (a_zero && d_zero && (chain_is_term(&b) != chain_is_term(&c))) {
+        if (!complement(&c.term.c, &rest) || !chain_product(a.term, chain_constant(rest), &m.term))
+            return 0;
+    } else if (a_zero && d_zero && chain_is_term(&b) != chain_is_term(&c)) {
         /* x * factor: a multiply step */
         const chain_value *x = chain_is_term(&b) ? &c : &b, *f = chain_is_term(&b) ? &b : &c;
-
-        if (f->term.texture >= 0 || !chain_current(w, x))
-            return 0;
-
-        *out = chain_pending(w, f->term, chain_constant(chain_zero), p->scale);
-        return 1;
-    }
+        return chain_current(w, x) && chain_pending(w, f->term, chain_zero, chain_constant(chain_zero), p->scale, out);
+    } else
+        product = 0;
 
     if (product) {
-        if (d_zero) {
-            /* a chain value passes unscaled; a term takes the scale */
-            if (chain_is_term(&m) ? !chain_scale(&m.term, p->scale) : p->scale != 0)
-                return 0;
+        const int m_zero = chain_is_term(&m) && chain_term_zero(&m.term);
 
-            *out = m;
-            return 1;
+        if (m_zero || d_zero) {
+            chain_value *only = m_zero ? &d : &m;
+
+            if (chain_is_term(only)) {
+                if (!chain_scale(&only->term, p->scale))
+                    return 0;
+
+                *out = *only;
+                return 1;
+            }
+
+            return chain_current(w, only) && chain_scaled(w, p->scale, out);
         }
 
-        /* d + b * c over the chain */
-        if (!chain_is_term(&m) || !chain_current(w, &d))
+        if (!chain_is_term(&m))
             return 0;
 
-        *out = chain_pending(w, chain_constant(chain_one), m.term, p->scale);
-        return 1;
+        /* a constant plus a term */
+        if (chain_is_term(&d) && chain_term_constant(&d.term) && chain_static_zero(&m.term.d)) {
+            *out = m;
+            out->term.d = d.term.c;
+            return chain_scale(&out->term, p->scale);
+        }
+
+        /* the chain, or the base x0 after later steps, plus a layer */
+        if (chain_is_base(w, &d))
+            return chain_pending(w, chain_constant(chain_zero), chain_one, m.term, p->scale, out);
+
+        return chain_current(w, &d) && chain_pending(w, chain_constant(chain_one), chain_zero, m.term, p->scale, out);
     }
 
-    /* mix(a, b, mask) with one side the chain */
-    if (!d_zero || p->scale || !chain_is_term(&c))
+    /* mix(a, b, mask) with one side the chain, then the stage's scale */
+    if (!d_zero || !chain_is_term(&c))
         return 0;
 
     const int complement = chain_is_term(&a) ? 1 : a.kind == CHAIN_PENDING;
@@ -1289,49 +1611,14 @@ static int chain_color_stage(chain_walk *w, unsigned index, chain_value register
             return 0;
     } else if (chain_is_term(other)) {
         /* a replacing layer: mix(x, layer, mask) */
-        if (!chain_current(w, x))
-            return 0;
+        chain_value pending;
 
-        const chain_value pending = chain_pending(w, chain_constant(chain_zero), other->term, 0);
-
-        if (!chain_masked(w, &pending, &c.term, complement))
+        if (!chain_current(w, x) || !chain_pending(w, chain_constant(chain_zero), chain_zero, other->term, 0, &pending) || !chain_masked(w, &pending, &c.term, complement))
             return 0;
     } else
         return 0;
 
-    *out = chain_at(w);
-    return 1;
-}
-
-/* One alpha stage: products of terms only. */
-static int chain_alpha_stage(chain_walk *w, unsigned index, chain_value registers[4], const uint8_t written[2][4], chain_value *out) {
-    const mh3_pack_tev_pass *p = &w->state->tev[index].alpha;
-    chain_value a, b, c, d;
-
-    if (!chain_argument(w, index, 1, p->a, registers, written, &a) || !chain_argument(w, index, 1, p->b, registers, written, &b) ||
-        !chain_argument(w, index, 1, p->c, registers, written, &c) || !chain_argument(w, index, 1, p->d, registers, written, &d))
-        return 0;
-
-    if (passthrough(p, 1)) {
-        *out = d;
-        return 1;
-    }
-
-    if (p->operation || p->bias || !chain_is_term(&a) || !chain_is_term(&b) || !chain_is_term(&c) || !chain_is_term(&d) || !chain_term_zero(&d.term))
-        return 0;
-
-    memset(out, 0, sizeof *out);
-    out->kind = CHAIN_TERM;
-
-    if (chain_term_zero(&c.term))
-        out->term = a.term;
-    else if (chain_term_zero(&a.term)) {
-        if (!chain_product(b.term, c.term, 1, &out->term))
-            return 0;
-    } else
-        return 0;
-
-    return chain_scale(&out->term, p->scale);
+    return chain_scaled(w, p->scale, out);
 }
 
 /* The role of walk texture t among the roles 0..4 assigned so far, or -1. */
@@ -1369,55 +1656,66 @@ static int chain_assign(mh3_shade_material *m, const chain_walk *w, int t, unsig
     return -1;
 }
 
+/* An alpha source as a material source: a role, vertex or one. */
+static int chain_alpha_role(mh3_shade_material *m, const chain_walk *w, int8_t source) {
+    if (source == CHAIN_SOURCE_ONE)
+        return MH3_SHADE_CHAIN_ALPHA_ONE;
+
+    if (source == CHAIN_SOURCE_VERTEX)
+        return MH3_SHADE_CHAIN_ALPHA_VERTEX;
+
+    return chain_assign(m, w, source, 1, 4);
+}
+
 static int chain_classify(const mh3_native_material_state *state, mh3_shade_material *out) {
     const unsigned count = state->tev_count ? (state->tev_count < 16 ? state->tev_count : 16) : 1;
     chain_walk w;
     memset(&w, 0, sizeof w);
     w.state = state;
     w.base = -1;
-    chain_value color[4], alpha[4];
-    uint8_t written[2][4];
-    memset(written, 0, sizeof written);
+    chain_value color[4];
 
     for (unsigned r = 0; r < 4; ++r) {
         memset(&color[r], 0, sizeof color[r]);
         color[r].kind = CHAIN_REGISTER;
-        alpha[r] = color[r];
+        w.alpha[r] = chain_alpha_zero();
     }
 
-    chain_value result = color[0], alpha_result = alpha[0];
+    chain_value result = color[0];
+    chain_alpha alpha_result = chain_alpha_zero();
 
     for (unsigned i = 0; i < count; ++i) {
         chain_value v;
 
-        if (!chain_color_stage(&w, i, color, (const uint8_t(*)[4])written, &v))
+        if (!chain_color_stage(&w, i, color, &v))
             return 0;
 
         /* the first textured term written is the base */
-        if (v.kind == CHAIN_TERM && v.term.texture >= 0 && w.base < 0 && !v.term.vertex) {
+        if (v.kind == CHAIN_TERM && v.term.texture >= 0 && !v.term.alpha && w.base < 0) {
             w.base = v.term.texture;
             w.base_v = v.term.v;
             w.base_c = v.term.c;
+            w.base_d = v.term.d;
             v = chain_at(&w);
         }
 
-        const uint8_t output = state->tev[i].color.output & 3;
-        color[output] = v;
-        written[0][output] = 1;
+        color[state->tev[i].color.output & 3] = v;
         result = v;
+        chain_alpha a;
 
-        if (!chain_alpha_stage(&w, i, alpha, (const uint8_t(*)[4])written, &v))
+        if (!chain_alpha_stage(&w, i, &a))
             return 0;
 
-        alpha[state->tev[i].alpha.output & 3] = v;
-        written[1][state->tev[i].alpha.output & 3] = 1;
-        alpha_result = v;
+        const uint8_t output = state->tev[i].alpha.output & 3;
+        w.alpha[output] = a;
+        w.alpha_written[output] = 1;
+        alpha_result = a;
     }
 
-    if (w.base < 0 || !chain_current(&w, &result) || !w.length || alpha_result.kind != CHAIN_TERM)
+    if (w.base < 0 || !chain_current(&w, &result))
         return 0;
 
-    /* Roles: base 0, layers 1 and 2, masks 3 and 4, the alpha map in a free one. */
+    /* Roles: base 0, layers 1 and 2, masks the free ones of 1..4, then the alpha's. */
     reset(out, state);
     mh3_shade_material *m = out;
     m->textures = 1;
@@ -1435,7 +1733,7 @@ static int chain_classify(const mh3_native_material_state *state, mh3_shade_mate
     }
 
     for (unsigned i = 0; i < w.length; ++i) {
-        const int r = chain_assign(m, &w, w.mask[i], 3, 4);
+        const int r = chain_assign(m, &w, w.mask[i], 1, 4);
 
         if (r < 0)
             return 0;
@@ -1443,30 +1741,49 @@ static int chain_classify(const mh3_native_material_state *state, mh3_shade_mate
         mask[i] = (uint8_t)r;
     }
 
-    const chain_term *at = &alpha_result.term;
-    int alpha_role = at->vertex ? MH3_SHADE_CHAIN_ALPHA_VERTEX : MH3_SHADE_CHAIN_ALPHA_ONE;
+    m->chain_alpha_terms = alpha_result.terms;
 
-    if (at->texture >= 0 && (alpha_role = chain_assign(m, &w, at->texture, 1, 4)) < 0)
+    for (unsigned i = 0; i < alpha_result.terms; ++i) {
+        const int r = chain_alpha_role(m, &w, alpha_result.source[i]);
+
+        if (r < 0)
+            return 0;
+
+        m->chain_alpha_source[i] = (uint8_t)r;
+        m->chain_alpha_weight[i] = alpha_result.weight[i];
+    }
+
+    const int times = chain_alpha_role(m, &w, alpha_result.times);
+
+    if (times < 0)
         return 0;
 
-    uint8_t roles = 0;
+    uint8_t roles = 0, base = 0;
 
     for (unsigned r = 0; r < m->textures; ++r)
         if (m->texture_map[r] != 255)
             roles |= (uint8_t)(1u << r);
 
+    for (unsigned i = 0; i < w.length; ++i)
+        if (!chain_static_zero(&w.step[i].keep_base))
+            base |= (uint8_t)(1u << i);
+
+    const uint8_t alpha_sum = alpha_result.terms > 1 || alpha_result.times != CHAIN_SOURCE_ONE;
+
     for (unsigned f = 0; f < MH3_SHADE_CHAIN_FORMS; ++f) {
         const mh3_shade_chain_form *form = &mh3_shade_chain_forms[f];
 
-        if (form->steps != w.length || form->roles != roles || memcmp(form->layer, layer, 3) || memcmp(form->mask, mask, 3))
+        if (form->steps != w.length || form->roles != roles || form->mask_alpha != w.mask_alpha || form->base != base || form->alpha_sum != alpha_sum ||
+            memcmp(form->layer, layer, 3) || memcmp(form->mask, mask, 3))
             continue;
 
         m->chain = (uint8_t)f;
-        m->chain_alpha_source = (uint8_t)alpha_role;
+        m->chain_alpha_times = (uint8_t)times;
         m->chain_base_v = w.base_v;
         m->chain_base_c = w.base_c;
-        m->chain_alpha_v = at->v;
-        m->chain_alpha_c = at->c;
+        m->chain_base_d = w.base_d;
+        m->chain_alpha_v = alpha_result.v;
+        m->chain_alpha_c = alpha_result.c;
         memcpy(m->chain_step, w.step, sizeof m->chain_step);
         m->model = MH3_SHADE_CHAIN;
         return 1;
@@ -1764,17 +2081,25 @@ static void layers_fill(const mh3_shade_material *m, const mh3_native_material_s
     }
 }
 
+/* An alpha source's slot in a sum or times select: roles 0..3, then role 4,
+ * vertex, one. */
+static float *chain_select(float first[4], float second[4], unsigned source) {
+    return source < 4 ? &first[source] : &second[source == 4 ? 0 : source == MH3_SHADE_CHAIN_ALPHA_VERTEX ? 1 : 2];
+}
+
 /* The masks' LOD bias (texture_bias) is the caller's, written after. */
 static void chain_fill(const mh3_shade_material *m, const mh3_native_material_state *s, mh3_shade_chain_uniforms *out) {
     memset(out, 0, sizeof *out);
     resolve(s, &m->chain_base_v, out->base_v);
     resolve(s, &m->chain_base_c, out->base_c);
+    resolve(s, &m->chain_base_d, out->base_d);
 
     for (unsigned i = 0; i < mh3_shade_chain_forms[m->chain].steps; ++i) {
         const mh3_shade_chain_step *step = &m->chain_step[i];
         mh3_shade_chain_step_uniforms *u = &out->step[i];
         resolve(s, &step->keep_v, u->keep_v);
         resolve(s, &step->keep_c, u->keep_c);
+        resolve(s, &step->keep_base, u->keep_base);
         resolve(s, &step->layer_v, u->layer_v);
         resolve(s, &step->layer_c, u->layer_c);
         resolve(s, &step->mask_scale, u->mask_scale);
@@ -1790,13 +2115,13 @@ static void chain_fill(const mh3_shade_material *m, const mh3_native_material_st
         }
     }
 
-    const unsigned source = m->chain_alpha_source;
+    for (unsigned i = 0; i < m->chain_alpha_terms; ++i) {
+        float weight[4];
+        resolve(s, &m->chain_alpha_weight[i], weight);
+        *chain_select(out->alpha_sum, out->alpha_sum2, m->chain_alpha_source[i]) += weight[3];
+    }
 
-    if (source < 4)
-        out->alpha_select[source] = 1.f;
-    else
-        out->alpha_select2[source == 4 ? 0 : source == MH3_SHADE_CHAIN_ALPHA_VERTEX ? 1 : 2] = 1.f;
-
+    *chain_select(out->alpha_times, out->alpha_times2, m->chain_alpha_times) = 1.f;
     float v[4], c[4];
     resolve(s, &m->chain_alpha_v, v);
     resolve(s, &m->chain_alpha_c, c);

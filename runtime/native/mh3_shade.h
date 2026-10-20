@@ -20,13 +20,15 @@
  *          separately: stages that add a texture times the vertex colour or a
  *          constant each (the Deserted Island sea surface, A-p09-uv-suimen*),
  *          then at most one multiply by the vertex colour or a constant.
- * CHAIN:   x = saturate(t0 * (vertex * kv + kc)), then up to three steps
- *          x = mix(x, saturate((x * (vertex * keep_v + keep_c) + T * (vertex *
- *          layer_v + layer_c)) * s), M * mask_scale + mask_offset) on the
- *          colour, with the layer texture T and the mask M each a role or 1;
- *          alpha = saturate(A * (vertex * kv + kc)), A a role's alpha, the
- *          vertex alpha or 1. The monsters' base + masked environment map +
- *          rim or glow map materials (Ceadeus's b_asme, Deviljho's basm, ...):
+ * CHAIN:   x0 = x = saturate(t0 * (vertex * kv + kc) + kd), then up to three
+ *          steps x = mix(x, saturate((x * (vertex * keep_v + keep_c) + x0 *
+ *          keep_base + T * (vertex * layer_v + layer_c)) * s), M * mask_scale
+ *          + mask_offset) on the colour, with the layer texture T and the mask
+ *          M (its colour or its alpha) each a role or 1; alpha =
+ *          saturate(saturate(sum w_i A_i) * B * (vertex * kv + kc)), A_i and B
+ *          roles' alphas, the vertex alpha or 1. The monsters' base + masked
+ *          environment map + rim or glow map materials (Ceadeus's b_asme,
+ *          Deviljho's basm, ...) and maps' lightmapped ground and water:
  *          up to five textures, the masks (roles 3 and 4) at role 0's
  *          coordinates.
  * Multi-stage programs are folded into this form when exact: prev * x
@@ -88,17 +90,18 @@ typedef struct mh3_shade_layers {
     float kv[4][4], kc[4][4], s[4], mv[4], mc[4];
 } mh3_shade_layers;
 
-/* CHAIN: the base factor, per step the keep, layer and mask coefficients and
- * the scale, the alpha source select (roles 0..3; role 4, vertex, one) and
- * factor (x kv, y kc), the LOD bias of roles 3 and 4 (GLES sampling). */
+/* CHAIN: the base factor and offset, per step the keep, base, layer and mask
+ * coefficients and the scale, the alpha sum's weights and the second factor's
+ * select (each over roles 0..3, then role 4, vertex, one), the alpha factor
+ * (x kv, y kc), the LOD bias of roles 3 and 4 (GLES sampling). */
 typedef struct mh3_shade_chain_step_uniforms {
-    float keep_v[4], keep_c[4], layer_v[4], layer_c[4], mask_scale[4], mask_offset[4], s[4];
+    float keep_v[4], keep_c[4], keep_base[4], layer_v[4], layer_c[4], mask_scale[4], mask_offset[4], s[4];
 } mh3_shade_chain_step_uniforms;
 
 typedef struct mh3_shade_chain_uniforms {
-    float base_v[4], base_c[4];
+    float base_v[4], base_c[4], base_d[4];
     mh3_shade_chain_step_uniforms step[3];
-    float alpha_select[4], alpha_select2[4], alpha_factor[4], texture_bias[4];
+    float alpha_sum[4], alpha_sum2[4], alpha_times[4], alpha_times2[4], alpha_factor[4], texture_bias[4];
 } mh3_shade_chain_uniforms;
 
 /* The View block (mesh vertex stage, binding 6 / vertex BUFFER[4]): the
@@ -214,10 +217,17 @@ enum {
 
 /* CHAIN: one step's factors (constants; _v multiplies the vertex colour). */
 typedef struct mh3_shade_chain_step {
-    mh3_shade_constant keep_v, keep_c, layer_v, layer_c, mask_scale, mask_offset;
+    mh3_shade_constant keep_v, keep_c, keep_base, layer_v, layer_c, mask_scale, mask_offset;
     uint8_t complement; /* the mask is 1 - (M * mask_scale + mask_offset) */
     uint8_t scale;      /* GX encoding */
 } mh3_shade_chain_step;
+
+/* CHAIN alpha sources: a texture role, the vertex alpha or one. */
+enum {
+    MH3_SHADE_CHAIN_ALPHA_VERTEX = 5,
+    MH3_SHADE_CHAIN_ALPHA_ONE = 6,
+    MH3_SHADE_CHAIN_ALPHA_TERMS = 4
+};
 
 typedef struct mh3_shade_material {
     uint8_t textures, overlay, alpha_test, quality, model;
@@ -236,10 +246,12 @@ typedef struct mh3_shade_material {
     /* Cached exact form: saturate(texture0 * vertex), RGBA independently.
      * Only literal zero/one references qualify; draw-time register values do not. */
     uint8_t pure_modulate;
-    /* CHAIN: the form, the base factor, the steps, the alpha source (a role,
-     * MH3_SHADE_CHAIN_ALPHA_VERTEX or _ONE) and factor. */
-    uint8_t chain, chain_alpha_source;
-    mh3_shade_constant chain_base_v, chain_base_c, chain_alpha_v, chain_alpha_c;
+    /* CHAIN: the form, the base factor and offset, the steps; the alpha's
+     * summed sources and their weights, its second source and its factor. */
+    uint8_t chain, chain_alpha_terms, chain_alpha_times;
+    uint8_t chain_alpha_source[MH3_SHADE_CHAIN_ALPHA_TERMS];
+    mh3_shade_constant chain_alpha_weight[MH3_SHADE_CHAIN_ALPHA_TERMS];
+    mh3_shade_constant chain_base_v, chain_base_c, chain_base_d, chain_alpha_v, chain_alpha_c;
     mh3_shade_chain_step chain_step[3];
 } mh3_shade_material;
 

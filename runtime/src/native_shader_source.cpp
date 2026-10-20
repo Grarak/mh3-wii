@@ -644,17 +644,20 @@ void main() {
 }
 )GLSL";
 
-// CHAIN (mh3_shade.h): x = saturate(t0 * (v * base_v + base_c)), then per
-// step x = mix(x, saturate((x * (v * keep_v + keep_c) + L * (v * layer_v +
-// layer_c)) * s), M * mask_scale + mask_offset) with the form's layer and mask
-// roles L and M (one without), on the colour; alpha = saturate(A * (v.a *
-// alpha_factor.x + alpha_factor.y)), A the selected role's alpha, v.a or one.
-// Roles 3 and 4 sample at role 0's coordinate. Its own program text: the
-// other models' programs stay as they were.
+// CHAIN (mh3_shade.h): x0 = x = saturate(t0 * (v * base_v + base_c) +
+// base_d), then per step x = mix(x, saturate((x * (v * keep_v + keep_c) + x0 *
+// keep_base + L * (v * layer_v + layer_c)) * s), M * mask_scale +
+// mask_offset) with the form's layer and mask roles L and M (one without; a
+// mask its role's colour or alpha), on the colour; alpha =
+// saturate(saturate(sum) * times * (v.a * alpha_factor.x + alpha_factor.y)),
+// sum and times selects over the roles' alphas, v.a and one. Roles 3 and 4
+// sample at role 0's coordinate. Its own program text: the other models'
+// programs stay as they were.
 constexpr const char* GlslChainFragment = R"GLSL(
 struct Step {
     vec4 keep_v;
     vec4 keep_c;
+    vec4 keep_base;
     vec4 layer_v;
     vec4 layer_c;
     vec4 mask_scale;
@@ -667,9 +670,12 @@ layout(std140) uniform Shade {
     vec4 alpha_range;
     vec4 base_v;
     vec4 base_c;
+    vec4 base_d;
     Step step[3];
-    vec4 alpha_select;
-    vec4 alpha_select2;
+    vec4 alpha_sum;
+    vec4 alpha_sum2;
+    vec4 alpha_times;
+    vec4 alpha_times2;
     vec4 alpha_factor;
     vec4 mask_bias;
 } shade;
@@ -684,9 +690,10 @@ uniform sampler2D u_texture2;
 uniform sampler2D u_texture3;
 uniform sampler2D u_texture4;
 out vec4 frag_color;
-vec3 chain_step(int i, vec3 x, vec3 v, vec3 layer, vec3 mask) {
+// base: x0 * keep_base for a step that reads the base (BASE bit i), else zero.
+vec3 chain_step(int i, vec3 x, vec3 base, vec3 v, vec3 layer, vec3 mask) {
     Step k = shade.step[i];
-    vec3 p = clamp((x * (v * k.keep_v.rgb + k.keep_c.rgb) + layer * (v * k.layer_v.rgb + k.layer_c.rgb)) * k.s.rgb, 0.0, 1.0);
+    vec3 p = clamp((x * (v * k.keep_v.rgb + k.keep_c.rgb) + base + layer * (v * k.layer_v.rgb + k.layer_c.rgb)) * k.s.rgb, 0.0, 1.0);
     return mix(x, p, mask * k.mask_scale.rgb + k.mask_offset.rgb);
 }
 void main() {
@@ -705,15 +712,23 @@ void main() {
     t4 = texture(u_texture4, v_uv0, shade.mask_bias.y);
 #endif
     vec4 v = v_color0;
-    vec3 x = clamp(t0.rgb * (v.rgb * shade.base_v.rgb + shade.base_c.rgb), 0.0, 1.0);
-    x = chain_step(0, x, v.rgb, LAYER0.rgb, MASK0.rgb);
+    vec3 x = clamp(t0.rgb * (v.rgb * shade.base_v.rgb + shade.base_c.rgb) + shade.base_d.rgb, 0.0, 1.0);
+    vec3 x0 = x, none = vec3(0.0);
+#if STEPS > 0
+    x = chain_step(0, x, (BASE & 1) != 0 ? x0 * shade.step[0].keep_base.rgb : none, v.rgb, LAYER0.rgb, MASK0.rgb);
+#endif
 #if STEPS > 1
-    x = chain_step(1, x, v.rgb, LAYER1.rgb, MASK1.rgb);
+    x = chain_step(1, x, (BASE & 2) != 0 ? x0 * shade.step[1].keep_base.rgb : none, v.rgb, LAYER1.rgb, MASK1.rgb);
 #endif
 #if STEPS > 2
-    x = chain_step(2, x, v.rgb, LAYER2.rgb, MASK2.rgb);
+    x = chain_step(2, x, (BASE & 4) != 0 ? x0 * shade.step[2].keep_base.rgb : none, v.rgb, LAYER2.rgb, MASK2.rgb);
 #endif
-    float a = dot(shade.alpha_select, vec4(t0.a, t1.a, t2.a, t3.a)) + dot(shade.alpha_select2.xyz, vec3(t4.a, v.a, 1.0));
+    vec4 alphas = vec4(t0.a, t1.a, t2.a, t3.a);
+    vec3 others = vec3(t4.a, v.a, 1.0);
+    float a = dot(shade.alpha_sum, alphas) + dot(shade.alpha_sum2.xyz, others);
+#if ALPHA_SUM
+    a = clamp(a, 0.0, 1.0) * (dot(shade.alpha_times, alphas) + dot(shade.alpha_times2.xyz, others));
+#endif
     vec4 result = vec4(x, clamp(a * (v.a * shade.alpha_factor.x + shade.alpha_factor.y), 0.0, 1.0));
 #if ALPHA_TEST
     if (result.a < shade.alpha_range.x || result.a >= shade.alpha_range.y)
@@ -1307,6 +1322,7 @@ constexpr const char* CgChainFragment = R"CG(
 struct Step {
     float4 keep_v;
     float4 keep_c;
+    float4 keep_base;
     float4 layer_v;
     float4 layer_c;
     float4 mask_scale;
@@ -1319,15 +1335,18 @@ struct Shade {
     float4 alpha_range;
     float4 base_v;
     float4 base_c;
+    float4 base_d;
     Step step[3];
-    float4 alpha_select;
-    float4 alpha_select2;
+    float4 alpha_sum;
+    float4 alpha_sum2;
+    float4 alpha_times;
+    float4 alpha_times2;
     float4 alpha_factor;
     float4 mask_bias;
 };
 uniform Shade shade : BUFFER[0];
-real3 chain_step(int i, real3 x, real3 v, real3 layer, real3 mask) {
-    real3 p = saturate((x * (v * real3(shade.step[i].keep_v.rgb) + real3(shade.step[i].keep_c.rgb)) +
+real3 chain_step(int i, real3 x, real3 base, real3 v, real3 layer, real3 mask) {
+    real3 p = saturate((x * (v * real3(shade.step[i].keep_v.rgb) + real3(shade.step[i].keep_c.rgb)) + base +
                         layer * (v * real3(shade.step[i].layer_v.rgb) + real3(shade.step[i].layer_c.rgb))) * real3(shade.step[i].s.rgb));
     return lerp(x, p, mask * real3(shade.step[i].mask_scale.rgb) + real3(shade.step[i].mask_offset.rgb));
 }
@@ -1349,15 +1368,23 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     t4 = tex2D(u_texture4, v_uv0);
 #endif
     real4 v = v_color0;
-    real3 x = saturate(t0.rgb * (v.rgb * real3(shade.base_v.rgb) + real3(shade.base_c.rgb)));
-    x = chain_step(0, x, v.rgb, LAYER0.rgb, MASK0.rgb);
+    real3 x = saturate(t0.rgb * (v.rgb * real3(shade.base_v.rgb) + real3(shade.base_c.rgb)) + real3(shade.base_d.rgb));
+    real3 x0 = x, none = real3(0.0h, 0.0h, 0.0h);
+#if STEPS > 0
+    x = chain_step(0, x, (BASE & 1) != 0 ? x0 * real3(shade.step[0].keep_base.rgb) : none, v.rgb, LAYER0.rgb, MASK0.rgb);
+#endif
 #if STEPS > 1
-    x = chain_step(1, x, v.rgb, LAYER1.rgb, MASK1.rgb);
+    x = chain_step(1, x, (BASE & 2) != 0 ? x0 * real3(shade.step[1].keep_base.rgb) : none, v.rgb, LAYER1.rgb, MASK1.rgb);
 #endif
 #if STEPS > 2
-    x = chain_step(2, x, v.rgb, LAYER2.rgb, MASK2.rgb);
+    x = chain_step(2, x, (BASE & 4) != 0 ? x0 * real3(shade.step[2].keep_base.rgb) : none, v.rgb, LAYER2.rgb, MASK2.rgb);
 #endif
-    real a = dot(real4(shade.alpha_select), real4(t0.a, t1.a, t2.a, t3.a)) + dot(real3(shade.alpha_select2.xyz), real3(t4.a, v.a, 1.0h));
+    real4 alphas = real4(t0.a, t1.a, t2.a, t3.a);
+    real3 others = real3(t4.a, v.a, 1.0h);
+    real a = dot(real4(shade.alpha_sum), alphas) + dot(real3(shade.alpha_sum2.xyz), others);
+#if ALPHA_SUM
+    a = saturate(a) * (dot(real4(shade.alpha_times), alphas) + dot(real3(shade.alpha_times2.xyz), others));
+#endif
     real4 result = real4(x, saturate(a * (v.a * real(shade.alpha_factor.x) + real(shade.alpha_factor.y))));
 #if ALPHA_TEST
     if (result.a < shade.alpha_range.x || result.a >= shade.alpha_range.y)
@@ -1449,14 +1476,15 @@ std::string GlslVertex(const NativeShaderVertexKey& key) {
 // A CHAIN form's steps, roles and the layer and mask each step reads.
 std::string ChainDefines(const NativeShaderFragmentKey& key) {
     const auto& form = mh3_shade_chain_forms[key.chain];
-    const auto role = [](uint8_t r) { return r == MH3_SHADE_NO_ROLE ? std::string("one") : "t" + std::to_string(r); };
-    std::string out = Define("STEPS", form.steps) + Define("ROLES", form.roles) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
-                      Define("LINEAR_FOG", key.linear_fog) + Define("TARGET_ALPHA_ONE", key.target_alpha_one);
+    const auto role = [](uint8_t r, bool alpha) { return r == MH3_SHADE_NO_ROLE ? std::string("one") : "t" + std::to_string(r) + (alpha ? ".aaaa" : ""); };
+    std::string out = Define("STEPS", form.steps) + Define("ROLES", form.roles) + Define("BASE", form.base) + Define("ALPHA_SUM", form.alpha_sum) +
+                      Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) + Define("LINEAR_FOG", key.linear_fog) + Define("TARGET_ALPHA_ONE", key.target_alpha_one);
 
     for (unsigned i = 0; i < 3; ++i) {
         const auto n = std::to_string(i);
-        out += "#define LAYER" + n + " " + role(i < form.steps ? form.layer[i] : MH3_SHADE_NO_ROLE) + "\n";
-        out += "#define MASK" + n + " " + role(i < form.steps ? form.mask[i] : MH3_SHADE_NO_ROLE) + "\n";
+        const bool step = i < form.steps;
+        out += "#define LAYER" + n + " " + role(step ? form.layer[i] : MH3_SHADE_NO_ROLE, false) + "\n";
+        out += "#define MASK" + n + " " + role(step ? form.mask[i] : MH3_SHADE_NO_ROLE, step && (form.mask_alpha >> i & 1)) + "\n";
     }
 
     return out;
