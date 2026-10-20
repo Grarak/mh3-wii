@@ -215,5 +215,5 @@ MH3_ONLINE_CA=MH3SP/cert/ca.der MH3_ONLINE_HOSTS='*.mh3sp.com=127.0.0.1' \
 | `MH3_ONLINE_PORTS=from=to,...` | connect to `to` instead of port `from` (the NAS's port 80) |
 | `MH3_ONLINE_ADDRESSES=from=to,...` | reach IPv4 address `from` at `to`, and read packets from `to` as from `from` (a server that names its ZeroTier address, reached from a Vita on the LAN) |
 | `MH3_ONLINE_NAME_TAG=TEXT` | put TEXT in front of the hunter's name on the lobby server (default `PV ` on the Vita, none elsewhere) |
-| `MH3_ONLINE_AUTO=id=,server=,gate=,city=,post=QUEST` or `...,join=N` | development builds: the autopilot takes a `--city` launch through the online screens into a quest (`runtime/src/net/online_auto.cpp`); `city=-1` stops in the gate (Loc Lac's streets) |
+| `MH3_ONLINE_AUTO=id=,server=,gate=,city=,post=QUEST` or `...,join=N` | development builds: the autopilot takes a `--city` launch through the online screens into a quest (`runtime/src/net/online_auto.cpp`); `city=-1` stops in the gate (Loc Lac's streets), `movies=1` plays the movies it otherwise skips |
 | `MH3_TRACE=net` | development builds: log sockets, connects, lookups and TLS sessions |

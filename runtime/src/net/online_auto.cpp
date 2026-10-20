@@ -15,7 +15,7 @@
 // ready departs. join=N: join the circle list's circle N, then ready. In the
 // circle both accept its quest as the quest counter does (the quest the depart
 // loads; `online accept` by hand).
-// Movies are skipped meanwhile.
+// Movies are skipped meanwhile; movies=1 lets them play.
 //
 // The screens' state machine (0x8044E4FC; net_ctrl_wk +0x17 state, +0x18
 // sub-state) reads the pad's pressed keys itself. At each choice the
@@ -149,6 +149,7 @@ struct Plan {
     // city -1: stay in the gate (Loc Lac's streets) instead of a city.
     int32_t city = 0, post = -1, join = -1;
     uint32_t members = 4, depart = 0;
+    bool movies = false;
 };
 
 enum class Step {
@@ -199,6 +200,8 @@ Plan Parse(const std::string& spec) {
             p.depart = value;
         else if (key == "join")
             p.join = value;
+        else if (key == "movies")
+            p.movies = value != 0;
         else if (!key.empty())
             Say("ignoring unknown item '%s'", key.c_str());
     }
@@ -642,7 +645,7 @@ extern "C" void MH3_OnlineScreens(CpuContext* cpu) {
             GuestFrame guard(cpu, 0x10);
             keys = Choose(work);
 #ifdef MH3_DEVELOPMENT
-            const bool movie = SkipMovie();
+            const bool movie = !plan.movies && SkipMovie();
 #else
             const bool movie = false;
 #endif
