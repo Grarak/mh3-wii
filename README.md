@@ -41,7 +41,8 @@ techniques carry over to other Wii games:
 
 The first start checks the image and writes about 7 MB of disc metadata to
 `ux0:/data/mh3-wii/disc/`; textures and models are converted while the game
-loads them and cached there. Saves live in `ux0:/data/mh3-wii/saves/`. The
+loads them and cached there. Saves live in `ux0:/data/mh3-wii/saves/`
+([format](docs/save-format.md)). The
 launcher's menus start the game, quests and custom quests, and set cheats,
 widescreen, upscaling, MSAA and the frame limit
 ([controls](docs/vita-controls.md)). Online play uses the community

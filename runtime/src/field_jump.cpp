@@ -6,8 +6,9 @@
 // the accepted quest. The quest's data sets the map, area and monsters. The
 // village task (0x8021F40C, a tcb: +8 phase, +9 state, +10 sub-state) leaves
 // in state 5: its main state (0x8021F840) first records the quest id in the
-// departure block 0x8065B534 (u16 id, +9 a village setting 0x8021F29C, +11 1
-// for the offline field) and 0x8065B238, and from sub-state 2 of state 5 the
+// departure block 0x8065B534 (u16 id, +8 Cha-Cha's byte from the quest counter,
+// +9 a village setting 0x8021F29C, +11 1 for the offline field) and 0x8065B238,
+// and from sub-state 2 of state 5 the
 // village is torn down, play mode 3 and game mode 1 set and the field task
 // 0x8028DE30 started.
 //
@@ -74,10 +75,11 @@ extern "C" void func_8021F40C(CpuContext* ctx);
 namespace {
 
 constexpr uint32_t kQuestId = 0x8065B238;   // u32: the departing quest
-constexpr uint32_t kDeparture = 0x8065B534; // u16 quest id, +9 u8, +11 u8 offline field
+constexpr uint32_t kDeparture = 0x8065B534; // u16 quest id, +8 u8 Cha-Cha, +9 u8, +11 u8 offline field
 enum : uint32_t {
     VillageSetting = 0x8021F29C, // () -> u8, recorded at departure +9
     FreeRoamQuest = 0x802FB8A4,  // () -> the season's free-roam quest id, 0 if none
+    ChaChaDeparture = 0x8033C410, // (): Cha-Cha's setting and levels into the departure block
     PrimInitAll = 0x800E3DA4,
     FilterReset = 0x80058514,
 };
@@ -187,6 +189,13 @@ static void VillageTaskPort(CpuContext* ctx) {
             Memory::Write8(kDeparture + 9, uint8_t(game.Call<VillageSetting>()));
             Memory::Write16(kDeparture, uint16_t(quest));
             Memory::Write32(kQuestId, quest);
+
+            // Cha-Cha as the quest counter takes him when it accepts a quest
+            // (0x8033C5D4): the character's +0x3E03 (bit 7 along, the rest his
+            // mask) to departure +8, which the village passes to the field.
+            if (jump.set == QuestCatalog::Set::Village)
+                game.Call<ChaChaDeparture>();
+
             game.Call<PrimInitAll>();
             game.Call<FilterReset>();
             *ctx = saved;
