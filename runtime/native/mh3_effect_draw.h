@@ -91,9 +91,14 @@ typedef struct mh3_effect_vertex_inputs {
 
 void mh3_effect_material_vertices(const mh3_draw_state *draw, const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, AuroraNativeMaterialVertex out[4]);
 /* mh3_effect_material_vertices for the compact quad format: the corners as
- * given and texture coordinates 0 and 1 by the same arithmetic. 0 when the
- * inputs read another coordinate (the caller takes the full vertices). */
-int mh3_effect_quad_vertices(const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, AuroraNativeQuadVertex out[4]);
+ * given and two of the eight texture coordinates, slots[0] and slots[1], by
+ * the same arithmetic (an unused one is zero). */
+void mh3_effect_quad_vertices(const mh3_effect_quad *quad, const float uv[4][2], const mh3_effect_vertex_inputs *inputs, const uint8_t slots[2], AuroraNativeQuadVertex out[4]);
+/* A point's or line's corners for the compact quads, in view space: the
+ * clip-space spread of mh3_effect_expand_point and _line taken back through
+ * the projection's x and y scales. 0 when the projection moves x or y by
+ * anything else (GX projections do not). */
+int mh3_effect_expand_view(const mh3_draw_state *draw, const mh3_effect_quad *quad, float width, int point, float out[4][3]);
 void mh3_effect_expand_point(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_expand_line(const mh3_draw_state *draw, float width, AuroraNativeMaterialVertex vertices[4]);
 void mh3_effect_quad_indices(uint16_t base, uint16_t out[6]);

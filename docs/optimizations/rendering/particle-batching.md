@@ -59,7 +59,18 @@ colour is a new TEV register write in the same stream.
   arena, which on the Vita is uncached main memory mapped for GXM; the GPU
   draws from it in place with one static index pattern. The draw's matrices,
   normal and colour go in a 160-byte uniform block and the vertex program
-  (`NativeShaderVertex::Quad`) does the rest.
+  (`NativeShaderVertex::Quad`) does the rest. Every effect quad takes this
+  path: a ribbon's or tube's strip quad (triangles 0 1 2, 2 1 3) stores its
+  corners in the order 1 3 2 0, the same triangles in the quad pattern;
+  points and lines are spread on the CPU from their one or two centres, the
+  clip-space offsets taken back to view space through the projection's x and
+  y scales, and draw with an identity position matrix; the vertex carries the
+  two coordinates the material's stages read, whichever they are. A tube's
+  rings (`EffectTubeSegment`, `EffectSmoothTubeSegment`) go into one arena
+  run and one record instead of a record per quad. Built vertices remain only
+  for a material reading three coordinates or a full arena (none in
+  Alatreon, the Deviljho and Lagiacrus arenas, the Tundra or the village),
+  and in the web build, which has no compact quads.
 - **Setups that change nothing are skipped**: emitters drawn one after
   another often publish the same material; a strategy's setup keeps the
   inputs it last published and, while they and the material revision are
@@ -94,6 +105,13 @@ The draw-side changes, measured on the Vita in the village:
 | Skipped setups | billboard setup 12% of the draw thread, 13.60 ms a frame, 69.1 logical fps | 6%, 12.81 ms, 72.9 fps |
 | Free-strategy matrices | effect draw 5.40 ms a frame | 5.07 ms |
 | Blocks built before CDRAM | `DrawNativeQuads` 13.3% of the render thread, 16.44 ms a packet | 11.0%, 16.20 ms |
+
+The hammer's underwater charged spin draws a vortex of about 2,300 tube
+quads a frame. On the Pi 5 (arm32 Cortex-A9 build, frame limit off, the
+spin repeated deep in the camp's sea, the vortex up about a third of the
+time) the render thread's frame went from 1.08 ms idle to 1.68 ms with each
+quad built as four 144-byte vertices, and from 1.13 to 1.25 ms with compact
+batched quads; the frames from 399 to 360 a second before, 425 to 405 after.
 
 Particles of different colours drawn as one, on the Pi 5 (arm32 Cortex-A9
 build, frame limit off) in the Deserted Island base camp facing the

@@ -97,8 +97,18 @@ void SubmitNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // Render thread: draws recorded geometry with the restored Render state.
 void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 
+// A compact quad record's vertices: corners in object space (the draw's
+// position matrix applies) or in view space (points and lines, spread on the
+// CPU), and the two of the eight texture coordinates they carry.
+struct NativeQuadLayout {
+    bool view = false;
+    uint8_t coordinates[2] = {0, 1};
+
+    bool operator==(const NativeQuadLayout&) const = default;
+};
+
 // Render thread: compact effect quads of one record (frame packet Kind::Quads).
-void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]);
+void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout);
 
 // Render thread: consecutive quad records that differ only in their colour
 // snapshots (effect particles fading on their own), with the first record's
@@ -112,7 +122,7 @@ struct NativeQuadRunPart {
     const NativeColorSnapshot* colors;
 };
 
-bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const NativeQuadRunPart> parts, const float normal[3], const uint8_t color[4]);
+bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const NativeQuadRunPart> parts, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout);
 
 // Render thread: direct compact resident mesh boundary. The caller supplies
 // the Render owner's material; immutable vertex/index payloads remain in their

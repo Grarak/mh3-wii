@@ -68,8 +68,7 @@ namespace {
 // Per-frame geometry high water is about 200 KiB of vertices (Alatreon quest).
 constexpr size_t VertexArenaBytes = 2u << 20, IndexArenaBytes = 512u << 10;
 
-// A packet's compact quads: 3640 quads, 512 KiB.
-constexpr uint32_t QuadArenaVertices = 4 * 3640;
+constexpr uint32_t QuadArenaVertices = 4 * kNativeQuadArenaQuads;
 
 enum class Kind : uint8_t { Model, MaterialGeometry, Geometry, DepthClear, Capture, Glare, Clone, Quads };
 using StateIndices = std::array<uint32_t, NATIVE_STATE_COMPONENTS>;
@@ -87,6 +86,7 @@ struct Quads {
     uint32_t count;
     float normal[3];
     uint8_t color[4];
+    NativeQuadLayout layout;
 };
 
 struct Feedback {
@@ -799,7 +799,7 @@ uint32_t QuadRunEnd(const Packet& p, uint32_t first) {
         const auto& part = p.quads[record.payload];
 
         if (part.vertices != next || total + part.count > aurora::gl::MaxNativeQuads || std::memcmp(part.normal, quads.normal, sizeof quads.normal) ||
-            std::memcmp(part.color, quads.color, sizeof quads.color))
+            std::memcmp(part.color, quads.color, sizeof quads.color) || !(part.layout == quads.layout))
             break;
 
         total += part.count;
@@ -946,7 +946,7 @@ void Draw(const Packet& p) {
                 for (uint32_t k = index - 1; k < end; ++k)
                     quadRunParts.push_back({p.quads[p.records[k].payload].count, &p.colors.items[p.records[k].state[NATIVE_STATE_COLORS]]});
 
-                if (DrawNativeQuadRun(quads.vertices, quadRunParts, quads.normal, quads.color)) {
+                if (DrawNativeQuadRun(quads.vertices, quadRunParts, quads.normal, quads.color, quads.layout)) {
                     joined = end - index;
                     Restore(p, p.records[end - 1].state, applied);
 #ifdef MH3_DEVELOPMENT
@@ -960,7 +960,7 @@ void Draw(const Packet& p) {
 #endif
             }
 
-            DrawNativeQuads(quads.vertices, quads.count, quads.normal, quads.color);
+            DrawNativeQuads(quads.vertices, quads.count, quads.normal, quads.color, quads.layout);
             break;
         }
         case Kind::Geometry: {
@@ -1515,7 +1515,12 @@ AuroraNativeQuadVertex* AllocateNativeQuads(uint32_t count) {
 #endif
 }
 
-void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
+void ReturnNativeQuads(uint32_t count) {
+    if (NativeFramePacketRecording() && recording->quadCursor >= 4 * count)
+        recording->quadCursor -= 4 * count;
+}
+
+void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout) {
     RequireRecorder();
 
     if (!NativeFramePacketRecording())
@@ -1537,7 +1542,7 @@ void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const f
             auto& previous = p.quads[last.payload];
 
             if (previous.vertices + 4 * previous.count == vertices && previous.count + count <= aurora::gl::MaxNativeQuads &&
-                !std::memcmp(previous.normal, normal, sizeof previous.normal) && !std::memcmp(previous.color, color, sizeof previous.color)) {
+                !std::memcmp(previous.normal, normal, sizeof previous.normal) && !std::memcmp(previous.color, color, sizeof previous.color) && previous.layout == layout) {
                 previous.count += count;
 #ifdef MH3_DEVELOPMENT
                 ++geometryMerged;
@@ -1547,7 +1552,7 @@ void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const f
         }
     }
 
-    Quads quads{vertices, count, {normal[0], normal[1], normal[2]}, {color[0], color[1], color[2], color[3]}};
+    Quads quads{vertices, count, {normal[0], normal[1], normal[2]}, {color[0], color[1], color[2], color[3]}, layout};
     p.quads.push_back(quads);
     p.records.push_back({Kind::Quads, false, uint32_t(p.quads.size() - 1), state});
 }

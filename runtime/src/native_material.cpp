@@ -1690,9 +1690,10 @@ void SubmitShadedMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) 
 }
 
 // The Quad block of a compact quad draw (NativeShaderVertex::Quad): the
-// draw's position matrix and projection as rows, the normal and colour of
-// its quads, and per role the coordinate it reads (0, 1, or 2: zero); w is
-// 1 for a reversed depth range (mh3_effect_material_vertices).
+// draw's position matrix (the identity for corners already in view space)
+// and projection as rows, the normal and colour of its quads, and per role
+// the vertex's coordinate it reads (0, 1, or 2: zero); w is 1 for a reversed
+// depth range (mh3_effect_material_vertices).
 struct ShadeQuad {
     float position[12], projection[16], normal[4], color0[4];
     int32_t mode[4];
@@ -1702,7 +1703,8 @@ static_assert(sizeof(ShadeQuad) == 160, "the Quad block of native_shader_source.
 
 // lerp (one per vertex): a BASIC_LERP material's base and slope per quad
 // (DrawNativeQuadRun), read by the vertex_lerp programs.
-void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const AuroraNativeQuadLerp* lerp = nullptr) {
+void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout,
+                       const AuroraNativeQuadLerp* lerp = nullptr) {
     const auto& entry = ShadeMaterial();
     const auto& shading = entry.shading;
     RequireEarlyDepth(shading);
@@ -1734,7 +1736,9 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
     // Built in the uniform memory.
     auto& quad = *reinterpret_cast<ShadeQuad*>(static_cast<char*>(memory.data) + (gpu ? ShadeGpuPaletteOffset : ShadePaletteOffset(shading.model)));
     const auto& draw = GetNativeDrawState(NativeOwner::Render);
-    std::memcpy(quad.position, draw.position, sizeof quad.position);
+    static constexpr float kIdentity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    const float* position = layout.view ? kIdentity : draw.position;
+    std::memcpy(quad.position, position, sizeof quad.position);
     std::memcpy(quad.projection, draw.projection, sizeof quad.projection);
     quad.normal[0] = normal[0];
     quad.normal[1] = normal[1];
@@ -1746,7 +1750,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
 
     for (unsigned role = 0; role < 3; ++role) {
         const uint8_t coordinate = role < shading.textures && shading.texture_coordinate[role] < 8 ? shading.texture_coordinate[role] : 0xff;
-        quad.mode[role] = coordinate < 2 ? coordinate : 2;
+        quad.mode[role] = coordinate == layout.coordinates[0] ? 0 : coordinate == layout.coordinates[1] ? 1 : 2;
     }
 
     quad.mode[3] = draw.viewport[4] <= draw.viewport[5];
@@ -1790,7 +1794,7 @@ void SubmitShadedQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, c
 
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
-    CountQuadFill(vertices, count, draw.position, draw.projection, variant, shading);
+    CountQuadFill(vertices, count, position, draw.projection, variant, shading);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
     aurora::gl::draw_shaded_quads(vertices, lerp, count, program, *blocks, units);
@@ -2319,11 +2323,11 @@ void DrawNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry) {
     SubmitShadedMaterialGeometry(geometry);
 }
 
-void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]) {
-    SubmitShadedQuads(vertices, count, normal, color);
+void DrawNativeQuads(const AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout) {
+    SubmitShadedQuads(vertices, count, normal, color, layout);
 }
 
-bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const NativeQuadRunPart> parts, const float normal[3], const uint8_t color[4]) {
+bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const NativeQuadRunPart> parts, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout) {
     const auto& entry = ShadeMaterial();
 
     // BASIC_LERP with a baked block: base and slope are all the colours change.
@@ -2365,7 +2369,7 @@ bool DrawNativeQuadRun(const AuroraNativeQuadVertex* vertices, std::span<const N
             *out++ = lerp;
     }
 
-    SubmitShadedQuads(vertices, quads, normal, color, static_cast<const AuroraNativeQuadLerp*>(memory.data));
+    SubmitShadedQuads(vertices, quads, normal, color, layout, static_cast<const AuroraNativeQuadLerp*>(memory.data));
     return true;
 }
 

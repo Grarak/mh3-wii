@@ -60,6 +60,7 @@ void ApplyDeferredHeapFrees(CpuContext* cpu);
 extern uintptr_t mh3GameStackProbe;                           // model_catalog.cpp
 void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]); // model_catalog.cpp
 extern "C" uint64_t MH3TakeEffectParticlesDrawn();                // native_effect_draw.cpp
+extern "C" void MH3TakeEffectQuadCounts(uint32_t out[5]);         // native_effect_draw.cpp
 #endif
 
 namespace {
@@ -365,6 +366,11 @@ struct FrameSplit {
         if (packets)
             std::printf("MH3 quad runs: %.1f per drawn packet drew %.1f quad records as one; %.1f refused\n", double(runs) / packets, double(runRecords) / packets,
                         double(refused) / packets);
+
+        uint32_t quads[5];
+        MH3TakeEffectQuadCounts(quads);
+        std::printf("MH3 effect quads: compact %.1f (strips %.1f points %.1f lines %.1f), built on the CPU %.1f per frame\n", per(quads[0]), per(quads[1]), per(quads[2]),
+                    per(quads[3]), per(quads[4]));
         std::memset(splitCalls, 0, sizeof splitCalls);
         std::memset(splitFamilies, 0, sizeof splitFamilies);
         std::memset(splitScopes, 0, sizeof splitScopes);

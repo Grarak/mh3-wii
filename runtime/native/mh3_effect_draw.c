@@ -551,17 +551,16 @@ void mh3_effect_material_vertices(const mh3_draw_state *d, const mh3_effect_quad
     }
 }
 
-int mh3_effect_quad_vertices(const mh3_effect_quad *q, const float uv[4][2], const mh3_effect_vertex_inputs *in, AuroraNativeQuadVertex out[4]) {
-    if ((uint8_t)~in->unused_coordinates & 0xfc)
-        return 0;
-
+void mh3_effect_quad_vertices(const mh3_effect_quad *q, const float uv[4][2], const mh3_effect_vertex_inputs *in, const uint8_t slots[2], AuroraNativeQuadVertex out[4]) {
     for (uint32_t i = 0; i < 4; i++) {
         AuroraNativeQuadVertex *v = out + i;
         memcpy(v->position, q->position[i], 12);
 
-        for (uint32_t slot = 0; slot < 2; slot++) {
+        for (uint32_t k = 0; k < 2; k++) {
+            const uint32_t slot = slots[k];
+
             if (in->unused_coordinates & (1u << slot)) {
-                memset(v->texcoord[slot], 0, sizeof(v->texcoord[slot]));
+                memset(v->texcoord[k], 0, sizeof(v->texcoord[k]));
                 continue;
             }
 
@@ -572,11 +571,71 @@ int mh3_effect_quad_vertices(const mh3_effect_quad *q, const float uv[4][2], con
                 memcpy(source, q->position[i], 12);
 
             for (uint32_t r = 0; r < 3; r++)
-                v->texcoord[slot][r] = ((m[4 * r] * source[0] + m[4 * r + 1] * source[1]) + m[4 * r + 2] * source[2]) + m[4 * r + 3];
+                v->texcoord[k][r] = ((m[4 * r] * source[0] + m[4 * r + 1] * source[1]) + m[4 * r + 2] * source[2]) + m[4 * r + 3];
 
             if (!in->position_source[slot])
-                v->texcoord[slot][2] = 1;
+                v->texcoord[k][2] = 1;
         }
+    }
+}
+
+int mh3_effect_expand_view(const mh3_draw_state *d, const mh3_effect_quad *q, float width, int point, float out[4][3]) {
+    const float *p = d->projection, vw = d->viewport[2], vh = d->viewport[3];
+
+    if (p[1] != 0 || p[4] != 0 || p[12] != 0 || p[13] != 0 || p[0] == 0 || p[5] == 0)
+        return 0;
+
+    float clip[4][3];
+
+    for (uint32_t i = 0; i < 4; i++) {
+        for (uint32_t r = 0; r < 3; r++)
+            out[i][r] = ((d->position[4 * r] * q->position[i][0] + d->position[4 * r + 1] * q->position[i][1]) + d->position[4 * r + 2] * q->position[i][2]) + d->position[4 * r + 3];
+
+        /* x, y and w, as mh3_effect_material_vertices has them. */
+        for (uint32_t r = 0; r < 3; r++) {
+            const float *m = p + (r == 2 ? 3 : r) * 4;
+            clip[i][r] = ((m[0] * out[i][0] + m[1] * out[i][1]) + m[2] * out[i][2]) + m[3] * 1.f;
+        }
+    }
+
+    if (vw <= 0 || vh <= 0)
+        return 1;
+
+    float x = 1, y = 0;
+
+    if (!point) {
+        const float wa = clip[0][2], wb = clip[2][2];
+
+        if (wa == 0 || wb == 0)
+            return 1;
+
+        x = (clip[2][0] / wb - clip[0][0] / wa) * vw;
+        y = (clip[2][1] / wb - clip[0][1] / wa) * vh;
+        const float n = sqrtf(x * x + y * y);
+
+        if (n > 1e-5f) {
+            x /= n;
+            y /= n;
+        } else {
+            x = 1;
+            y = 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < 4; i++) {
+        float dx, dy;
+
+        if (point) {
+            dx = ((i & 1) ? width : -width) / vw * clip[i][2];
+            dy = (i >= 2 ? width : -width) / vh * clip[i][2];
+        } else {
+            const float sign = (i & 1) ? 1 : -1;
+            dx = -y * width / vw * sign * clip[i][2];
+            dy = x * width / vh * sign * clip[i][2];
+        }
+
+        out[i][0] += dx / p[0];
+        out[i][1] += dy / p[5];
     }
 
     return 1;

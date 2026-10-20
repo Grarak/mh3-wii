@@ -9,6 +9,11 @@ static void near(float a, float b) {
     assert(fabsf(a - b) < .00002f);
 }
 
+/* Within float rounding of b's magnitude. */
+static void near_scaled(float a, float b) {
+    assert(fabsf(a - b) <= .00002f * fmaxf(1, fabsf(b)));
+}
+
 static void put16(uint8_t *p, uint16_t x) {
     p[0] = (uint8_t)(x >> 8);
     p[1] = (uint8_t)x;
@@ -196,12 +201,10 @@ static void geometry(void) {
     near(vertices[2].texcoord[2][2], 81);
     near(vertices[0].normal[0], 1);
 
-    /* The compact format: the corners as given, coordinates 0 and 1 as above. */
+    /* The compact format: the corners as given, the chosen coordinates as above. */
     AuroraNativeQuadVertex quads[4];
-    assert(!mh3_effect_quad_vertices(&q, uv, &in, quads));
-    in.unused_coordinates = 0xfc;
-    mh3_effect_material_vertices(&draw, &q, uv, &in, vertices);
-    assert(mh3_effect_quad_vertices(&q, uv, &in, quads));
+    const uint8_t first_two[2] = {0, 1}, later[2] = {2, 1};
+    mh3_effect_quad_vertices(&q, uv, &in, first_two, quads);
 
     for (unsigned i = 0; i < 4; i++)
         for (unsigned k = 0; k < 3; k++) {
@@ -209,6 +212,19 @@ static void geometry(void) {
             near(quads[i].texcoord[0][k], vertices[i].texcoord[0][k]);
             near(quads[i].texcoord[1][k], vertices[i].texcoord[1][k]);
         }
+
+    mh3_effect_quad_vertices(&q, uv, &in, later, quads);
+
+    for (unsigned i = 0; i < 4; i++)
+        for (unsigned k = 0; k < 3; k++)
+            near(quads[i].texcoord[0][k], vertices[i].texcoord[2][k]);
+
+    in.unused_coordinates = 0xfc;
+    mh3_effect_material_vertices(&draw, &q, uv, &in, vertices);
+    mh3_effect_quad_vertices(&q, uv, &in, later, quads);
+
+    for (unsigned k = 0; k < 3; k++)
+        near(quads[0].texcoord[0][k], 0);
 
     in.unused_coordinates = 0;
 
@@ -218,6 +234,52 @@ static void geometry(void) {
     mh3_effect_expand_point(&draw, 6, vertices);
     near(vertices[1].position[0] - vertices[0].position[0], 12.0f / 320);
     near(vertices[2].position[1] - vertices[0].position[1], 12.0f / 240);
+
+    /* The compact quads' spread in view space lands, through the projection,
+     * where the clip-space spread does: a point and a line, in an
+     * orthographic and a perspective projection (GX's terms). */
+    for (unsigned perspective = 0; perspective < 2; perspective++) {
+        if (perspective) {
+            memset(draw.projection, 0, sizeof draw.projection);
+            draw.projection[0] = 1.5f;
+            draw.projection[2] = .25f;
+            draw.projection[5] = 2;
+            draw.projection[6] = -.5f;
+            draw.projection[10] = -.1f;
+            draw.projection[11] = -10;
+            draw.projection[14] = -1;
+            draw.position[11] = -50;
+        }
+
+        for (unsigned point = 0; point < 2; point++) {
+            mh3_effect_quad shape;
+
+            for (unsigned i = 0; i < 4; i++) {
+                const float a[3] = {10, 20, -5}, b[3] = {40, -30, 15};
+                memcpy(shape.position[i], point || i < 2 ? a : b, 12);
+            }
+
+            mh3_effect_material_vertices(&draw, &shape, uv, &in, vertices);
+
+            if (point)
+                mh3_effect_expand_point(&draw, 6, vertices);
+            else
+                mh3_effect_expand_line(&draw, 6, vertices);
+
+            float view[4][3];
+            assert(mh3_effect_expand_view(&draw, &shape, 6, point, view));
+
+            for (unsigned i = 0; i < 4; i++)
+                for (unsigned r = 0; r < 2; r++) {
+                    const float *m = draw.projection + 4 * r;
+                    near_scaled(m[0] * view[i][0] + m[1] * view[i][1] + m[2] * view[i][2] + m[3], vertices[i].position[r]);
+                }
+        }
+    }
+
+    draw.projection[1] = 1;
+    float view[4][3];
+    assert(!mh3_effect_expand_view(&draw, &q, 6, 1, view));
 }
 
 typedef struct {

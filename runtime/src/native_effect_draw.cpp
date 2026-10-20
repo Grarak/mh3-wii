@@ -504,14 +504,37 @@ bool NearerThanNear(const mh3_effect_quad &q) {
     return false;
 }
 
-void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2] = nullptr, uint32_t size_code = 0, bool point = false, bool strip = false) {
-    if (NearerThanNear(q))
-        return;
+#ifdef MH3_DEVELOPMENT
+// Effect quads by the way they were drawn (MH3TakeEffectQuadCounts): compact,
+// of them strips, points and lines; built on the CPU.
+std::atomic<uint32_t> effectQuads[5];
+#endif
 
-    const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
-    const auto &material = GetNativeMaterialState();
-    mh3_effect_vertex_inputs &input = effect.vertex;
+// The two texture coordinates a compact quad carries: those the material's
+// stages read (its texture roles'), when they read at most two.
+bool CompactCoordinates(const mh3_native_material_state &material, uint8_t out[2]) {
+    uint32_t count = 0;
+    out[0] = 0;
+    out[1] = 1;
 
+    for (uint32_t i = 0; i < material.tev_count && i < 16; i++) {
+        const auto &stage = material.tev[i];
+
+        if (stage.texture_map == 255 || (count > 0 && out[0] == stage.texture_coordinate) || (count > 1 && out[1] == stage.texture_coordinate))
+            continue;
+
+        if (count == 2)
+            return false;
+
+        out[count++] = stage.texture_coordinate;
+    }
+
+    return true;
+}
+
+// The inputs a draw's quads share (Emit, QuadBatch): the coordinates the
+// resource has, the normal and the channels' colours.
+void PrepareInputs(mh3_effect_vertex_inputs &input, const mh3_native_material_state &material) {
     // The stages read only the resource's texture coordinates (0..count-1).
     input.unused_coordinates = uint8_t(0xff << std::max<uint32_t>(effect.resource.texture_count, 1));
     input.normal[0] = 1;
@@ -533,22 +556,87 @@ void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2]
 
     for (uint32_t c = 0; c < 2; c++)
         std::memcpy(input.color[c], material.channel[c].material_color, 4);
+}
 
+// A compact quad's vertices: the corners (in the quads' pattern order for a
+// strip's quad, see Emit) and the layout's coordinates; a point's or line's
+// corners in view space, coordinate 0 plus 1 at the spread corners as
+// mh3_effect_material_vertices has it.
+void CompactVertices(const mh3_effect_quad &q, const float uv[4][2], const mh3_effect_vertex_inputs &input, const NativeQuadLayout &layout, bool strip, const float (*view)[3],
+                     bool point, AuroraNativeQuadVertex out[4]) {
+    static constexpr uint32_t kQuad[4] = {0, 1, 2, 3}, kStrip[4] = {1, 3, 2, 0};
+    const uint32_t *order = strip ? kStrip : kQuad;
+    mh3_effect_quad corners;
+    float corner_uv[4][2];
+
+    for (uint32_t i = 0; i < 4; i++) {
+        std::memcpy(corners.position[i], q.position[order[i]], sizeof corners.position[i]);
+        corner_uv[i][0] = uv[order[i]][0];
+        corner_uv[i][1] = uv[order[i]][1];
+    }
+
+    mh3_effect_quad_vertices(&corners, corner_uv, &input, layout.coordinates, out);
+
+    for (uint32_t i = 0; view && i < 4; i++) {
+        std::memcpy(out[i].position, view[order[i]], sizeof out[i].position);
+
+        for (uint32_t k = 0; k < 2; k++) {
+            if (layout.coordinates[k] != 0)
+                continue;
+
+            if (point && (order[i] & 1))
+                out[i].texcoord[k][0] += 1;
+
+            if (point ? order[i] >= 2 : (order[i] & 1) != 0)
+                out[i].texcoord[k][1] += 1;
+        }
+    }
+}
+
+void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2] = nullptr, uint32_t size_code = 0, bool point = false, bool strip = false) {
+    if (NearerThanNear(q))
+        return;
+
+    const float defaults[4][2] = {{0, 1}, {0, 0}, {1, 0}, {1, 1}}, zero[4][2] = {};
+    const auto &material = GetNativeMaterialState();
+    mh3_effect_vertex_inputs &input = effect.vertex;
+    PrepareInputs(input, material);
     const float(*uv)[2] = coordinates ? coordinates : textured ? defaults : zero;
 
-    // A plain quad reading coordinates 0 and 1 only: its corners and
-    // coordinates (80 bytes of 576), drawn in place by the GPU with the draw's
-    // matrices, normal and colour as uniforms.
-    if (!size_code && !strip && !(uint8_t(~input.unused_coordinates) & 0xfc)) {
+    // Compact quads: the corners and the two texture coordinates the
+    // material reads (80 bytes of 576), drawn in place by the GPU with the
+    // draw's matrices, normal and colour as uniforms. A strip's quad (ribbons,
+    // tubes, points and lines: triangles 0 1 2 and 2 1 3) takes its corners in
+    // the order 1 3 2 0, the same triangles and winding in the quads' pattern
+    // (0 1 2, 0 2 3). Points and lines are spread on the CPU, their corners in
+    // view space; mh3_effect_material_vertices adds 1 to coordinate 0 at the
+    // spread corners.
+    NativeQuadLayout layout;
+    float view[4][3];
+    bool compact = CompactCoordinates(material, layout.coordinates);
+
+    if (compact && size_code)
+        compact = layout.view = mh3_effect_expand_view(&GetNativeDrawState(), &q, float(size_code) / 6, point, view) != 0;
+
+    if (compact) {
         if (!NativeGraphicsFrameShouldRender())
             return;
 
         if (AuroraNativeQuadVertex *vertices = AllocateNativeQuads(1)) {
-            mh3_effect_quad_vertices(&q, uv, &input, vertices);
-            RecordNativeQuads(vertices, 1, input.normal, input.color[0]);
+            CompactVertices(q, uv, input, layout, strip || size_code, layout.view ? view : nullptr, point, vertices);
+            RecordNativeQuads(vertices, 1, input.normal, input.color[0], layout);
+#ifdef MH3_DEVELOPMENT
+            effectQuads[0].fetch_add(1, std::memory_order_relaxed);
+
+            if (strip || size_code)
+                effectQuads[!size_code ? 1 : point ? 2 : 3].fetch_add(1, std::memory_order_relaxed);
+#endif
             return;
         }
     }
+#ifdef MH3_DEVELOPMENT
+    effectQuads[4].fetch_add(1, std::memory_order_relaxed);
+#endif
 
     AuroraNativeMaterialGeometry geometry{};
 
@@ -582,6 +670,67 @@ void Emit(const mh3_effect_quad &q, bool textured, const float (*coordinates)[2]
 
     SubmitNativeMaterialGeometry(geometry);
 }
+
+// A draw's strip quads from one native loop (a tube's rings): the inputs and
+// the compact layout once, the quads in one arena run and one record. With
+// more coordinates than the compact quads carry, or the arena full, each
+// quad goes through Emit.
+class QuadBatch {
+  public:
+    QuadBatch(bool textured, uint32_t quads) : textured_(textured) {
+        const auto &material = GetNativeMaterialState();
+        PrepareInputs(effect.vertex, material);
+
+        if (!CompactCoordinates(material, layout_.coordinates))
+            return;
+
+        if (!NativeGraphicsFrameShouldRender()) {
+            skip_ = true;
+            return;
+        }
+
+        capacity_ = std::min(quads, kNativeQuadArenaQuads);
+        vertices_ = AllocateNativeQuads(capacity_);
+    }
+
+    ~QuadBatch() {
+        if (!vertices_)
+            return;
+
+        ReturnNativeQuads(capacity_ - count_);
+
+        if (count_)
+            RecordNativeQuads(vertices_, count_, effect.vertex.normal, effect.vertex.color[0], layout_);
+#ifdef MH3_DEVELOPMENT
+        effectQuads[0].fetch_add(count_, std::memory_order_relaxed);
+        effectQuads[1].fetch_add(count_, std::memory_order_relaxed);
+#endif
+    }
+
+    QuadBatch(const QuadBatch &) = delete;
+    QuadBatch &operator=(const QuadBatch &) = delete;
+
+    void Add(const mh3_effect_quad &q, const float uv[4][2]) {
+        if (skip_)
+            return;
+
+        if (!vertices_ || count_ == capacity_) {
+            Emit(q, textured_, uv, 0, false, true);
+            return;
+        }
+
+        if (NearerThanNear(q))
+            return;
+
+        CompactVertices(q, uv, effect.vertex, layout_, true, nullptr, false, vertices_ + 4 * count_++);
+    }
+
+  private:
+    bool textured_, skip_ = false;
+    NativeQuadLayout layout_;
+    AuroraNativeQuadVertex *vertices_ = nullptr;
+    uint32_t capacity_ = 0, count_ = 0;
+};
 
 struct BillboardContext {
     CpuContext *cpu;
@@ -862,6 +1011,11 @@ extern "C" void MH3_EffectColors(CpuContext *c) {
 #ifdef MH3_DEVELOPMENT
 extern "C" uint64_t MH3TakeEffectParticlesDrawn() {
     return particlesDrawn.exchange(0, std::memory_order_relaxed);
+}
+
+extern "C" void MH3TakeEffectQuadCounts(uint32_t out[5]) {
+    for (uint32_t i = 0; i < 5; i++)
+        out[i] = effectQuads[i].exchange(0, std::memory_order_relaxed);
 }
 #endif
 
@@ -1658,6 +1812,8 @@ extern "C" void MH3_EffectTubeSegment(CpuContext *cpu) {
     if (!segments || segments > 32766)
         MH3_THROW(std::runtime_error("Invalid effect tube tessellation"));
 
+    QuadBatch batch((flags & 1) != 0, segments);
+
     for (uint32_t i = 0; i < segments; i++) {
         float samples[2][2];
         ReadVector(angles + 8 * i, samples[0], 2);
@@ -1665,7 +1821,7 @@ extern "C" void MH3_EffectTubeSegment(CpuContext *cpu) {
         mh3_effect_quad q;
         float uv[4][2];
         mh3_effect_tube_quad(frames, samples, i, segments, (flags & 16) != 0, &q, uv);
-        Emit(q, (flags & 1) != 0, uv, 0, false, true);
+        batch.Add(q, uv);
     }
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800B4C08, MH3_EffectRibbonDraw, "EffectRibbonDraw");
@@ -1895,6 +2051,7 @@ extern "C" void MH3_EffectSmoothTubeSegment(CpuContext *cpu) {
     mh3_effect_spline_weights(0, weights);
     mh3_effect_spline_tube(control, weights, &previous);
     float step = 1.0f / float(subdivisions);
+    QuadBatch batch((flags & 1) != 0, subdivisions * segments);
 
     for (uint32_t span = 1; span <= subdivisions; span++) {
         mh3_effect_spline_weights(float(span) * step, weights);
@@ -1910,7 +2067,7 @@ extern "C" void MH3_EffectSmoothTubeSegment(CpuContext *cpu) {
             mh3_effect_quad quad;
             float uv[4][2];
             mh3_effect_tube_quad(frames, samples, i, segments, (flags & 16) != 0, &quad, uv);
-            Emit(quad, (flags & 1) != 0, uv, 0, false, true);
+            batch.Add(quad, uv);
         }
 
         previous = current;

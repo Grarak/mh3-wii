@@ -28,7 +28,15 @@ void RecordNativeMaterialGeometry(const AuroraNativeMaterialGeometry& geometry);
 // Recorded with the draw's normal and colour (mh3_effect_material_vertices'
 // per-draw part).
 AuroraNativeQuadVertex* AllocateNativeQuads(uint32_t count);
-void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4]);
+struct NativeQuadLayout; // native_graphics.h
+
+// A packet's compact quads (AllocateNativeQuads): 3640, 512 KiB.
+inline constexpr uint32_t kNativeQuadArenaQuads = 3640;
+
+// The last AllocateNativeQuads' final `count` quads, unused, go back to the
+// arena (before any other allocation).
+void ReturnNativeQuads(uint32_t count);
+void RecordNativeQuads(AuroraNativeQuadVertex* vertices, uint32_t count, const float normal[3], const uint8_t color[4], const NativeQuadLayout& layout);
 
 // UI geometry with the recorded viewport, scissor, raster and texture unit 0:
 // textured draws sampled RGBA * vertex RGBA, otherwise vertex RGBA.
