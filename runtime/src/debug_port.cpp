@@ -10,6 +10,8 @@
 //   peekf ADDR [N]            N floats
 //   peeks ADDR [MAX]          a NUL-terminated string
 //   poke ADDR VALUE...        32-bit words (hex); pokeh, pokeb: 16-bit, bytes
+//   find HEX                  the addresses (up to 16) in MEM1 and MEM2 where
+//                             those bytes start, at a 4-byte boundary
 //   pokef ADDR VALUE...       floats
 //   wait TICKS                answer TICKS ticks of game time later (30 a s)
 //   steps N                   answer N logic steps later
@@ -307,7 +309,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press hunter point mouse shot call hide cheat trace movie online";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef find wait steps press hunter point mouse shot call hide cheat trace movie online";
 
     if (word == "state")
         return State(s);
@@ -388,6 +390,45 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         }
 
         return Format("ok %u written", count);
+    }
+
+    if (word == "find") {
+        std::vector<uint8_t> bytes;
+
+        if (!(in >> arg) || arg.size() < 8 || arg.size() % 2)
+            return "error: find HEX (at least four bytes)";
+
+        for (size_t i = 0; i < arg.size(); i += 2) {
+            char* end = nullptr;
+            const std::string pair = arg.substr(i, 2);
+            bytes.push_back(uint8_t(std::strtoul(pair.c_str(), &end, 16)));
+
+            if (*end)
+                return "error: bad hex " + pair;
+        }
+
+        const uint32_t first = uint32_t(bytes[0]) << 24 | uint32_t(bytes[1]) << 16 | uint32_t(bytes[2]) << 8 | bytes[3];
+        std::string text = "ok";
+        uint32_t found = 0;
+
+        for (const auto [start, end] : {std::pair{0x80000000u, 0x81800000u}, std::pair{0x90000000u, 0x94000000u}}) {
+            for (uint32_t a = start; a + bytes.size() <= end && found < 16; a += 4) {
+                if (Memory::Read32(a) != first)
+                    continue;
+
+                size_t k = 4;
+
+                while (k < bytes.size() && Memory::Read8(a + uint32_t(k)) == bytes[k])
+                    ++k;
+
+                if (k == bytes.size()) {
+                    text += Format(" %08x", a);
+                    ++found;
+                }
+            }
+        }
+
+        return text;
     }
 
     if (word == "wait" || word == "steps") {
