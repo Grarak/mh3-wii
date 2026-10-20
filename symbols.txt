@@ -1016,6 +1016,12 @@
 80284514 PlHammerChargeRelease
 80286e5c PlHammerActions
 80284140 PlSwordActions
+80282a18 PlGreatSwordActions
+8034ee7c PlLanceActions
+802888ac PlBowgunActions
+8028b394 PlLongSwordActions
+803347bc PlSwitchAxeActions
+8025b6fc PlWeaponCommonActions
 802844d8 PlHammerChargeLevel
 8027c0c8 PlWeaponPoint
 8026fb84 PlStickIn
