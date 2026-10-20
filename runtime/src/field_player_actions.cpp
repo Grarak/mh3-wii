@@ -91,6 +91,14 @@
 //   0x80258AC8  (plw, kind) grabbed by a monster (271 / 219)
 //   0x8026A57C  VelocityStep: the jumps' velocity and position, per step
 //   0x8025DE9C  the action step: the group's (and weapon's) action function
+//               (the weapons' in weapon_actions.cpp)
+//   0x80275754  FieldSetAction (plw, u8 group, u16 action, u16 flags): the
+//               action the next action step runs; MH3_TRACE=actions prints
+//               each (development builds)
+//   0x80275B28  FieldNextAction: the same, marking the change (+14)
+//   0x8026FB84  (plw, sector) -> 1 when the stick points into that quarter
+//   0x80335D4C  (plw, u8 kind, u16 flags): online, the local player's action
+//               start goes to the others
 //
 // The originals count by 1 per step and move by a fixed amount per step (and
 // test the player's step counter, which runs a tick at a time, for `% n == 0`). Here
@@ -102,7 +110,12 @@
 #include "player_work.h"
 #include "port_check.h"
 
+#ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+#endif
+
 #include <algorithm>
+#include <cstdio>
 
 namespace {
 
@@ -136,8 +149,8 @@ enum : uint32_t {
     kCommands = 0xF0,     // u32[]: the step's command bits (0x8026A708 tests one)
     kPadHeld = 0xC8,      // u16
     kPadPressed = 0xCC,   // u16
-    kFlag15 = 15,         // u8
-    kWord16 = 16,         // u16
+    kLastGroup = 15,      // u8: the group before (FieldSetAction)
+    kLastAction = 16,     // u16: the action before
     kGroundKind = 22,     // u8 (GetGroundHit's)
     kClimbs = 0x5C7,      // u8
     kWord1020 = 0x3FC,    // s16
@@ -218,6 +231,9 @@ enum : uint32_t {
     GetNowAreaNo = 0x802AFCE8,      // get_now_areano () -> u8
     SetAction = 0x80275754,         // (plw, u8, u16 action, u16)
     EndActionReset = 0x8027629C,    // (plw, u8 flag9, s32 blend, s32 flags): +0x442 = 0, +0x30A = 255, then as EndAction
+    StickSector = 0x8026FAD0,       // (plw, mode, u16 from, u16 to) -> 1 when the stick points between the angles
+    SetSharpLevels = 0x8027AC90,    // PlSetSharpLevels (plw, s8, s8)
+    OnlineSending = 0x80334AB0,     // (1) -> 1 while actions go out
 };
 
 constexpr uint32_t kCharFlag246 = 0xF6; // MHchar u8 (0x8026A350)
@@ -1344,7 +1360,7 @@ void ClimbUp(CpuContext* ctx) {
         game.Call<0x80245E04>({plw, 0});
         game.Call<0x800DC548>({plw + kPosition});
 
-        if (Memory::Read8(plw + kFlag15) == 2 && Memory::Read16(plw + kWord16) == 1)
+        if (Memory::Read8(plw + kLastGroup) == 2 && Memory::Read16(plw + kLastAction) == 1)
             Memory::Write8(plw + kClimbs, uint8_t(Memory::Read8(plw + kClimbs) + 1));
 
         break;
@@ -3845,7 +3861,210 @@ void ActionStep(CpuContext* ctx) {
         game.CallAt(memos[slot], fn, {plw});
 }
 
+// 0x8026FB84 (plw, sector) -> r3: 1 when the stick points into a quarter
+// turn: sectors 0x400, 0x2000, 0x800 and 0x1000 are 0x8026FAD0's mode 0
+// around 0, 0x4000, 0x8000 and 0xC000; 4, 32, 8 and 16 the same in its mode 1.
+// Any other sector is 0.
+uint32_t StickIn(GuestCall& game, uint32_t plw, uint32_t sector) {
+    static constexpr struct {
+        uint32_t sector, mode, from, to;
+    } kQuarters[] = {
+        {0x400, 0, 0xE000, 0x2000}, {0x2000, 0, 0x2000, 0x6000}, {0x800, 0, 0x6000, 0xA000}, {0x1000, 0, 0xA000, 0xE000},
+        {4, 1, 0xE000, 0x2000},     {32, 1, 0x2000, 0x6000},     {8, 1, 0x6000, 0xA000},     {16, 1, 0xA000, 0xE000},
+    };
+
+    for (const auto& quarter : kQuarters)
+        if (quarter.sector == sector)
+            return game.Call<StickSector>({plw, quarter.mode, quarter.from, quarter.to});
+
+    return 0;
+}
+
+void StickInPort(CpuContext* ctx) {
+    uint32_t in;
+
+    {
+        GuestFrame frame(ctx, 16);
+        GuestCall game{ctx};
+        in = StickIn(game, frame.Arg(3), frame.Arg(4));
+    }
+
+    ctx->gpr[3] = in;
+}
+
+// 0x80335D4C (plw, u8 kind, u16 flags): online (the network state at
+// r13 - 16440, +17, is 7, and 0x80334AB0 says actions go out), the local
+// player's action start goes to the others: kind 1 through 0x80334B00, 2
+// 0x80335090, 6 0x803354CC, 7 and 8 0x80335754, 9 0x80335A04, each (plw, me,
+// me + 1, kind, flags). Kind 2's call leaves r7 as it is.
+constexpr uint32_t kMyPlayerIndex = 0x8065AA87; // u8 (MyPlayerIndex 0x800CF3E8)
+
+void SendAction(GuestCall& game, uint32_t sda, uint32_t plw, uint32_t kind, uint32_t flags) {
+    if (Memory::Read8(Memory::Read32(sda - 16440) + 17) != 7 || game.Call<OnlineSending>({1}) == 0)
+        return;
+
+    const uint32_t me = Memory::Read8(kMyPlayerIndex);
+
+    if (Memory::Read8(plw + 8) != me)
+        return;
+
+    const uint32_t next = (me + 1) & 0xFF;
+    kind &= 0xFF;
+    flags &= 0xFFFF;
+
+    if (kind == 7 || kind == 8)
+        game.Call<0x80335754>({plw, me, next, kind, flags});
+    else if (kind == 1)
+        game.Call<0x80334B00>({plw, me, next, kind, flags});
+    else if (kind == 2)
+        game.Call<0x80335090>({plw, me, next, kind});
+    else if (kind == 6)
+        game.Call<0x803354CC>({plw, me, next, kind, flags});
+    else if (kind == 9)
+        game.Call<0x80335A04>({plw, me, next, kind, flags});
+}
+
+void SendActionPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    SendAction(game, frame.Arg(13), frame.Arg(3), frame.Arg(4), frame.Arg(5));
+}
+
+#ifdef MH3_DEVELOPMENT
+// MH3_TRACE=actions: each action the hunters start, the one before, the
+// flags and the caller's return address.
+void NoteAction(uint32_t plw, uint32_t group, uint32_t action, uint32_t flags, uint32_t caller) {
+    static const TraceFlag traced("actions");
+
+    if (traced)
+        std::fprintf(stderr, "MH3 hunter action: plw %08x weapon %u stance %u %u.%u -> %u.%u (flags %04x, lr %08x) time %.2f\n", plw, Memory::Read8(plw + kWeapon), Memory::Read8(plw + kFlag9),
+                     Memory::Read8(plw + kGroup), Memory::Read16(plw + kActionNumber), group, action, flags, caller, GameStep::Elapsed());
+}
+#endif
+
+// 0x80275754 FieldSetAction (plw, u8 group, u16 action, u16 flags): the
+// action the next action step runs. The last one goes to +15/+16; the state
+// (+5..+7), the act flags (+0x35C, +0x360), the combo table (+0x318),
+// hit-stop (+0x313) and the action's bytes +0x322..+0x351 are cleared, the
+// motion's speed is 1 (the constant the Enhanced movement cheat swaps,
+// cheat_movement.cpp) and +0xB6 takes a draw of random stream 1. The flags:
+//   0x20     keeps +0xB6's low byte
+//   0x400    faces 45° to one side of +0x58, 0x800 to the other
+//   0x1000   the local player with a hammer, lance, long sword or switch axe
+//            turns 22.5° by the stick (sector 0x800 one way, 0x400 the other)
+//   0x4000, 0x80, 0x100, 1, 0x2000  keep +0x445, the lean (+0xAC), bit 0 of
+//            +0x567, +0x646..+0x64F and the velocity (+0x68..+0x70)
+//   2        the local player's start does not go online (0x80335D4C kind 6
+//            with 0x10, 9 with 0x40, else 1; then +0x12 = 15)
+void SetActionPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 32);
+    GuestCall game{ctx};
+    const Player p{{game, frame.Arg(3)}};
+    const uint32_t plw = p.plw, sda2 = frame.Arg(2);
+    const uint32_t group = frame.Arg(4) & 0xFF, action = frame.Arg(5) & 0xFFFF;
+    uint32_t flags = frame.Arg(6) & 0xFFFF;
+#ifdef MH3_DEVELOPMENT
+    NoteAction(plw, group, action, flags, ctx->lr);
+#endif
+    Memory::Write32(plw + 0x35C, 0);
+    Memory::Write32(plw + 0x360, 0);
+    Memory::Write8(plw + kState, 0);
+    Memory::Write8(plw + kFlag6, 0);
+    Memory::Write8(plw + kFlag7, 0);
+    Memory::Write8(plw + kLastGroup, Memory::Read8(plw + kGroup));
+    Memory::Write16(plw + kLastAction, Memory::Read16(plw + kActionNumber));
+    Memory::Write8(plw + kGroup, uint8_t(group));
+    Memory::Write16(plw + kActionNumber, uint16_t(action));
+    Memory::Write16(plw + 0x264, 0);
+    Memory::Write16(plw + 0x30, 0);
+    const uint32_t low = Memory::Read16(plw + 0xB6) & 0xFF;
+    const uint32_t draw = game.Call<Rand>({1});
+    Memory::Write16(plw + 0xB6, uint16_t(flags & 0x20 ? (draw & 0xFF00) | low : draw));
+    Memory::Write32(plw + kMotionRate, Memory::Read32(sda2 - 14880));
+    Memory::Write32(plw + 0x318, 0);
+    Memory::Write8(plw + 0x313, 0);
+    Memory::Write8(plw + 0x314, 0);
+    Memory::Write16(plw + 0x31C, 0);
+    Memory::Write16(plw + 0x31E, 0);
+    Memory::Write16(plw + 0x320, 0);
+    Memory::Write8(plw + 0x36A, 0);
+    Memory::Write8(plw + kFlag904, 0);
+
+    for (uint32_t at = 0x322; at <= 0x351; ++at)
+        Memory::Write8(plw + at, 0);
+
+    if (flags & 0x400)
+        Memory::Write32(plw + kAngle, (Memory::Read32(plw + kAngle2) - 0x2000) & 0xFFFF);
+
+    if (flags & 0x800)
+        Memory::Write32(plw + kAngle, (Memory::Read32(plw + kAngle2) + 0x2000) & 0xFFFF);
+
+    if (p.Master() && (flags & 0x1000)) {
+        flags &= ~0x1000u;
+        const uint32_t weapon = Memory::Read8(plw + kWeapon);
+        const uint32_t turn = weapon == 2 || weapon == 7 || weapon == 8 || weapon == 3 ? 0x1000 : 0;
+
+        if (p.Master()) {
+            if (StickIn(game, plw, 0x800) == 1)
+                Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) + turn);
+            else if (StickIn(game, plw, 0x400) == 1)
+                Memory::Write32(plw + kAngle, Memory::Read32(plw + kAngle) - turn);
+        }
+    }
+
+    if (!(flags & 0x4000))
+        Memory::Write8(plw + 0x445, 0);
+
+    if (!(flags & 0x80))
+        Memory::Write32(plw + kLean, 0);
+
+    if (!(flags & 0x100))
+        Memory::Write8(plw + 0x567, Memory::Read8(plw + 0x567) & 0xFE);
+
+    if (!(flags & 1)) {
+        Memory::Write16(plw + kWord1606, 0);
+        Memory::Write16(plw + kWord1608, 0);
+        Memory::Write16(plw + 0x64A, 0);
+        Memory::Write8(plw + 0x64F, 0);
+    }
+
+    if (!(flags & 0x2000)) {
+        const uint32_t zero = Memory::Read32(sda2 - 14876);
+
+        for (uint32_t k = 0; k < 12; k += 4)
+            Memory::Write32(plw + 0x68 + k, zero);
+    }
+
+    p.HoldMotion(0);
+    Memory::Write8(p.Char() + kCharFlag246, 0);
+    game.Call<SetSharpLevels>({plw, 255, 255});
+    Memory::Write16(plw + 0x662, 0);
+    Memory::Write8(plw + 0x3A3, 0);
+    Memory::Write8(plw + 0x3A2, 0);
+    Memory::Write8(plw + 0x565, 0);
+    Memory::Write8(plw + 0x566, 0);
+
+    if (p.Master() && !(flags & 2)) {
+        SendAction(game, frame.Arg(13), plw, flags & 0x10 ? 6 : flags & 0x40 ? 9 : 1, flags);
+        Memory::Write16(plw + 0x12, 15);
+    }
+}
+
+// 0x80275B28 FieldNextAction (plw, u8 group, u16 action, u16 flags): +14 = 1,
+// then FieldSetAction (through its cheat wrapper).
+void NextActionPort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 16);
+    GuestCall game{ctx};
+    Memory::Write8(frame.Arg(3) + kFlag14, 1);
+    game.Call<SetAction>({frame.Arg(3), frame.Arg(4) & 0xFF, frame.Arg(5) & 0xFFFF, frame.Arg(6) & 0xFFFF});
+}
+
 } // namespace
+
+// The FieldSetAction port for its cheat wrapper (cheat_movement.cpp).
+void FieldSetAction(CpuContext* ctx) {
+    SetActionPort(ctx);
+}
 
 // The Walk101 port for the Enhanced-movement wrapper (cheat_movement.cpp).
 void FieldWalk101(CpuContext* ctx) {
@@ -4271,3 +4490,21 @@ extern "C" void MH3_ComboTable(CpuContext* ctx) {
     func_802629A4(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x802629A4, MH3_ComboTable, "ComboTable");
+
+extern "C" void func_80275B28(CpuContext* ctx);
+extern "C" void MH3_FieldNextAction(CpuContext* ctx) {
+    PortCheck::Call(ctx, "FieldNextAction", func_80275B28, NextActionPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80275B28, MH3_FieldNextAction, "FieldNextAction");
+
+extern "C" void func_8026FB84(CpuContext* ctx);
+extern "C" void MH3_PlStickIn(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlStickIn", func_8026FB84, StickInPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8026FB84, MH3_PlStickIn, "PlStickIn");
+
+extern "C" void func_80335D4C(CpuContext* ctx);
+extern "C" void MH3_PlSendAction(CpuContext* ctx) {
+    PortCheck::Call(ctx, "PlSendAction", func_80335D4C, SendActionPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80335D4C, MH3_PlSendAction, "PlSendAction");

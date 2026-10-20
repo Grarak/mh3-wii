@@ -221,6 +221,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80277CF8, MH3_CheatLedgeFind, "CheatLedgeFind");
 // Crossbow rapid fire (US 0x80275790, EU 0x802757F4: +0x318's clear
 // dropped) keeps the bowgun's firing state.
 extern "C" void func_80275754(CpuContext* ctx);
+void FieldSetAction(CpuContext* ctx); // field_player_actions.cpp: the port
 
 extern "C" void MH3_CheatSetAction(CpuContext* ctx) {
     const uint32_t plw = ctx->gpr[3];
@@ -228,7 +229,7 @@ extern "C" void MH3_CheatSetAction(CpuContext* ctx) {
 
     {
         ConstantSwap speed(-14880, 2.0f, On(Id::EnhancedMovement) && OneHunter());
-        func_80275754(ctx);
+        PortCheck::Call(ctx, "FieldSetAction", func_80275754, FieldSetAction);
     }
 
     if (On(Id::CrossbowRapidFire))

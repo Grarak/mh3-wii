@@ -20,8 +20,20 @@
 //   trace [ITEM on|off]       the MH3_TRACE items and which are on, or turn
 //                             one on or off
 //   movie skip                end the open movie (as at its last frame)
-//   press BUTTONS [TICKS]     hold Classic buttons (a+b, ..., or hex bits) for
-//                             TICKS ticks (3), then give the controller back
+//   press BUTTONS [TICKS [LX LY [RX RY]]]
+//                             hold Classic buttons (a+b, ..., none, or hex
+//                             bits) and sticks (-512..511, up and right
+//                             positive) for TICKS ticks (3), then give the
+//                             controller back
+//   hunter                    the local hunter's weapon, stance (3 swimming),
+//                             action, its state and timer, motion, charge
+//   hunter act GROUP ACTION [FLAGS]
+//                             start an action (FieldNextAction) without
+//                             input: MH3_TRACE=actions prints the ones the
+//                             hunter starts. Group 4 holds the weapon's: the
+//                             hammer's charged spin is 4 18 on land, 4 36
+//                             swimming (its turns: the charge level + 2)
+//   hunter charge LEVEL       set the charge level the charged attacks read
 //   online [state|circles|post QUEST [MEMBERS]|join N|accept [QUEST]|ready|unready|depart|auto SPEC]
 //                             the online screens' state, or a quest circle
 //                             command (online_auto.cpp)
@@ -66,6 +78,21 @@ namespace {
 
 constexpr uint32_t kMapNo = 0x806BB805, kAreaNo = 0x806BB806; // u8: get_now_mapno, get_now_areano
 constexpr uint32_t kHunterPosition = 0x3C;                    // PLW f32[3]
+
+// The PLW's action (player_work.h, field_player_actions.cpp).
+enum : uint32_t {
+    kHunterWeapon = 2,        // u8: 0-8 (1 sword and shield, 2 hammer)
+    kHunterState = 5,         // u8
+    kHunterStance = 9,        // u8: 3 swimming
+    kHunterGroup = 10,        // u8
+    kHunterAction = 12,       // u16
+    kHunterTimer = 0x28,      // s32
+    kHunterChargeSteps = 0x310, // s16
+    kHunterChargeLevel = 0x312, // u8
+    kHunterChar = 0x13C,      // MHchar*, its motion a u16 at +0x54
+};
+
+constexpr uint32_t kFieldNextAction = 0x80275B28; // (plw, u8 group, u16 action, u16 flags)
 
 struct Line {
     uint32_t client;
@@ -277,7 +304,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press shot call cheat trace movie online";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press hunter point mouse shot call cheat trace movie online";
 
     if (word == "state")
         return State(s);
@@ -379,7 +406,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         double ticks = 3;
 
         if (!(in >> arg))
-            return "error: press BUTTONS [TICKS]";
+            return "error: press BUTTONS [TICKS [LX LY [RX RY]]]";
 
         in >> ticks;
         uint16_t buttons = 0;
@@ -391,18 +418,68 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
 
             if (const auto name = names.find(part); name != names.end())
                 buttons |= name->second;
+            else if (part == "none")
+                continue;
             else if (!part.empty() && !*end && bits <= 0xFFFF)
                 buttons |= uint16_t(bits);
             else
                 return "error: no button " + part;
         }
 
-        SetControllerTestSample(ClassicControllerSample{true, buttons});
+        int sticks[4] = {};
+
+        for (int& axis : sticks) {
+            if (!(in >> axis))
+                break;
+
+            if (axis < -512 || axis > 511)
+                return "error: stick values are -512..511";
+        }
+
+        SetControllerTestSample(ClassicControllerSample{true, buttons, int16_t(sticks[0]), int16_t(sticks[1]), int16_t(sticks[2]), int16_t(sticks[3])});
         s.busy = true;
         s.release = true;
         s.until = GameStep::Elapsed() + ticks;
         s.steps = 0;
         return "";
+    }
+
+    if (word == "hunter") {
+        const uint32_t plw = Cheats::LocalPlayer();
+
+        if (!plw)
+            return "error: no hunter";
+
+        if (!(in >> arg)) {
+            const uint32_t chr = Memory::Read32(plw + kHunterChar);
+            return Format("ok hunter %08x weapon %u stance %u action %u.%u state %u timer %d motion %u charge %d level %u", plw, Memory::Read8(plw + kHunterWeapon),
+                          Memory::Read8(plw + kHunterStance), Memory::Read8(plw + kHunterGroup), Memory::Read16(plw + kHunterAction), Memory::Read8(plw + kHunterState),
+                          int32_t(Memory::Read32(plw + kHunterTimer)), chr ? Memory::Read16(chr + 0x54) : 0u, int16_t(Memory::Read16(plw + kHunterChargeSteps)),
+                          Memory::Read8(plw + kHunterChargeLevel));
+        }
+
+        unsigned group = 0, action = 0, flags = 0;
+
+        if (arg == "act" && in >> group >> action) {
+            in >> std::hex >> flags;
+
+            if (group > 0xFF || action > 0xFFFF || flags > 0xFFFF)
+                return "error: hunter act GROUP ACTION [FLAGS]";
+
+            ctx->gpr[3] = plw;
+            ctx->gpr[4] = group;
+            ctx->gpr[5] = action;
+            ctx->gpr[6] = flags;
+            InvokeIndirectCpu(kFieldNextAction, ctx);
+            return Format("ok %u.%u", group, action);
+        }
+
+        if (arg == "charge" && in >> action && action <= 0xFF) {
+            Memory::Write8(plw + kHunterChargeLevel, uint8_t(action));
+            return "ok";
+        }
+
+        return "error: hunter [act GROUP ACTION [FLAGS] | charge LEVEL]";
     }
 
     if (word == "point") {

@@ -1015,6 +1015,11 @@
 802866a0 FieldActionHammerSwimSwing1
 80284514 PlHammerChargeRelease
 80286e5c PlHammerActions
+80284140 PlSwordActions
+802844d8 PlHammerChargeLevel
+8027c0c8 PlWeaponPoint
+8026fb84 PlStickIn
+80335d4c PlSendAction
 802598c4 FieldActionFall
 8025cecc FieldActionFall2
 8025c834 PlCarryCheck
