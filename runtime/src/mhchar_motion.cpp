@@ -74,6 +74,7 @@ enum : uint32_t {
     kGetFrame = 0x20,
     kUpdateFrame = 0x24,
     kSetRate = 0x28,
+    kGetRate = 0x2C,
     kGetResult = 0x38,
     kDetach = 0x40,
     kSetWeight = 0x48,
@@ -625,3 +626,42 @@ extern "C" void MH3_MHcharFrameCheck(CpuContext* ctx) {
     ctx->gpr[3] = FrameCheck(ctx->gpr[3], ctx->gpr[4] & 0xFFFF, (ctx->gpr[5] & 0xFFFF) == 0, ctx->fpr[1].d, ctx->fpr[2].d);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E1740, MH3_MHcharFrameCheck, "MHcharFrameCheck");
+
+namespace {
+
+// MHchar motion end (0x800E21FC; enemies call it through 0x8012F9A0, the hunter
+// through 0x8026A3A0, NPCs through 0x801FE250): whether channel r4's next
+// advance passes its end frame, frame + rate > end. The advance is the step's,
+// rate * smBaseUpdateRate frames, as the channel's UpdateFrame moves it. The
+// original took the whole per-tick rate: at steps shorter than a tick a
+// looping motion ended on several steps in a row (loop counts ran down two and
+// three loops at a time), and at longer ones the frame wrapped past the end
+// before the test saw it (the farm's Felyne elder never left its idle motion
+// in the first-visit cutscene). At the stock 1/30 s step this is the original.
+uint32_t MotionEnding(GuestCall& game, uint32_t self, uint32_t channel) {
+    const uint32_t channelSet = Memory::Read32(self + kChannelSet);
+    game.Virtual<kGetFrame>(channelSet, {channel});
+    const float frame = game.F1();
+    game.Virtual<kGetRate>(channelSet, {channel});
+    const float rate = game.F1();
+    return float(double(frame) + double(rate) * GameStep::Scale()) > F32(self + kEndFrame + channel * 4);
+}
+
+void MHcharMotionEndingPort(CpuContext* ctx) {
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        result = MotionEnding(game, frame.Arg(3), frame.Arg(4));
+    }
+
+    ctx->gpr[3] = result; // after the frame restored the GPRs
+}
+
+} // namespace
+
+extern "C" void func_800E21FC(CpuContext* ctx);
+extern "C" void MH3_MHcharMotionEnding(CpuContext* ctx) {
+    PortCheck::Call(ctx, "MHcharMotionEnding", func_800E21FC, MHcharMotionEndingPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800E21FC, MH3_MHcharMotionEnding, "MHcharMotionEnding");

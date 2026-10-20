@@ -896,6 +896,7 @@
 800cef20 Rand
 # Screen fades and MHchar channel blend callees (screen_fade.cpp, mhchar_motion.cpp)
 800e1c98 AnmChannelSetAnim
+800e21fc MHcharMotionEnding
 8007b3ac AnmObjRelease
 800522ec Hermite
 # Enemy step timers (enemy_timers.cpp)
@@ -1632,6 +1633,8 @@
 801fdf48 NpcTimedTurnStart
 801ffd04 NpcScriptStep
 801ffea8 NpcScriptNext
+801fe250 NpcMotionEnding
+802060d8 NpcFarmIntroFelyne
 # A field actor's wandering and turns (field_actor.cpp).
 8038595c FieldActorUpdate
 803a433c FieldActorStep

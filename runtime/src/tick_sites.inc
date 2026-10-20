@@ -164,10 +164,40 @@
 {0x801E37A8u, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
 {0x801E3824u, TickSite::Countup},           // effect (801E32B0): key frame (+0x10)
 {0x801E3EDCu, TickSite::CountdownPastZero}, // effect (801E3E68, ending): steps left (+0x10) before the release
+{0x801FDE58u, TickSite::Countdown},         // NPC timed move (801FDE58, inlined in NpcScriptStep): steps left (s16 +0x1E2)
+{0x801FDE68u, TickSite::PerStep},           // NPC timed move: velocity (+0x1F8, +0x1FC, +0x200) added to the position per step
+{0x801FDE78u, TickSite::PerStep},
+{0x801FDE88u, TickSite::PerStep},
 {0x801FFE40u, TickSite::Countup},           // NPC script (NpcScriptStep 801FFD04): steps in the entry (s16 +0x20A); a -2 entry moves on after 3
 {0x801FFE74u, TickSite::Countup},           // NPC script: steps in the entry against its length (+0x10)
 {0x80201884u, TickSite::Advance, 512},      // village NPC (802014C8): yaw (LB_NPC+0x2C) turning, +512 per step
 {0x80203744u, TickSite::Countdown},         // village NPC (802036C8): wait (+0xC) before the next idle move
+{0x80203B04u, TickSite::Countdown},         // village NPC (80203A88): wait (+0xC) before the next idle move
+{0x802053DCu, TickSite::Countdown},         // NPC (80205380): steps (+0xC) before the next motion
+{0x80205E44u, TickSite::Countdown},         // NPC (80205DB8): steps (+0xC) before the next motion
+{0x80205F50u, TickSite::Countdown},
+{0x80206150u, TickSite::Countdown},         // farm's first-visit cutscene, Felyne (NpcFarmIntroFelyne 802060D8): steps (+0xC) to the hat wave, then of it
+{0x8020619Cu, TickSite::Countdown},
+{0x80206260u, TickSite::Countdown},         // cutscene NPCs (802061F0 .. 802072E8): steps (+0xC) before each next motion
+{0x8020638Cu, TickSite::Countdown},
+{0x80206460u, TickSite::Countdown},
+{0x80206914u, TickSite::Countdown},
+{0x802069C4u, TickSite::Countdown},
+{0x80206AB0u, TickSite::Countdown},
+{0x80206AF4u, TickSite::Countdown},
+{0x80206BC8u, TickSite::Countdown},
+{0x80206C0Cu, TickSite::Countdown},
+{0x80206C44u, TickSite::Countdown},
+{0x80206C8Cu, TickSite::Countdown},
+{0x80206DA0u, TickSite::Countdown},
+{0x80206F70u, TickSite::Countdown},
+{0x8020701Cu, TickSite::Countdown},
+{0x802070D0u, TickSite::Countdown},
+{0x80207108u, TickSite::Countdown},
+{0x802071BCu, TickSite::Countdown},
+{0x802071F4u, TickSite::Countdown},
+{0x802072A0u, TickSite::Countdown},
+{0x80207330u, TickSite::Countdown},
 {0x8021D258u, TickSite::Countup},           // village talk typing (8021D238): steps (0x806ACC2C); shows steps / 2 + 1 letters
 {0x802214D4u, TickSite::Countdown},         // village object (80221410) countdown (s16 +0x28), while != 0
 {0x80246C64u, TickSite::Countup},            // player idle (80246BE0): steps waiting (+0x28), the idle motion after 30
