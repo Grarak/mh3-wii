@@ -3,8 +3,9 @@
 game's debug port (MH3_DEBUG_PORT) and measures what it leaves: logic steps
 per wall second over --ticks of game time (run with MH3_FRAME_LIMIT=off to
 see the speed an action costs), the action and motion 10 ticks in and after.
-Between actions the hunter goes back to its stance (FieldEndAction); idle
-windows before and after are the baseline.
+Between actions the hunter goes back to its stance (FieldEndAction) and to
+where it started (actions that lunge or roll carry it off, into the water or
+the next area); idle windows before and after are the baseline.
 
   action-sweep.py [--port [HOST:]PORT] [--group 4] [--actions 0-56] [--ticks 90]
                   [--charge LEVEL] [--shots DIR] [--setup COMMAND]...
@@ -67,7 +68,9 @@ def main():
 
     hunter = port('hunter')
     plw, stance = hunter.split()[2], fields(hunter)['stance']
-    print('#', hunter, flush=True)
+    words = port('state').split()
+    place = words[words.index('at') + 1:words.index('at') + 4]
+    print('#', hunter, 'at', ' '.join(place), flush=True)
     port('wait 60')
     base = [measure(port, args.ticks) for _ in range(3)]
     idle = sorted(steps for steps, _ in base)[1]
@@ -92,6 +95,7 @@ def main():
             print(f'{args.group}.{action:<3} {steps:7.1f} steps/s {100 * steps / idle:6.1f}% of idle | at +10: action {during.get("action")} motion {during.get("motion")} '
                   f'stance {during.get("stance")} | after: action {after.get("action")} motion {after.get("motion")} | at {started:.1f} s', flush=True)
             port(f'call 8027621C {plw} {stance} 4 0')
+            port(f'pokef {int(plw, 16) + 0x3C:08x} {" ".join(place)}')
             port('wait 20')
         except (OSError, KeyError, ValueError) as error:
             print(f'{args.group}.{action:<3} failed: {error!r}', flush=True)

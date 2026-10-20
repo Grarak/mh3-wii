@@ -32,6 +32,11 @@ uint32_t NativeModelIndirectMatrices(uint32_t material_reference, uint32_t node_
 uint32_t NativeModelIndirectMatricesAt(uint32_t material, uint32_t shape, uint32_t material_reference, uint32_t node_reference, uint32_t shape_reference);
 void DispatchNativeModel(const NativeModelDispatch& dispatch);
 void TraceNativeModelDispatch(const NativeModelDispatch& dispatch);
+#ifdef MH3_DEVELOPMENT
+// Model materials not drawn, by their MDL0 names, comma separated (empty: all
+// draw): MH3_HIDE_MATERIALS at start, the debug port's `hide` later.
+void HideNativeMaterials(const char* names);
+#endif
 
 // Draw tables (model_catalog_bridge.h): a model draw resolves its model's
 // table once, then dispatches each item by its draw-stream material and shape

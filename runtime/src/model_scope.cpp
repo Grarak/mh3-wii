@@ -23,6 +23,7 @@
 #include "native_shade_snapshot.h"
 #include "model_render_prep.h"
 #include "model_assets.h"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -33,6 +34,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 const mh3_res_memory& MH3NativeResourceMemory();
@@ -1890,6 +1892,56 @@ void CaptureShape(ModelItem& item, const ShapeContext& context, uint32_t direct_
     item.prep.has_binding = binding.address[0] != 0;
 }
 
+#ifdef MH3_DEVELOPMENT
+// HideNativeMaterials: the names, and per ResMat address whether it is one.
+struct Hidden {
+    std::vector<std::string> names;
+    std::unordered_map<uint32_t, bool> materials;
+
+    Hidden() { Set(std::getenv("MH3_HIDE_MATERIALS")); }
+
+    void Set(const char* list) {
+        names.clear();
+        materials.clear();
+
+        for (const char* p = list ? list : ""; *p;) {
+            const char* end = std::strchr(p, ',');
+            const size_t length = end ? size_t(end - p) : std::strlen(p);
+
+            if (length)
+                names.emplace_back(p, length);
+
+            p += length + (end ? 1 : 0);
+        }
+    }
+
+    // A ResMat's name is at its offset +8 from it.
+    bool Has(uint32_t material) {
+        if (names.empty() || !material)
+            return false;
+
+        const auto [it, fresh] = materials.try_emplace(material, false);
+
+        if (fresh) {
+            const uint32_t name = material + Memory::Read32(material + 8);
+            std::string text;
+
+            for (uint32_t i = 0; i < 64 && Memory::Read8(name + i); ++i)
+                text += char(Memory::Read8(name + i));
+
+            it->second = std::find(names.begin(), names.end(), text) != names.end();
+        }
+
+        return it->second;
+    }
+};
+
+Hidden& HiddenMaterials() {
+    static Hidden hidden;
+    return hidden;
+}
+#endif
+
 void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
     TraceNativeModelDispatch(d);
 
@@ -1938,6 +1990,9 @@ void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
     }
 
     bool draws = ShapeVisible(d, r);
+#ifdef MH3_DEVELOPMENT
+    draws = draws && !HiddenMaterials().Has(scope.material_address);
+#endif
 
     if (draws) {
         if (scope.fur_address)
@@ -1984,6 +2039,12 @@ void Dispatch(const NativeModelDispatch& d, const Resolved* r) {
 void DispatchNativeModel(const NativeModelDispatch& d) {
     Dispatch(d, nullptr);
 }
+#ifdef MH3_DEVELOPMENT
+
+void HideNativeMaterials(const char* names) {
+    HiddenMaterials().Set(names);
+}
+#endif
 
 bool DispatchNativeModelIndexed(const NativeModelDrawTable& table, uint32_t material_id, uint32_t shape_id, const mh3_model_material_bindings* replacements, const NativeModelDispatch& d) {
     if (material_id >= table.materials.size() || shape_id >= table.shapes.size()) {

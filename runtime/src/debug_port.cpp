@@ -16,6 +16,8 @@
 //   shot PATH                 dump the next frame to PATH (BMP)
 //   call ADDR [INT...] [f FLOAT...]  call a guest function (ints hex, in r3..,
 //                             floats in f1..); answers r3 and f1
+//   hide [NAME,NAME...]       draw no model material of those MDL0 names
+//                             (none: draw all again; MH3_HIDE_MATERIALS)
 //   cheat NAME[=VALUE]        turn on an integrated cheat
 //   trace [ITEM on|off]       the MH3_TRACE items and which are on, or turn
 //                             one on or off
@@ -52,6 +54,7 @@
 #include "movie_draw.h"
 #include "net/online_auto.h"
 #include "ppc_runtime.h"
+#include "runtime/native/adapters/model_scope_bridge.h"
 #include "runtime/native/mh3_classic_map.h"
 
 #include <arpa/inet.h>
@@ -304,7 +307,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press hunter point mouse shot call cheat trace movie online";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef wait steps press hunter point mouse shot call hide cheat trace movie online";
 
     if (word == "state")
         return State(s);
@@ -549,6 +552,13 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
 
         InvokeIndirectCpu(address, ctx);
         return Format("ok r3 %08x f1 %g", uint32_t(ctx->gpr[3]), ctx->fpr[1].d);
+    }
+
+    if (word == "hide") {
+        std::string names;
+        in >> names;
+        HideNativeMaterials(names.c_str());
+        return "ok";
     }
 
     if (word == "cheat") {
