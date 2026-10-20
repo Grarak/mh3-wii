@@ -589,7 +589,7 @@ if(VITA)
   set(VITA_MAKE_FSELF_FLAGS "-a 0x2800000000000001")
   set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE2=12")
   vita_create_self(eboot.bin MH3 UNSAFE NOASLR)
-  vita_create_vpk(mh3-vita.vpk MH3WII001 eboot.bin VERSION 00.01 NAME "Monster Hunter Tri"
+  vita_create_vpk(mh3-vita.vpk MH3WII001 eboot.bin VERSION 00.20 NAME "Monster Hunter Tri"
     FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/icon0.png sce_sys/icon0.png
         ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea/contents/bg0.png sce_sys/livearea/contents/bg0.png
         ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
