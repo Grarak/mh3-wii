@@ -43,6 +43,7 @@
 #include "game_step.h"
 #include "guest_call.h"
 #include "port_check.h"
+#include "res_anm_keys.h"
 
 #include <algorithm>
 #include <cmath>
@@ -386,3 +387,174 @@ extern "C" void MH3_AnmTexSrtUpdateFrame(CpuContext* ctx) {
     func_8006D668(ctx);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8006D668, MH3_AnmTexSrtUpdateFrame, "AnmTexSrtUpdateFrame");
+
+// The texture-SRT animation objects' GetResult (vtable +0x38) and Bind,
+// C reconstructions from the disassembly (g3d_anmtexsrt.cpp, the debug
+// build's pointer and bounds assertions dropped):
+//
+//   0x8006DAAC AnmObjTexSrtRes::GetResult(this, result, mat) -> result: +0x14
+//              u16 per model material, the animation's material (0x4000 or
+//              0x8000: none, the result's first word 0); +0x30 a cache of
+//              0xE8-byte results, else the evaluation at the FrameCtrl's
+//              frame (+0x18, rate +0x1C; 0x80062088) by ResAnmTexSrt (+0x2C)
+//              GetAnmResult (0x80091760). Here the FrameCtrl's rate and the
+//              frame on its grid are the key hold (res_anm_keys.h) while it
+//              evaluates.
+//   0x8006C6CC AnmObjTexSrtOverride::GetResult(this, result, mat) -> the
+//              last of its children (+0x1C, count +0x18) that animates the
+//              material and gives a result, else result with its first word 0
+//   0x8006D7AC AnmObjTexSrtRes::Bind(this, resMdl) -> 1 when any of the
+//              animation's materials (count 0x8006CDFC, each 0x8006DA08) is
+//              the model's: looked up by name (0x80098798), the model
+//              material's +0x14 entry is then the animation material's
+//              index; then the bound flag (0x800649EC(this, 4, 1))
+namespace {
+
+enum : uint32_t {
+    FrameCtrlGetFrame = 0x80062088,     // (FrameCtrl) -> f1
+    TexSrtAnmResult = 0x80091760,       // ResAnmTexSrt::GetAnmResult(res, result, index, f1 frame)
+    TexSrtMatAnimated = 0x80069D58,     // (anm, mat) -> 1
+    TexSrtMatCount = 0x8006CDFC,        // (res) -> the animation's materials
+    TexSrtMatData = 0x8006DA08,         // (res, index) -> its data
+    ResOffsetPointer = 0x8006D9D4,      // (base, offset) -> base + offset (0: null)
+    ResNameInit = 0x800626F0,           // (ResName*, pointer)
+    MdlMaterialByName = 0x80098798,     // (resMdl, ResName*) -> ResMat
+    ResMatCopy = 0x80064150,            // (ResMat*, ResMat*)
+    ResMatValid = 0x8005AA94,           // (ResMat*) -> 1
+    ResMatIndex = 0x800640C0,           // (ResMat*) -> its index
+    AnmObjSetFlag = 0x800649EC,         // (anm, flag, on)
+};
+
+enum : uint32_t {
+    kAnmMatFlags = 0x14, // u16 per model material
+    kFrameCtrl = 0x18, // FrameCtrl: +0 frame, +4 rate, +8 start
+    kRate = 0x1C,
+    kStart = 0x8,
+    kChildCount = 0x18, // the override's
+    kChildren = 0x1C,
+    kRes = 0x2C,
+    kResultCache = 0x30,
+    kResultBytes = 0xE8,
+};
+
+uint32_t TexSrtResult(GuestCall& game, uint32_t self, uint32_t result, uint32_t material) {
+    const uint32_t index = Memory::Read16(Memory::Read32(self + kAnmMatFlags) + material * 2);
+
+    if (index & 0xC000) {
+        Memory::Write32(result, 0);
+        return result;
+    }
+
+    if (const uint32_t cache = Memory::Read32(self + kResultCache))
+        return cache + index * kResultBytes;
+
+    game.Call<FrameCtrlGetFrame>({self + kFrameCtrl});
+    const double frame = game.cpu->fpr[1].d;
+    const float rate = Memory::ReadFloat32(self + kRate);
+    float atTick = float(frame);
+
+    // At a variable step: the frame on the grid of the frames a tick from the
+    // start, the ones the fixed step, starting there on a tick, shows (0, 2,
+    // 4, ... at the maps' rate 2).
+    if (GameStep::Variable()) {
+        const float start = Memory::ReadFloat32(self + kFrameCtrl + kStart), grid = rate > 1.0f ? rate : 1.0f;
+        atTick = start + std::floor((float(frame) - start) / grid) * grid;
+    }
+
+    const ResAnmKeys::HoldSpan hold(rate, atTick);
+    game.Call<TexSrtAnmResult>({self + kRes, result, index}, {frame});
+    return result;
+}
+
+uint32_t TexSrtOverrideResult(GuestCall& game, uint32_t self, uint32_t result, uint32_t material) {
+    static const RawDispatchRecord* memo = nullptr;
+    const uint32_t children = Memory::Read32(self + kChildren);
+
+    for (int32_t i = int32_t(Memory::Read32(self + kChildCount)) - 1; i >= 0; --i) {
+        const uint32_t child = Memory::Read32(children + 4 * uint32_t(i));
+
+        if (!child || !game.Call<TexSrtMatAnimated>({child, material}))
+            continue;
+
+        const uint32_t got = game.VirtualAt(memo, child, 0x38, {result, material});
+
+        if (Memory::Read32(got))
+            return got;
+    }
+
+    Memory::Write32(result, 0);
+    return result;
+}
+
+uint32_t TexSrtBind(CpuContext* cpu, uint32_t self, uint32_t model) {
+    GuestFrame frame(cpu, 0x30);
+    GuestCall game{cpu};
+    const uint32_t name = frame[0x8], material = frame[0xC], handle = frame[0x10], resName = frame[0x14];
+    const int32_t count = int32_t(game.Call<TexSrtMatCount>({self + kRes}));
+    uint32_t bound = 0;
+
+    for (uint32_t i = 0; int32_t(i & 0xFFFF) < count; ++i) {
+        const uint32_t data = game.Call<TexSrtMatData>({self + kRes, i & 0xFFFF});
+        game.Call<ResNameInit>({resName, game.Call<ResOffsetPointer>({data, Memory::Read32(data) - 4})});
+        Memory::Write32(name, Memory::Read32(resName));
+        Memory::Write32(material, game.Call<MdlMaterialByName>({model, name}));
+        game.Call<ResMatCopy>({handle, material});
+
+        if (game.Call<ResMatValid>({handle})) {
+            Memory::Write16(Memory::Read32(self + kAnmMatFlags) + game.Call<ResMatIndex>({handle}) * 2, uint16_t(i));
+            bound = 1;
+        }
+    }
+
+    game.Call<AnmObjSetFlag>({self, 4, 1});
+    return bound;
+}
+
+// The frame restores r3: the result goes in after it.
+void TexSrtResultPort(CpuContext* ctx) {
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        result = TexSrtResult(game, frame.Arg(3), frame.Arg(4), frame.Arg(5));
+    }
+
+    ctx->gpr[3] = result;
+}
+
+void TexSrtOverrideResultPort(CpuContext* ctx) {
+    uint32_t result;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        result = TexSrtOverrideResult(game, frame.Arg(3), frame.Arg(4), frame.Arg(5));
+    }
+
+    ctx->gpr[3] = result;
+}
+
+void TexSrtBindPort(CpuContext* ctx) {
+    const uint32_t self = ctx->gpr[3], model = ctx->gpr[4];
+    const uint32_t bound = TexSrtBind(ctx, self, model);
+    ctx->gpr[3] = bound;
+}
+
+} // namespace
+
+extern "C" void func_8006DAAC(CpuContext* ctx);
+extern "C" void MH3_AnmTexSrtResGetResult(CpuContext* ctx) {
+    PortCheck::Call(ctx, "AnmTexSrtResGetResult", func_8006DAAC, TexSrtResultPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006DAAC, MH3_AnmTexSrtResGetResult, "AnmTexSrtResGetResult");
+
+extern "C" void func_8006C6CC(CpuContext* ctx);
+extern "C" void MH3_AnmTexSrtOverrideGetResult(CpuContext* ctx) {
+    PortCheck::Call(ctx, "AnmTexSrtOverrideGetResult", func_8006C6CC, TexSrtOverrideResultPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006C6CC, MH3_AnmTexSrtOverrideGetResult, "AnmTexSrtOverrideGetResult");
+
+extern "C" void func_8006D7AC(CpuContext* ctx);
+extern "C" void MH3_AnmTexSrtResBind(CpuContext* ctx) {
+    PortCheck::Call(ctx, "AnmTexSrtResBind", func_8006D7AC, TexSrtBindPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8006D7AC, MH3_AnmTexSrtResBind, "AnmTexSrtResBind");

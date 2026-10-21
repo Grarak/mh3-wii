@@ -20,6 +20,7 @@
 #include "nw4r_math.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
+#include "res_anm_keys.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -29,6 +30,11 @@ namespace {
 constexpr uint32_t kC0 = 0x80798368u; // r2 - 31736: s - c0
 constexpr uint32_t kC1 = 0x8079836Cu; // r2 - 31732: c1 s - c2
 constexpr uint32_t kC2 = 0x80798370u; // r2 - 31728
+
+// ResAnmKeys::HoldSpan (the game thread's): the frames between keys that
+// hold, and the frame the fixed step shows now (NaN: none).
+float holdSpan = 1.0f;
+float tickFrame = __builtin_nanf("");
 
 float ReadFloat(uint32_t a) {
     return MemoryInline::FlatReadFloat32(a);
@@ -42,7 +48,7 @@ float Hermite(float v0, float t0, float v1, float t1, float d, double span) {
     return blend + (d * f5) * (f5 * t0 + s * t1);
 }
 
-float Evaluate(float frame, uint32_t track) {
+float Evaluate(float frame, uint32_t track, bool hold = true) {
     const uint32_t count = MemoryInline::FlatRead16(track);
     const uint32_t first = track + 8, last = track + (count - 1) * 12 + 8;
 
@@ -81,21 +87,37 @@ float Evaluate(float frame, uint32_t track) {
     if (!(f0 <= frame && frame <= f1))
         MH3_THROW(std::runtime_error("NW4R panic (g3d_resanm.cpp:176): frame is out of bounds"));
 
-    // At a variable step, keys a frame or less apart (flipbooks: a texture
-    // row or a colour per frame) hold the earlier key's value between them.
-    // The game advances its animations by whole frames each 1/30 s tick (rate
-    // 2 for the maps' texture animations), so it only ever sampled such keys
-    // on a key; at a variable step the frames fall between them, where the
-    // hermite blend slid the texture through in-between offsets (Flooded
-    // Forest's underwater surface flickered through its rows several times
-    // too fast). At the fixed step this is the original.
-    if (f1 - f0 <= 1.0f && GameStep::Variable())
-        return ReadFloat(key + 4);
+    // At a variable step, keys no further apart than the frames the animation
+    // advances a tick (holdSpan: a frame, or its rate while a texture SRT
+    // animation evaluates) hold between them: flipbooks, a texture row or a
+    // colour per tick. A texture SRT animation shows the value at the frame
+    // the fixed step shows now (tickFrame, on its rate's grid: of keys closer
+    // than its rate only those the fixed step reaches), others the earlier
+    // key's. The game advances its
+    // animations by whole frames each 1/30 s tick (rate 2 for the maps'
+    // texture animations), so it only ever sampled such keys on a key; at a
+    // variable step the frames fall between them, where the hermite blend
+    // slid the texture through in-between offsets (Flooded Forest's
+    // underwater surface flickered through its rows several times too fast,
+    // the Deserted Island's sparkle sheet A-p13-nami05, keyed every 2 frames,
+    // through the cells of its atlas). At the fixed step this is the original.
+    if (hold && f1 - f0 <= holdSpan && GameStep::Variable())
+        return tickFrame == tickFrame ? Evaluate(tickFrame, track, false) : ReadFloat(key + 4);
 
     return Hermite(ReadFloat(key + 4), ReadFloat(key + 8), ReadFloat(key + 16), ReadFloat(key + 20), frame - f0, f1 - f0);
 }
 
 } // namespace
+
+ResAnmKeys::HoldSpan::HoldSpan(float frames, float atTick) : previous_(holdSpan), previousTick_(tickFrame) {
+    holdSpan = frames > 1.0f ? frames : 1.0f;
+    tickFrame = atTick;
+}
+
+ResAnmKeys::HoldSpan::~HoldSpan() {
+    holdSpan = previous_;
+    tickFrame = previousTick_;
+}
 
 extern "C" void func_80089914(CpuContext* ctx);
 static void EvaluatePort(CpuContext* p) {

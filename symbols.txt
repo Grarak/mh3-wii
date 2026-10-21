@@ -894,6 +894,9 @@
 803750e8 SeaSurfaceUpdate
 801a9274 Mat6ScrollUpdate
 8031ed54 ObjectListScrollUpdate
+8006daac AnmTexSrtResGetResult
+8006c6cc AnmTexSrtOverrideGetResult
+8006d7ac AnmTexSrtResBind
 800cef00 RandSeedAll
 800cef20 Rand
 # Screen fades and MHchar channel blend callees (screen_fade.cpp, mhchar_motion.cpp)
