@@ -236,6 +236,8 @@
 8009f8c0 AnimCurveExecuteF32
 800a035c AnimCurveExecuteRotate
 800a0d68 AnimCurveExecuteTexture
+8009d624 AnimCurveTextureTick
+800a1310 AnimCurveTextureKeySearch
 800a1d0c AnimCurveExecuteChild
 8009ce20 AnimCurveTickToFrame
 800a2818 AnimCurveFrameIndex

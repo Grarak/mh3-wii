@@ -23,6 +23,7 @@
 // reads argument registers, so callers keep a precise call boundary.
 #include "abi_bridge.h"
 #include "fatal.h"
+#include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
@@ -844,6 +845,203 @@ void ExecuteFloat(uint32_t track, uint32_t target, uint32_t tick, uint32_t parti
     }
 }
 
+// ---------------------------------------------------------------------------
+// The texture track (a pattern animation: which texture each slot shows, and
+// its wrap and flip bits). Its keys are 0x10 bytes: {u16 frame, u8 random
+// (bit 1: from the pool), ..., +0xC: a texture record or a u16 random-set
+// index}; a texture record is {u8 wrap nibble, u8 flip bits, u16 index into
+// the track's texture names}. A random set is {u32, record, u8 flip pick}.
+
+struct TextureTick {
+    uint16_t frame = 0;
+    float frameFloat = 0;
+    uint32_t loop = 0;
+    uint8_t final = 0;
+};
+
+// 0x8009D624 (AnimCurveTextureTick): the key frame of a texture track at
+// particle tick `tick` of `life`. Unlike TickToFrame, a track that has ended
+// rests on `frames` (one past its last key frame); a life-stretched track
+// takes `loops` passes over the life. `final` marks the tick a ping-pong with
+// an even loop count lands back on its first frame for good.
+TextureTick TextureTickToFrame(uint32_t life, uint32_t header, uint32_t tick) {
+    FoldPointer(header);
+    TextureTick r;
+    const uint32_t flags = MemoryInline::FlatRead8(header + 4), loops = MemoryInline::FlatRead8(header + 5);
+    const uint32_t frames = MemoryInline::FlatRead16(header + 8);
+    const bool forever = (flags & 0x20) != 0, pingPong = (flags & 0x40) != 0, stretched = (flags & 0x80) != 0;
+    uint32_t frame;
+
+    // A pass of a ping-pong runs forward on even loops, backward on odd ones.
+    auto bounce = [&](uint32_t at, uint32_t loop) {
+        const uint32_t span = frames - 1;
+        return (loop & 1) == 0 ? at - loop * span : span * (loop + 1) - at;
+    };
+
+    // Past the last loop: a ping-pong with an even count ends on frame 0.
+    auto rest = [&]() {
+        r.loop = (loops - 1) & 0xFF;
+        return (loops & 1) == 0 ? 0u : frames - 1;
+    };
+
+    if (!forever && loops <= 1) {
+        frame = !stretched ? (tick < frames ? tick : frames) : PPC_Divwu(frames * tick, life);
+    } else if (!stretched) {
+        if (frames <= 1 || !pingPong) {
+            const uint32_t loop = PPC_Divwu(tick, frames);
+
+            if (!forever && loop >= loops) {
+                frame = frames;
+                r.loop = (loops - 1) & 0xFF;
+            } else {
+                frame = tick - loop * frames;
+                r.loop = loop;
+            }
+        } else {
+            const uint32_t loop = PPC_Divwu(tick, frames - 1);
+            r.loop = loop;
+
+            if (!forever && loop >= loops) {
+                if ((loops & 1) == 0 && loop == loops && tick == loop * (frames - 1))
+                    r.final = 1;
+
+                frame = rest();
+            } else {
+                frame = bounce(tick, loop);
+            }
+        }
+    } else if (tick >= life) {
+        frame = !pingPong || (loops & 1) != 0 ? frames : 0;
+        r.loop = (loops - 1) & 0xFF;
+    } else if (frames <= 1 || !pingPong) {
+        // Single precision throughout (fdivs, fmuls, fsubs).
+        const float scale = float(loops) * (float(frames) / float(life));
+        const float at = float(tick) * scale;
+        r.loop = CvtToUnsigned(double(at / float(frames)));
+        frame = ToInt(at - float(r.loop * frames));
+    } else {
+        const float passes = 1.0f + float(int32_t(frames - 1)) * float(loops);
+        const uint32_t at = CvtToUnsigned(double(float(tick) * (passes / float(life))));
+        const uint32_t loop = PPC_Divwu(at, frames - 1);
+        r.loop = loop;
+
+        if (loop >= loops) {
+            if ((loops & 1) == 0 && tick == life - 1)
+                r.final = 1;
+
+            frame = rest();
+        } else {
+            frame = bounce(at, loop);
+        }
+    }
+
+    r.frame = uint16_t(frame);
+    r.frameFloat = float(r.frame);
+    return r;
+}
+
+// 0x800A1310 (AnimCurveTextureKeySearch): the key at or before `frame` among
+// keys lo..hi (`stride` bytes each, the u16 frame first); on a key's own frame
+// the earlier key when `before` is set.
+int32_t TextureKeySearch(uint32_t frame, uint32_t keys, uint32_t stride, int32_t lo, int32_t hi, bool before) {
+    auto key = [&](int32_t i) { return int32_t(MemoryInline::FlatRead16(keys + uint32_t(i) * stride)); };
+    const int32_t f = int32_t(frame);
+
+    if (f < key(lo) || (f == key(lo) && before))
+        return lo;
+
+    if (key(hi) < f || (f == key(hi) && !before))
+        return hi;
+
+    int32_t mid = (lo + hi) / 2;
+
+    while (lo < mid) {
+        const int32_t k = key(mid);
+
+        if (f < k || (f == k && before))
+            hi = mid;
+        else
+            lo = mid;
+
+        mid = (lo + hi) / 2;
+    }
+
+    return lo;
+}
+
+// 0x800A0D68 (AnimCurveExecuteTexture): the texture a particle's slot shows at
+// `tick` (the track's kind byte 'h', 'l', 'p' picks slot 0-2, the texture at
+// particle +0x88 + 4 * slot), its wrap nibble (+0x94) and flip bits (+0x96).
+// Outputs: the texture names table (r8), the slot's texture pointer (r9) and
+// a result block (r10): u16 last key, +4 slot, +8 flip bits, +0xC index.
+void ExecuteTexture(uint32_t track, uint32_t particle, uint32_t tick, uint32_t seed, uint32_t life, uint32_t namesOut, uint32_t targetOut, uint32_t result) {
+    FoldPointer(track);
+    FoldPointer(particle);
+    const Tables t = ResolveTables(track);
+    const TextureTick at = TextureTickToFrame(life, t.header, tick);
+    const uint8_t kind = MemoryInline::FlatRead8(t.header + 1);
+    const uint32_t slot = kind == 'h' ? 0 : kind == 'l' ? 1 : kind == 'p' ? 2 : 3;
+
+    if (slot == 3)
+        return;
+
+    const uint32_t target = particle + 0x88 + 4 * slot;
+    const uint32_t keys = t.keys + 4, last = MemoryInline::FlatRead16(t.keys) - 1u;
+    const uint32_t key = keys + uint32_t(TextureKeySearch(at.frame, keys, 0x10, 0, int32_t(last), false)) * 0x10;
+    MemoryInline::FlatWrite16(result, uint16_t(last));
+    const uint8_t random = MemoryInline::FlatRead8(key + 2);
+    uint32_t record = key + 0xC;
+    uint8_t flipPick = 0;
+    uint32_t pick = 0;
+
+    if (random) {
+        const uint32_t set = MemoryInline::FlatRead16(key + 0xC);
+        pick = PickSeed(seed, MemoryInline::FlatRead16(t.header + 6), set, at.loop) >> 16;
+
+        if ((random & 2) == 0) {
+            record = t.random + set * 8 + 4;
+            flipPick = MemoryInline::FlatRead8(record + 4);
+        } else {
+            const uint32_t count = MemoryInline::FlatRead16(t.pool);
+            record = t.pool + (pick - PPC_Divwu(pick, count) * count) * 4 + 4;
+        }
+    }
+
+    const uint8_t wrap = MemoryInline::FlatRead8(record);
+    uint8_t flip = MemoryInline::FlatRead8(record + 1);
+    const uint16_t index = MemoryInline::FlatRead16(record + 2);
+
+    // The set's flip pick: a random U flip, V flip, or both.
+    if (flipPick == 1)
+        flip = uint8_t((flip & 2) | (pick & 1));
+    else if (flipPick == 2)
+        flip = uint8_t((flip & 1) | (pick & 2));
+    else if (flipPick == 3)
+        flip = uint8_t(pick & 3);
+
+    MemoryInline::FlatWrite32(target, MemoryInline::FlatRead32(t.names + uint32_t(index) * 4 + 4));
+    const uint32_t wrapShift = slot * 4, flipShift = slot * 2;
+    MemoryInline::FlatWrite16(particle + 0x94, uint16_t((MemoryInline::FlatRead16(particle + 0x94) & ~(0xFu << wrapShift)) | uint32_t(wrap & 0xF) << wrapShift));
+    MemoryInline::FlatWrite8(particle + 0x96, uint8_t((MemoryInline::FlatRead8(particle + 0x96) & ~(3u << flipShift)) | uint32_t(flip & 3) << flipShift));
+    MemoryInline::FlatWrite32(targetOut, target);
+    MemoryInline::FlatWrite32(namesOut, t.names);
+    MemoryInline::FlatWrite32(result + 0xC, index);
+    MemoryInline::FlatWrite8(result + 8, flip);
+    MemoryInline::FlatWrite32(result + 4, slot);
+}
+
+// 0x800A1508 (ParticleTextureFlags): the result's flip bits into the slot's
+// pair at particle +0x96, the first time only (+0xE4 marks it done).
+void TextureFlags(uint32_t particle, uint32_t result) {
+    if (MemoryInline::FlatRead8(particle + 0xE4) == 0) {
+        const uint32_t shift = MemoryInline::FlatRead32(result + 4) * 2;
+        const uint32_t bits = MemoryInline::FlatRead8(particle + 0x96) & ~(3u << shift);
+        MemoryInline::FlatWrite8(particle + 0x96, uint8_t(bits | (MemoryInline::FlatRead8(result + 8) & 3u) << shift));
+    }
+
+    MemoryInline::FlatWrite8(particle + 0xE4, 1);
+}
+
 } // namespace
 
 // For the field kinds (particle_manager_calc.cpp): the key pick's seed.
@@ -1206,3 +1404,132 @@ extern "C" void MH3_AnimCurveExecuteRotate(CpuContext* ctx) {
     ExecuteRotateChecked(ctx->gpr[1], ctx->gpr[2], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6], ctx->gpr[7]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800A035C, MH3_AnimCurveExecuteRotate, "AnimCurveExecuteRotate");
+
+extern "C" void func_8009D624(CpuContext* ctx);
+extern "C" void func_800A1310(CpuContext* ctx);
+extern "C" void func_800A0D68(CpuContext* ctx);
+extern "C" void func_800A1508(CpuContext* ctx);
+extern "C" void func_800A1568(CpuContext* ctx);
+
+// (life r3, header r4, tick r5, u16* frame r6, f32* frame r7, u32* loop r8,
+// u8* final r9).
+static void TextureTickPort(CpuContext* p) {
+    const TextureTick r = TextureTickToFrame(p->gpr[3], p->gpr[4], p->gpr[5]);
+    uint32_t frame = p->gpr[6], frameFloat = p->gpr[7], loop = p->gpr[8], final = p->gpr[9];
+    FoldPointer(frame);
+    FoldPointer(frameFloat);
+    FoldPointer(loop);
+    FoldPointer(final);
+    MemoryInline::FlatWrite16(frame, r.frame);
+    uint32_t bits;
+    std::memcpy(&bits, &r.frameFloat, 4);
+    MemoryInline::FlatWrite32(frameFloat, bits);
+    MemoryInline::FlatWrite32(loop, r.loop);
+    MemoryInline::FlatWrite8(final, r.final);
+}
+
+extern "C" void MH3_AnimCurveTextureTick(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("AnimCurveTextureTick")) [[unlikely]] {
+        PortCheck::RunOutput(ctx, "AnimCurveTextureTick", func_8009D624, TextureTickPort, {{ctx->gpr[6], 2}, {ctx->gpr[7], 4}, {ctx->gpr[8], 4}, {ctx->gpr[9], 1}});
+        return;
+    }
+#endif
+    TextureTickPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8009D624, MH3_AnimCurveTextureTick, "AnimCurveTextureTick");
+
+// (s32* out r3, frame r4, keys r5, stride r6, lo r7, hi r8, before r9).
+static void TextureKeySearchPort(CpuContext* p) {
+    uint32_t keys = p->gpr[5], out = p->gpr[3];
+    FoldPointer(keys);
+    FoldPointer(out);
+    const int32_t index = TextureKeySearch(p->gpr[4], keys, p->gpr[6], int32_t(p->gpr[7]), int32_t(p->gpr[8]), p->gpr[9] != 0);
+    MemoryInline::FlatWrite32(out, uint32_t(index));
+}
+
+extern "C" void MH3_AnimCurveTextureKeySearch(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("AnimCurveTextureKeySearch")) [[unlikely]] {
+        PortCheck::RunOutput(ctx, "AnimCurveTextureKeySearch", func_800A1310, TextureKeySearchPort, {{ctx->gpr[3], 4}});
+        return;
+    }
+#endif
+    TextureKeySearchPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800A1310, MH3_AnimCurveTextureKeySearch, "AnimCurveTextureKeySearch");
+
+// (track r3, particle r4, tick r5, seed r6, life r7, names out r8, texture
+// slot out r9, result r10).
+static void ExecuteTexturePort(CpuContext* p) {
+    uint32_t namesOut = p->gpr[8], targetOut = p->gpr[9], result = p->gpr[10];
+    FoldPointer(namesOut);
+    FoldPointer(targetOut);
+    FoldPointer(result);
+    ExecuteTexture(p->gpr[3], p->gpr[4], p->gpr[5], p->gpr[6], p->gpr[7], namesOut, targetOut, result);
+}
+
+extern "C" void MH3_AnimCurveExecuteTexture(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("AnimCurveExecuteTexture")) [[unlikely]] {
+        PortCheck::RunOutput(ctx, "AnimCurveExecuteTexture", func_800A0D68, ExecuteTexturePort,
+                             {{ctx->gpr[4] + 0x88, 16}, {ctx->gpr[8], 4}, {ctx->gpr[9], 4}, {ctx->gpr[10], 16}});
+        return;
+    }
+#endif
+    ExecuteTexturePort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800A0D68, MH3_AnimCurveExecuteTexture, "AnimCurveExecuteTexture");
+
+// (particle r3, result r4).
+static void TextureFlagsPort(CpuContext* p) {
+    uint32_t particle = p->gpr[3], result = p->gpr[4];
+    FoldPointer(particle);
+    FoldPointer(result);
+    TextureFlags(particle, result);
+}
+
+extern "C" void MH3_ParticleTextureFlags(CpuContext* ctx) {
+#ifdef MH3_DEVELOPMENT
+    if (PortCheck::Enabled("ParticleTextureFlags")) [[unlikely]] {
+        PortCheck::RunOutput(ctx, "ParticleTextureFlags", func_800A1508, TextureFlagsPort, {{ctx->gpr[3] + 0x94, 4}, {ctx->gpr[3] + 0xE4, 1}});
+        return;
+    }
+#endif
+    TextureFlagsPort(ctx);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800A1508, MH3_ParticleTextureFlags, "ParticleTextureFlags");
+
+// 0x800A1568 (ParticleTextureRotate): a texture track of an emitter whose
+// particles start on different frames (r5 = ParticleParameter +0..3: frame
+// count, first frame, -, bit 2 retire on the last): the key index offset by
+// the particle's start frame (+0xE5), wrapped into the track or retiring the
+// particle (r6 = its manager) on the last key; the slot (r8) gets that
+// texture of the names table (r7).
+static void TextureRotatePort(CpuContext* p) {
+    uint32_t particle = p->gpr[3], result = p->gpr[4], data = p->gpr[5], names = p->gpr[7], target = p->gpr[8];
+    FoldPointer(result);
+    FoldPointer(data);
+    const uint32_t manager = p->gpr[6];
+    const int32_t first = MemoryInline::FlatRead8(data + 1), range = int32_t(MemoryInline::FlatRead8(data)) - first;
+    const int32_t start = MemoryInline::FlatRead8(particle + 0xE5);
+    const uint32_t last = MemoryInline::FlatRead16(result) - 1u;
+    uint32_t index = ((MemoryInline::FlatRead32(result + 0xC) + uint32_t(start - PPC_Divw(start, range) * range)) & 0xFFFF) + uint32_t(first);
+
+    if ((MemoryInline::FlatRead8(data + 3) & 4) == 0) {
+        if (int32_t(last) <= int32_t(index & 0xFFFF))
+            index = (index - (last & 0xFFFF)) & 0xFFFF;
+    } else if ((index & 0xFFFF) == last) {
+        GuestCall game{p};
+        game.Call<0x800AB8E4>({manager, particle});
+    }
+
+    FoldPointer(names);
+    FoldPointer(target);
+    MemoryInline::FlatWrite32(target, MemoryInline::FlatRead32(names + (index & 0xFFFF) * 4 + 4));
+}
+
+extern "C" void MH3_ParticleTextureRotate(CpuContext* ctx) {
+    PortCheck::Call(ctx, "ParticleTextureRotate", func_800A1568, TextureRotatePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800A1568, MH3_ParticleTextureRotate, "ParticleTextureRotate");
