@@ -170,7 +170,9 @@ and chat. Only that copy gets the tag; the save keeps the plain name. A
 tagged name holds at most 8 characters, as many as the community server
 keeps (it refuses a longer name, and the hunter cannot go online), so a name
 longer than 5 characters loses its end there.
-`MH3_ONLINE_NAME_TAG` sets another tag on any platform (empty: none).
+`MH3_ONLINE_NAME_TAG` sets another tag on any platform (empty: none). The
+name keeps at least 5 of the 8 characters (all of a shorter name), and a
+longer tag is cut to what is left.
 
 ## Running
 

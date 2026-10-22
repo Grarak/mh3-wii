@@ -15,8 +15,9 @@
 // the community server (MH3SP's MySQL backend) keeps the name in an
 // 8-character column and refuses a longer one with a database error, and the
 // hunter cannot go online. In bytes it fits however the server counts
-// characters. The rest of a longer name is left out, whole characters at a
-// time.
+// characters. The name keeps at least 5 bytes of it (all of a shorter one),
+// so a longer tag (MH3_ONLINE_NAME_TAG) is cut to what is left; both are cut
+// whole characters at a time.
 //
 // MH3_PORT_CHECK=SetUserObjectName checks the port with no tag.
 #include "online.h"
@@ -25,6 +26,7 @@
 #include "memory.h"
 #include "port_check.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -36,6 +38,9 @@ constexpr size_t kUserObjectNameMax = 0x1F;
 
 constexpr size_t kTaggedNameMax = 8;
 
+// The bytes of the name a tag never takes: as many as "PV " leaves.
+constexpr size_t kNameKept = 5;
+
 std::string GuestString(uint32_t address) {
     std::string text;
 
@@ -45,29 +50,34 @@ std::string GuestString(uint32_t address) {
     return text;
 }
 
-// The tag, then the name's characters while they fit. A Shift-JIS lead byte
-// and the byte after it count as one character.
+// The whole characters of `text` within `bytes`. A Shift-JIS lead byte and
+// the byte after it count as one character.
+std::string Fitted(const std::string& text, size_t bytes) {
+    size_t end = 0;
+
+    while (end < text.size()) {
+        const unsigned char lead = text[end];
+        const bool pair = ((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC)) && end + 1 < text.size();
+        const size_t width = pair ? 2 : 1;
+
+        if (end + width > bytes)
+            break;
+
+        end += width;
+    }
+
+    return text.substr(0, end);
+}
+
+// The tag in what the name leaves of the 8 bytes, then the name.
 std::string TaggedName(const std::string& name) {
     const std::string tag = OnlineNameTag();
 
     if (tag.empty() || name.starts_with(tag))
         return name;
 
-    std::string tagged = tag.substr(0, kTaggedNameMax);
-
-    for (size_t i = 0; i < name.size();) {
-        const unsigned char lead = name[i];
-        const bool pair = ((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC)) && i + 1 < name.size();
-        const size_t width = pair ? 2 : 1;
-
-        if (tagged.size() + width > kTaggedNameMax)
-            break;
-
-        tagged.append(name, i, width);
-        i += width;
-    }
-
-    return tagged;
+    const std::string front = Fitted(tag, kTaggedNameMax - std::min(name.size(), kNameKept));
+    return front + Fitted(name, kTaggedNameMax - front.size());
 }
 
 // SetUserObjectName(pat, name): at most 31 bytes of the name and a terminator.
