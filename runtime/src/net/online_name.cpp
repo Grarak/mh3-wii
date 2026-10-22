@@ -11,11 +11,12 @@
 //
 // OnlineNameTag (online.h) goes in front of the name there, so players on
 // other platforms see who plays on a Vita. The save and the hunter's other
-// copies of the name stay as they were. A tagged name holds at most 16 bytes,
-// the longest name the game's own name entry makes (the save's slot holds 16
-// and its terminator): every player's game and the server's quest board,
-// whose member names are 16-byte slots, hold it as they hold any name. The
-// rest of a longer name is left out, whole characters at a time.
+// copies of the name stay as they were. A tagged name holds at most 8 bytes:
+// the community server (MH3SP's MySQL backend) keeps the name in an
+// 8-character column and refuses a longer one with a database error, and the
+// hunter cannot go online. In bytes it fits however the server counts
+// characters. The rest of a longer name is left out, whole characters at a
+// time.
 //
 // MH3_PORT_CHECK=SetUserObjectName checks the port with no tag.
 #include "online.h"
@@ -33,7 +34,7 @@ namespace {
 constexpr uint32_t kUserObjectName = 0x8B68;
 constexpr size_t kUserObjectNameMax = 0x1F;
 
-constexpr size_t kTaggedNameMax = 16;
+constexpr size_t kTaggedNameMax = 8;
 
 std::string GuestString(uint32_t address) {
     std::string text;

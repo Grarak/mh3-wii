@@ -167,8 +167,9 @@ Other players see a Vita player's name with `PV ` in front
 once, when a Capcom ID is picked (ReqUserObject), and the server hands that
 copy to everyone: the City's player list, the quest board, search, friends
 and chat. Only that copy gets the tag; the save keeps the plain name. A
-tagged name holds at most 16 bytes, the longest name the game's own name
-entry makes, so a name longer than 13 characters loses its end there.
+tagged name holds at most 8 characters, as many as the community server
+keeps (it refuses a longer name, and the hunter cannot go online), so a name
+longer than 5 characters loses its end there.
 `MH3_ONLINE_NAME_TAG` sets another tag on any platform (empty: none).
 
 ## Running
