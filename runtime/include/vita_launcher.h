@@ -16,6 +16,20 @@ struct SaveSlot {
 
 std::vector<SaveSlot> ProbeSaves(const std::filesystem::path& user);
 bool ValidSave(std::span<const uint8_t> bytes, unsigned character);
+
+// How a quest from scratch's monsters arrive: all at the start; the second
+// held until 5 minutes in or until a quest monster falls (flag 0x80000000);
+// the third 3 minutes in (0x100); one after another (0x04000000, which
+// leaves out the break and capture rewards).
+enum class Arrival : uint8_t { Together, SecondWaits, ThirdLater, OneByOne };
+
+// An intruder (quest entry +0x32C): the chance in percent, the kind table,
+// when it comes (1 after 3 minutes, 2 with one monster out, 3 with two) and
+// its group, as the disc's quests set them.
+struct Intruder {
+    uint8_t chance = 0, table = 0, when = 0, group = 0;
+};
+
 struct CustomQuest {
     std::string name;
     QuestCatalog::Set set = QuestCatalog::Set::Village;
@@ -36,7 +50,14 @@ struct CustomQuest {
     uint8_t map = 0;
     std::array<uint8_t, 3> monsters{};
     uint8_t rank = 0;
-    uint8_t size = 100;
+    std::array<uint8_t, 3> sizes{100, 100, 100};
+
+    // The web creator's (quests from scratch): how the monsters arrive, an
+    // intruder, and entry bytes written last ("OFF=HEX,...", as
+    // --quest-patch).
+    Arrival arrival = Arrival::Together;
+    Intruder intruder;
+    std::string patch;
 };
 
 // Quest editing. A failure (a template missing from the disc, settings the
@@ -55,6 +76,16 @@ std::vector<uint8_t> ScratchMonsters(uint8_t map);
 // Ceadeus, Alatreon and Jhen Mohran: only alone (their heap slot and effects
 // leave no room for another large monster).
 bool ScratchAlone(uint8_t monster);
+
+// The intruders the disc's quests on `map` bring (their chance, table, when
+// and group: the map's intruder picker only takes its own groups), each once,
+// with the first such quest's name.
+struct IntruderChoice {
+    Intruder intruder;
+    std::string quest;
+};
+
+Status ScratchIntruders(uint8_t map, std::vector<IntruderChoice>& choices);
 
 // The monster heap layout the quest needs (the six slots' memory classes;
 // its +0x390 then 4) when no disc layout fits: three different monsters at

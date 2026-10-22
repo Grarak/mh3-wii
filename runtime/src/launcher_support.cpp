@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <numeric>
@@ -52,6 +53,50 @@ std::string Key(const CustomQuest& q) {
     return std::to_string(unsigned(q.set)) + "-" + std::to_string(q.base);
 }
 
+// Bytes for a quest entry: an offset into it and the bytes from there.
+struct EntryBytes {
+    size_t offset;
+    std::vector<uint8_t> bytes;
+};
+
+constexpr size_t kEntryBytes = 0x4b8;
+
+// "OFFSET=HEX[,OFFSET=HEX...]", both in hex, within the entry's 0x4b8 bytes.
+Status ParseEntryBytes(std::string_view text, std::vector<EntryBytes>& result) {
+    result.clear();
+    const auto hex = [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; };
+    const Status invalid = Status::Error("Entry bytes take OFFSET=HEX[,OFFSET=HEX...] in hex, within the quest entry's 0x4B8 bytes");
+
+    while (!text.empty()) {
+        const size_t comma = std::min(text.find(','), text.size());
+        std::string_view part = text.substr(0, comma);
+        text.remove_prefix(std::min(comma + 1, text.size()));
+        part.remove_prefix(std::min(part.find_first_not_of(' '), part.size()));
+        part.remove_suffix(part.size() - std::min(part.find_last_not_of(' ') + 1, part.size()));
+
+        if (part.empty())
+            continue;
+
+        const size_t equals = part.find('=');
+
+        if (equals == 0 || equals == std::string_view::npos || equals > 3 || part.size() == equals + 1 || (part.size() - equals - 1) % 2 ||
+            !std::all_of(part.begin(), part.begin() + equals, hex) || !std::all_of(part.begin() + equals + 1, part.end(), hex))
+            return invalid;
+
+        EntryBytes entry{std::stoul(std::string(part.substr(0, equals)), nullptr, 16), {}};
+
+        for (size_t i = equals + 1; i < part.size(); i += 2)
+            entry.bytes.push_back(uint8_t(std::stoul(std::string(part.substr(i, 2)), nullptr, 16)));
+
+        if (entry.offset + entry.bytes.size() > kEntryBytes)
+            return invalid;
+
+        result.push_back(std::move(entry));
+    }
+
+    return {};
+}
+
 Status Validate(const CustomQuest& q) {
     if (q.name.empty() || q.name.size() > 43 || q.name.find_first_of("\r\n\t") != q.name.npos || !q.base || !q.count || q.count > 99 || q.stars < 1 || q.stars > 7 || q.minutes > 50 ||
         unsigned(q.set) > 2)
@@ -72,13 +117,33 @@ Status Validate(const CustomQuest& q) {
     SetScratchCarrier(carrier);
 
     if (!allowed(q.monsters[0]) || (q.monsters[1] && !allowed(q.monsters[1])) || (q.monsters[2] && !allowed(q.monsters[2])) || (q.monsters[2] && !q.monsters[1]) || q.rank > 2 ||
-        q.size < 50 || q.size > 200 || carrier.set != q.set || carrier.base != q.base)
+        std::any_of(q.sizes.begin(), q.sizes.end(), [](uint8_t size) { return size < 50 || size > 200; }) || carrier.set != q.set || carrier.base != q.base)
         return Status::Error("Invalid custom quest settings");
 
     if (q.monsters[1] && (ScratchAlone(q.monsters[0]) || ScratchAlone(q.monsters[1]) || ScratchAlone(q.monsters[2])))
         return Status::Error("Ceadeus, Alatreon and Jhen Mohran can only be hunted alone");
 
-    return {};
+    // The timed second monster comes out of the summon pool with the first
+    // one's files (the game loads only those): the same monster.
+    if (q.arrival == Arrival::SecondWaits && (!q.monsters[1] || q.monsters[1] != q.monsters[0] || (q.monsters[2] && q.monsters[2] != q.monsters[0])))
+        return Status::Error("The monster that waits is the same as the first (and the third, if any)");
+
+    if (q.arrival == Arrival::ThirdLater && !q.monsters[2])
+        return Status::Error("A third monster arriving later needs three monsters");
+
+    if (q.arrival == Arrival::OneByOne && !q.monsters[1])
+        return Status::Error("Monsters one after another need two or three monsters");
+
+    if (unsigned(q.arrival) > unsigned(Arrival::OneByOne))
+        return Status::Error("Invalid custom quest settings");
+
+    // The intruder shares the extra monster's state with the other arrivals,
+    // and the disc's quests bring one beside one or two monsters.
+    if (q.intruder.chance && (q.intruder.chance > 100 || q.intruder.when < 1 || q.intruder.when > 3 || q.intruder.table > 6 || q.arrival != Arrival::Together || q.monsters[2]))
+        return Status::Error("An intruder comes to quests of one or two monsters that arrive together");
+
+    std::vector<EntryBytes> patch;
+    return ParseEntryBytes(q.patch, patch);
 }
 
 // The entries' offsets. Each entry holds at least 0x4b8 bytes: reads below
@@ -386,6 +451,28 @@ std::optional<std::array<int8_t, 6>> ScratchLayout(const CustomQuest& q) {
     return std::array<int8_t, 6>{classes[0], classes[1], classes[2], 0, 0, 0};
 }
 
+Status ScratchIntruders(uint8_t map, std::vector<IntruderChoice>& choices) {
+    choices.clear();
+
+    for (const auto& file : DiscQuestFiles()) {
+        std::vector<size_t> entries;
+        MH3_RETURN_IF_ERROR(Entries(file, entries));
+
+        for (const size_t at : entries) {
+            const Intruder intruder{file[at + 0x32c], file[at + 0x32d], file[at + 0x32e], file[at + 0x32f]};
+            const auto same = [&](const IntruderChoice& c) { return c.intruder.table == intruder.table && c.intruder.when == intruder.when && c.intruder.group == intruder.group; };
+
+            if (file[at + 0x8b] != map || !intruder.chance || std::any_of(choices.begin(), choices.end(), same))
+                continue;
+
+            const auto name = file.begin() + at;
+            choices.push_back({intruder, std::string(name, std::find(name, name + 0x2c, 0))});
+        }
+    }
+
+    return {};
+}
+
 std::vector<uint8_t> ScratchMaps() {
     return {kScratchMaps.begin(), kScratchMaps.end()};
 }
@@ -504,37 +591,79 @@ Status ScratchQuestFile(const std::array<std::vector<uint8_t>, 3>& sets, const C
     std::fill(edited.begin() + at + kRecords, edited.begin() + at + kRecords + 3 * kRecordBytes, 0);
 
     for (size_t i = 0; i < count; ++i) {
-        const uint8_t monster = q.monsters[i];
         Source source;
-        MH3_RETURN_IF_ERROR(StrengthSource(sets, monster, q.rank, q.stars, source));
-        const auto& file = sets[source.set];
-        const size_t slot = at + kSlots + i * 8, objective = at + kObjectives + i * 8, record = at + kRecords + i * kRecordBytes;
-        std::copy_n(file.begin() + source.at + kSlots + source.slot * 8, 8, edited.begin() + slot);
-        std::copy_n(file.begin() + source.at + kRecords + source.record * kRecordBytes, kRecordBytes, edited.begin() + record);
+        MH3_RETURN_IF_ERROR(StrengthSource(sets, q.monsters[i], q.rank, q.stars, source));
+        const size_t slot = at + kSlots + i * 8;
+        std::copy_n(sets[source.set].begin() + source.at + kSlots + source.slot * 8, 8, edited.begin() + slot);
 
         // The spawn record (each its own, QuestPlacement fills a list's empty
-        // ones), the count and the size in percent.
+        // ones), the count and the size in percent. The second monster that
+        // waits is held in the summon pool (mode 3) until the timer lets it
+        // out.
         edited[slot + 1] = uint8_t(i);
         edited[slot + 3] = 1;
-        edited[slot + 6] = q.size;
+        edited[slot + 6] = q.sizes[i];
+
+        if (q.arrival == Arrival::SecondWaits && i == 1)
+            edited[slot + 2] = 3;
+    }
+
+    // An objective per monster, as the disc's pairs have them. When the
+    // second waits, the quest ends on objective 0 alone (objective mode 2):
+    // it counts every one of them (they are the same monster).
+    struct Goal {
+        uint8_t monster;
+        uint16_t count;
+    };
+
+    std::vector<Goal> goals;
+
+    if (q.arrival == Arrival::SecondWaits)
+        goals.push_back({q.monsters[0], uint16_t(count)});
+    else
+        for (size_t i = 0; i < count; ++i)
+            goals.push_back({q.monsters[i], 1});
+
+    for (size_t k = 0; k < goals.size(); ++k) {
+        Source source;
+        MH3_RETURN_IF_ERROR(StrengthSource(sets, goals[k].monster, q.rank, q.stars, source));
+        const size_t objective = at + kObjectives + k * 8, record = at + kRecords + k * kRecordBytes;
+        std::copy_n(sets[source.set].begin() + source.at + kRecords + source.record * kRecordBytes, kRecordBytes, edited.begin() + record);
 
         for (const size_t to : {objective, record}) {
             PutWord(edited, to, type);
-            PutHalf(edited, to + 4, monster);
-            PutHalf(edited, to + 6, 1);
+            PutHalf(edited, to + 4, goals[k].monster);
+            PutHalf(edited, to + 6, goals[k].count);
         }
     }
 
     // Monsters at once: 0x02000000 (Mating Season, the arena's pairs; three
-    // too). 0x04000000 would bring them one at a time (Arena Free-for-all).
-    uint32_t mode = (carrierMode & ~0x06000000u) | (count > 1 ? 0x02000000 : 0);
+    // too). 0x04000000 brings them one at a time (Arena Free-for-all),
+    // 0x80000000 holds the second until 5 minutes in or a monster falls,
+    // 0x100 brings the third 3 minutes in.
+    uint32_t mode = carrierMode & ~0x86000100u;
+
+    switch (q.arrival) {
+    case Arrival::Together:
+        mode |= count > 1 ? 0x02000000 : 0;
+        break;
+    case Arrival::SecondWaits:
+        mode |= 0x80000000;
+        break;
+    case Arrival::ThirdLater:
+        mode |= 0x02000100;
+        break;
+    case Arrival::OneByOne:
+        mode |= 0x04000000;
+        break;
+    }
 
     // Hunts without sub-quests (0xC0, set where an authored hunt has them).
     if (huntCarrier)
         mode = (mode & ~0xFFu) | (q.capture ? 4 : 5);
 
     PutWord(edited, at + 0x310, mode);
-    PutWord(edited, at + 0x32c, 0);
+    PutWord(edited, at + 0x32c, uint32_t(q.intruder.chance) << 24 | uint32_t(q.intruder.table) << 16 | uint32_t(q.intruder.when) << 8 | q.intruder.group);
     PutWord(edited, at + kLayout, ScratchLayout(q) ? 4 : MemoryClass(q.monsters[0]) == 3 ? 5 : 2);
 
     // Its texts: name, goal, no sub-quests, failure, description.
@@ -564,6 +693,13 @@ Status ScratchQuestFile(const std::array<std::vector<uint8_t>, 3>& sets, const C
 
     if (q.minutes)
         PutHalf(edited, at + 0x13a, q.minutes);
+
+    // Entry bytes of the creator's own, last.
+    std::vector<EntryBytes> patch;
+    MH3_RETURN_IF_ERROR(ParseEntryBytes(q.patch, patch));
+
+    for (const auto& bytes : patch)
+        std::copy(bytes.bytes.begin(), bytes.bytes.end(), edited.begin() + at + bytes.offset);
 
     result = std::move(edited);
     return {};
@@ -609,10 +745,16 @@ Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& q) 
     const auto path = directory / (key + ".mh3quest");
     const auto temporary = directory / (key + ".writing");
     std::ofstream output(temporary, std::ios::trunc);
-    output << "mh3-custom-quest-v3\n"
+
+    // v4 after v3's fields: the other sizes, the arrival, the intruder; the
+    // entry bytes on the line after the name.
+    output << "mh3-custom-quest-v4\n"
            << unsigned(q.set) << ' ' << q.base << ' ' << q.count << ' ' << q.capture << ' ' << unsigned(q.stars) << ' ' << q.encounter << ' ' << q.minutes << ' ' << unsigned(q.map) << ' '
-           << unsigned(q.monsters[0]) << ' ' << unsigned(q.monsters[1]) << ' ' << unsigned(q.monsters[2]) << ' ' << unsigned(q.rank) << ' ' << unsigned(q.size) << '\n'
-           << q.name << '\n';
+           << unsigned(q.monsters[0]) << ' ' << unsigned(q.monsters[1]) << ' ' << unsigned(q.monsters[2]) << ' ' << unsigned(q.rank) << ' ' << unsigned(q.sizes[0]) << ' '
+           << unsigned(q.sizes[1]) << ' ' << unsigned(q.sizes[2]) << ' ' << unsigned(q.arrival) << ' ' << unsigned(q.intruder.chance) << ' ' << unsigned(q.intruder.table) << ' '
+           << unsigned(q.intruder.when) << ' ' << unsigned(q.intruder.group) << '\n'
+           << q.name << '\n'
+           << q.patch << '\n';
     output.close();
 
     if (!output)
@@ -670,13 +812,16 @@ Status LoadCustomQuests(const std::filesystem::path& user, std::vector<CustomQue
         CustomQuest q;
         unsigned set = 0, stars = 0;
 
-        if ((version != "mh3-custom-quest-v1" && version != "mh3-custom-quest-v2" && version != "mh3-custom-quest-v3") || !(input >> set >> q.base >> q.count >> q.capture >> stars))
+        const bool v4 = version == "mh3-custom-quest-v4", v3 = version == "mh3-custom-quest-v3" || v4;
+
+        if ((version != "mh3-custom-quest-v1" && version != "mh3-custom-quest-v2" && !v3) || !(input >> set >> q.base >> q.count >> q.capture >> stars))
             continue;
 
         if (version != "mh3-custom-quest-v1" && !(input >> q.encounter >> q.minutes))
             continue;
 
-        if (version == "mh3-custom-quest-v3") {
+        // v3: one size for every monster.
+        if (v3) {
             unsigned map = 0, first = 0, second = 0, third = 0, rank = 0, size = 0;
 
             if (!(input >> map >> first >> second >> third >> rank >> size) || map > 255 || first > 255 || second > 255 || third > 255 || rank > 255 || size > 255)
@@ -685,11 +830,26 @@ Status LoadCustomQuests(const std::filesystem::path& user, std::vector<CustomQue
             q.map = map;
             q.monsters = {uint8_t(first), uint8_t(second), uint8_t(third)};
             q.rank = rank;
-            q.size = size;
+            q.sizes = {uint8_t(size), uint8_t(size), uint8_t(size)};
+        }
+
+        if (v4) {
+            std::array<unsigned, 7> more{};
+
+            if (!(input >> more[0] >> more[1] >> more[2] >> more[3] >> more[4] >> more[5] >> more[6]) || std::any_of(more.begin(), more.end(), [](unsigned v) { return v > 255; }))
+                continue;
+
+            q.sizes[1] = more[0];
+            q.sizes[2] = more[1];
+            q.arrival = Arrival(more[2]);
+            q.intruder = {uint8_t(more[3]), uint8_t(more[4]), uint8_t(more[5]), uint8_t(more[6])};
         }
 
         input.ignore(1024, '\n');
         std::getline(input, q.name);
+
+        if (v4)
+            std::getline(input, q.patch);
 
         if (set > 2 || stars > 255)
             continue;
@@ -811,33 +971,17 @@ Status PatchQuest(QuestCatalog::Set set, uint16_t id, std::string_view patches) 
     std::vector<uint8_t> edited = disc.ReadFile(QuestPath(set));
     size_t at = 0;
     MH3_RETURN_IF_ERROR(Entry(edited, id, at));
-    std::vector<size_t> entries;
-    MH3_RETURN_IF_ERROR(Entries(edited, entries));
-    size_t end = edited.size();
+    std::vector<EntryBytes> patch;
+    MH3_RETURN_IF_ERROR(ParseEntryBytes(patches, patch));
 
-    for (size_t other : entries)
-        if (other > at)
-            end = std::min(end, other);
+    for (const auto& bytes : patch) {
+        std::copy(bytes.bytes.begin(), bytes.bytes.end(), edited.begin() + at + bytes.offset);
+        std::fprintf(stderr, "MH3 quest %u: +0x%zX =", unsigned(id), bytes.offset);
 
-    while (!patches.empty()) {
-        const size_t comma = std::min(patches.find(','), patches.size());
-        const std::string_view patch = patches.substr(0, comma);
-        patches.remove_prefix(std::min(comma + 1, patches.size()));
-        const size_t equals = patch.find('=');
-        const std::string_view bytes = equals == std::string_view::npos ? std::string_view() : patch.substr(equals + 1);
+        for (const uint8_t byte : bytes.bytes)
+            std::fprintf(stderr, " %02X", byte);
 
-        if (equals == std::string_view::npos || bytes.empty() || bytes.size() % 2 != 0)
-            return Status::Error("--quest-patch takes OFFSET=HEX[,OFFSET=HEX...]");
-
-        const size_t offset = std::stoul(std::string(patch.substr(0, equals)), nullptr, 16);
-
-        if (at + offset + bytes.size() / 2 > end)
-            return Status::Error("--quest-patch: offset past the quest's entry");
-
-        for (size_t i = 0; i < bytes.size(); i += 2)
-            edited[at + offset + i / 2] = uint8_t(std::stoul(std::string(bytes.substr(i, 2)), nullptr, 16));
-
-        std::fprintf(stderr, "MH3 quest %u: +0x%zX = %.*s\n", unsigned(id), offset, int(bytes.size()), bytes.data());
+        std::fprintf(stderr, "\n");
     }
 
     disc.SetFileOverride(QuestPath(set), std::move(edited));

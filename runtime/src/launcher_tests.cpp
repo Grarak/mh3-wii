@@ -379,66 +379,142 @@ int main(int argc, char** argv) {
             Check(combinations > 0, "external disc has composable quest encounters");
 
             // Quests from scratch: every map and rank, one to three of the
-            // map's monsters, small and large, hunted and captured.
+            // map's monsters, small and large, hunted and captured, each way
+            // they can arrive, with the map's first intruder beside one or two.
             std::array<std::vector<uint8_t>, 3> sets;
 
             for (unsigned set = 0; set < 3; ++set)
                 sets[set] = GameDiscImage().ReadFile("05/quest0" + std::to_string(set == 2 ? 3 : set) + "_eng.bin");
 
             unsigned scratch = 0;
+            using VitaLauncher::Arrival;
 
             for (const uint8_t map : VitaLauncher::ScratchMaps()) {
                 const auto allowed = VitaLauncher::ScratchMonsters(map);
+                std::vector<VitaLauncher::IntruderChoice> intruders;
+                CheckStatus(VitaLauncher::ScratchIntruders(map, intruders));
 
                 for (uint8_t rank = 0; rank < 3; ++rank)
                     for (size_t i = 0; i < allowed.size(); ++i)
                         for (size_t count = 1; count <= std::min<size_t>(3, allowed.size()); ++count)
-                            for (unsigned capture = 0; capture < 2; ++capture) {
-                                VitaLauncher::CustomQuest q{"Scratch"};
-                                q.map = map;
-                                q.rank = rank;
-                                q.stars = 4;
-                                q.minutes = 30;
-                                q.size = count == 2 ? 50 : count == 3 ? 200 : 100;
-                                q.capture = capture;
+                            for (unsigned capture = 0; capture < 2; ++capture)
+                                for (const Arrival arrival : {Arrival::Together, Arrival::SecondWaits, Arrival::ThirdLater, Arrival::OneByOne}) {
+                                    VitaLauncher::CustomQuest q{"Scratch"};
+                                    q.map = map;
+                                    q.rank = rank;
+                                    q.stars = 4;
+                                    q.minutes = 30;
+                                    q.sizes = {uint8_t(count == 2 ? 50 : 100), uint8_t(count == 3 ? 200 : 120), 80};
+                                    q.capture = capture;
+                                    q.arrival = arrival;
 
-                                for (size_t k = 0; k < count; ++k)
-                                    q.monsters[k] = allowed[(i + k) % allowed.size()];
+                                    // The monster that waits is the first one again.
+                                    for (size_t k = 0; k < count; ++k)
+                                        q.monsters[k] = allowed[(i + (arrival == Arrival::SecondWaits ? 0 : k)) % allowed.size()];
 
-                                if (count > 1 && std::any_of(q.monsters.begin(), q.monsters.end(), VitaLauncher::ScratchAlone))
-                                    continue;
+                                    if ((count > 1 && std::any_of(q.monsters.begin(), q.monsters.end(), VitaLauncher::ScratchAlone)) ||
+                                        (arrival == Arrival::SecondWaits && count < 2) || (arrival == Arrival::ThirdLater && count < 3) || (arrival == Arrival::OneByOne && count < 2))
+                                        continue;
 
-                                VitaLauncher::SetScratchCarrier(q);
-                                bool supported = !capture;
+                                    if (arrival == Arrival::Together && count <= 2 && !intruders.empty())
+                                        q.intruder = intruders.front().intruder;
 
-                                if (capture)
-                                    CheckStatus(VitaLauncher::ScratchCapture(q, supported));
+                                    VitaLauncher::SetScratchCarrier(q);
+                                    bool supported = !capture;
 
-                                if (!supported)
-                                    continue;
+                                    if (capture)
+                                        CheckStatus(VitaLauncher::ScratchCapture(q, supported));
 
-                                std::vector<uint8_t> edited;
-                                CheckStatus(VitaLauncher::ScratchQuestFile(sets, q, edited));
-                                const auto& file = sets[unsigned(q.set)];
-                                Check(edited.size() == file.size(), "scratch quest keeps the quest file's size");
-                                size_t at = 0;
+                                    if (!supported)
+                                        continue;
 
-                                for (unsigned j = 0; j < ReadWord(edited, 4); ++j)
-                                    if ((ReadWord(edited, ReadWord(edited, 8 + j * 8) + 0x2c) >> 16) == q.base)
-                                        at = ReadWord(edited, 8 + j * 8);
+                                    std::vector<uint8_t> edited;
+                                    CheckStatus(VitaLauncher::ScratchQuestFile(sets, q, edited));
+                                    const auto& file = sets[unsigned(q.set)];
+                                    Check(edited.size() == file.size(), "scratch quest keeps the quest file's size");
+                                    size_t at = 0;
 
-                                Check(at != 0 && edited[at + 0x8b] == map, "scratch quest is on its map");
+                                    for (unsigned j = 0; j < ReadWord(edited, 4); ++j)
+                                        if ((ReadWord(edited, ReadWord(edited, 8 + j * 8) + 0x2c) >> 16) == q.base)
+                                            at = ReadWord(edited, 8 + j * 8);
 
-                                for (size_t k = 0; k < 3; ++k) {
-                                    const size_t slot = at + 0x314 + k * 8;
-                                    Check(edited[slot] == q.monsters[k] && (!q.monsters[k] || (edited[slot + 1] == k && edited[slot + 3] == 1 && edited[slot + 6] == q.size)),
-                                          "scratch quest slot holds its monster, record and size");
-                                    Check((ReadWord(edited, at + 0x334 + k * 8) >> 16) == q.monsters[k] && ReadWord(edited, at + 0x330 + k * 8) == ReadWord(edited, at + 0x394 + k * 0x60),
-                                          "scratch quest objective targets its monster");
+                                    Check(at != 0 && edited[at + 0x8b] == map, "scratch quest is on its map");
+
+                                    for (size_t k = 0; k < 3; ++k) {
+                                        const size_t slot = at + 0x314 + k * 8;
+                                        Check(edited[slot] == q.monsters[k] && (!q.monsters[k] || (edited[slot + 1] == k && edited[slot + 3] == 1 && edited[slot + 6] == q.sizes[k])),
+                                              "scratch quest slot holds its monster, record and size");
+                                        Check(ReadWord(edited, at + 0x330 + k * 8) == ReadWord(edited, at + 0x394 + k * 0x60), "scratch quest objective and record agree");
+                                    }
+
+                                    // An objective per monster; one counting them all when the
+                                    // second waits (the quest ends on objective 0 alone).
+                                    const uint32_t target = ReadWord(edited, at + 0x334);
+                                    const uint32_t flags = ReadWord(edited, at + 0x310);
+
+                                    if (arrival == Arrival::SecondWaits) {
+                                        Check(target == (uint32_t(q.monsters[0]) << 16 | count) && ReadWord(edited, at + 0x33c) == 0, "the waiting monster's objective counts them all");
+                                        Check(edited[at + 0x314 + 8 + 2] == 3 && (flags & 0x86000100) == 0x80000000, "the second monster waits in the summon pool");
+                                    } else {
+                                        for (size_t k = 0; k < 3; ++k)
+                                            Check((ReadWord(edited, at + 0x334 + k * 8) >> 16) == q.monsters[k], "scratch quest objective targets its monster");
+
+                                        const uint32_t expected = arrival == Arrival::ThirdLater ? 0x02000100 : arrival == Arrival::OneByOne ? 0x04000000 : count > 1 ? 0x02000000 : 0;
+                                        Check((flags & 0x86000100) == expected, "scratch quest arrival flags");
+                                    }
+
+                                    const auto& intruder = q.intruder;
+                                    Check(ReadWord(edited, at + 0x32c) == (uint32_t(intruder.chance) << 24 | uint32_t(intruder.table) << 16 | uint32_t(intruder.when) << 8 | intruder.group),
+                                          "scratch quest intruder");
+                                    ++scratch;
                                 }
+            }
 
-                                ++scratch;
-                            }
+            // Entry bytes written last, and refused past the entry.
+            {
+                VitaLauncher::CustomQuest q{"Scratch"};
+                q.map = 2;
+                q.monsters = {7, 0, 0};
+                q.stars = 4;
+                q.patch = "310=80030045, 32C=64040118";
+                VitaLauncher::SetScratchCarrier(q);
+                std::vector<uint8_t> edited;
+                CheckStatus(VitaLauncher::ScratchQuestFile(sets, q, edited));
+                size_t at = 0;
+
+                for (unsigned j = 0; j < ReadWord(edited, 4); ++j)
+                    if ((ReadWord(edited, ReadWord(edited, 8 + j * 8) + 0x2c) >> 16) == q.base)
+                        at = ReadWord(edited, 8 + j * 8);
+
+                Check(ReadWord(edited, at + 0x310) == 0x80030045 && ReadWord(edited, at + 0x32c) == 0x64040118, "entry bytes written last");
+
+                for (const char* invalid : {"4B8=00", "4B7=0000", "310=8", "x=00", "310"}) {
+                    q.patch = invalid;
+                    Check(!VitaLauncher::ScratchQuestFile(sets, q, edited).ok(), "invalid entry bytes refused");
+                }
+
+                // Every option through a saved record and back.
+                const auto user = std::filesystem::temp_directory_path() / ("mh3-quest-audit-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                q.monsters = {7, 7, 0};
+                q.sizes = {90, 150, 100};
+                q.arrival = Arrival::SecondWaits;
+                q.patch = "336=0002";
+                CheckStatus(VitaLauncher::SaveCustomQuest(user, q));
+                std::vector<VitaLauncher::CustomQuest> loaded;
+                CheckStatus(VitaLauncher::LoadCustomQuests(user, loaded));
+                std::filesystem::remove_all(user);
+                Check(loaded.size() == 1 && loaded[0].monsters == q.monsters && loaded[0].sizes == q.sizes && loaded[0].arrival == q.arrival && loaded[0].patch == q.patch,
+                      "custom quest record keeps every option");
+                q.monsters = {7, 1, 0};
+                Check(!VitaLauncher::SaveCustomQuest(user, q).ok(), "a different monster cannot wait");
+                q.arrival = Arrival::Together;
+                q.intruder = {100, 4, 1, 0x18};
+                q.patch.clear();
+                CheckStatus(VitaLauncher::SaveCustomQuest(user, q));
+                CheckStatus(VitaLauncher::LoadCustomQuests(user, loaded));
+                std::filesystem::remove_all(user);
+                Check(loaded.size() == 1 && loaded[0].intruder.chance == 100 && loaded[0].intruder.table == 4 && loaded[0].intruder.when == 1 && loaded[0].intruder.group == 0x18,
+                      "custom quest record keeps its intruder");
             }
 
             Check(scratch > 0, "quests from scratch build");

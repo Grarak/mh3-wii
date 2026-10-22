@@ -47,6 +47,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -559,6 +560,191 @@ Status TypeName(const std::string& name, std::string what, size_t) {
     return {};
 }
 #endif
+#endif
+#ifdef __EMSCRIPTEN__
+// The web's quest creator: a form over the page (runtime/web/quest-form.js)
+// with every option of a quest from scratch, for the mouse and the keyboard.
+// It opens with the quest and the choices as JSON and answers with the
+// quest's settings as "key=value" lines.
+namespace QuestForm {
+std::string Quoted(std::string_view text) {
+    std::string quoted = "\"";
+
+    for (const char c : text) {
+        if (c == '"' || c == '\\')
+            quoted += '\\';
+
+        if (static_cast<unsigned char>(c) >= 32)
+            quoted += c;
+    }
+
+    return quoted + "\"";
+}
+
+// The maps with their monsters, the monsters with their names, which stay
+// alone and which can be captured, and each map's intruders (from the
+// disc's quests: read once).
+Status Choices(const std::function<std::string(uint16_t)>& monsterName, std::string& json) {
+    static std::string cached;
+
+    if (!cached.empty()) {
+        json = cached;
+        return {};
+    }
+
+    std::string maps, monsters, intruders;
+    std::vector<uint8_t> all;
+
+    for (const uint8_t map : ScratchMaps()) {
+        std::string list;
+
+        for (const uint8_t monster : ScratchMonsters(map)) {
+            list += (list.empty() ? "" : ",") + std::to_string(monster);
+
+            if (std::find(all.begin(), all.end(), monster) == all.end())
+                all.push_back(monster);
+        }
+
+        std::vector<IntruderChoice> choices;
+        MH3_RETURN_IF_ERROR(ScratchIntruders(map, choices));
+        std::string found;
+
+        for (const auto& choice : choices)
+            found += std::string(found.empty() ? "" : ",") + "{\"chance\":" + std::to_string(choice.intruder.chance) + ",\"table\":" + std::to_string(choice.intruder.table) +
+                     ",\"when\":" + std::to_string(choice.intruder.when) + ",\"group\":" + std::to_string(choice.intruder.group) + ",\"quest\":" + Quoted(choice.quest) + "}";
+
+        maps += std::string(maps.empty() ? "" : ",") + "{\"id\":" + std::to_string(map) + ",\"name\":" + Quoted(QuestCatalog::MapName(map)) +
+                ",\"capture\":" + (map >= 1 && map <= 5 ? "true" : "false") + ",\"monsters\":[" + list + "],\"intruders\":[" + found + "]}";
+    }
+
+    for (const uint8_t monster : all) {
+        CustomQuest probe;
+        probe.map = 1;
+        probe.monsters = {monster, 0, 0};
+        bool capture = false;
+        MH3_RETURN_IF_ERROR(ScratchCapture(probe, capture));
+        monsters += std::string(monsters.empty() ? "" : ",") + "{\"id\":" + std::to_string(monster) + ",\"name\":" + Quoted(monsterName(monster)) +
+                    ",\"alone\":" + (ScratchAlone(monster) ? "true" : "false") + ",\"capture\":" + (capture ? "true" : "false") + "}";
+    }
+
+    cached = "\"maps\":[" + maps + "],\"monsters\":[" + monsters + "]";
+    json = cached;
+    return {};
+}
+
+std::string Quest(const CustomQuest& q) {
+    const auto list = [](const std::array<uint8_t, 3>& values) { return std::to_string(values[0]) + "," + std::to_string(values[1]) + "," + std::to_string(values[2]); };
+    return "{\"name\":" + Quoted(q.name) + ",\"map\":" + std::to_string(q.map) + ",\"monsters\":[" + list(q.monsters) + "],\"sizes\":[" + list(q.sizes) +
+           "],\"rank\":" + std::to_string(q.rank) + ",\"stars\":" + std::to_string(q.stars) + ",\"minutes\":" + std::to_string(q.minutes) +
+           ",\"capture\":" + (q.capture ? "true" : "false") + ",\"arrival\":" + std::to_string(unsigned(q.arrival)) + ",\"intruder\":{\"chance\":" +
+           std::to_string(q.intruder.chance) + ",\"table\":" + std::to_string(q.intruder.table) + ",\"when\":" + std::to_string(q.intruder.when) +
+           ",\"group\":" + std::to_string(q.intruder.group) + "},\"patch\":" + Quoted(q.patch) + "}";
+}
+
+void Open(const std::string& title, const std::string& choices, const CustomQuest& q) {
+    const std::string json = "{\"title\":" + Quoted(title) + "," + choices + ",\"quest\":" + Quest(q) + "}";
+    MAIN_THREAD_EM_ASM({ mh3QuestForm.open(UTF8ToString($0)); }, json.c_str());
+}
+
+// Open: nullopt; closed without saving: an empty string; saved: its lines.
+std::optional<std::string> Poll() {
+    const int length = MAIN_THREAD_EM_ASM_INT({ return mh3QuestForm.poll(); });
+
+    if (length < 0)
+        return std::nullopt;
+
+    std::string lines(size_t(length) + 1, '\0');
+    MAIN_THREAD_EM_ASM({ stringToUTF8(mh3QuestForm.result(), $0, $1); }, lines.data(), lines.size());
+    lines.resize(size_t(length));
+    return lines;
+}
+
+// The form stays open with the reason.
+void Fail(const std::string& message) {
+    MAIN_THREAD_EM_ASM({ mh3QuestForm.fail(UTF8ToString($0)); }, message.c_str());
+}
+
+void Close() {
+    MAIN_THREAD_EM_ASM({ mh3QuestForm.close(); });
+}
+
+// The form's lines over q: name (empty: none typed), map, monsters, sizes,
+// rank, stars, minutes, capture, arrival, intruder, patch.
+Status Read(std::string_view lines, CustomQuest& q) {
+    const auto numbers = [](std::string_view text, std::vector<unsigned>& values) {
+        values.clear();
+
+        for (size_t at = 0; at <= text.size();) {
+            const size_t end = std::min(text.find(',', at), text.size());
+            const std::string part(text.substr(at, end - at));
+
+            if (part.empty() || part.size() > 3 || !std::all_of(part.begin(), part.end(), [](char c) { return c >= '0' && c <= '9'; }))
+                return false;
+
+            values.push_back(unsigned(std::stoul(part)));
+            at = end + 1;
+        }
+
+        return std::all_of(values.begin(), values.end(), [](unsigned v) { return v <= 255; });
+    };
+
+    const Status invalid = Status::Error("The quest creator sent settings this build cannot read");
+    std::vector<unsigned> values;
+
+    while (!lines.empty()) {
+        const size_t end = std::min(lines.find('\n'), lines.size());
+        const std::string_view line = lines.substr(0, end);
+        lines.remove_prefix(std::min(end + 1, lines.size()));
+        const size_t equals = line.find('=');
+
+        if (equals == std::string_view::npos)
+            return invalid;
+
+        const std::string_view key = line.substr(0, equals), value = line.substr(equals + 1);
+
+        if (key == "name") {
+            q.name = std::string(value);
+            continue;
+        }
+
+        if (key == "patch") {
+            q.patch = std::string(value);
+            continue;
+        }
+
+        if (!numbers(value, values))
+            return invalid;
+
+        const size_t want = key == "monsters" || key == "sizes" ? 3 : key == "intruder" ? 4 : 1;
+
+        if (values.size() != want)
+            return invalid;
+
+        if (key == "map")
+            q.map = uint8_t(values[0]);
+        else if (key == "monsters")
+            q.monsters = {uint8_t(values[0]), uint8_t(values[1]), uint8_t(values[2])};
+        else if (key == "sizes")
+            q.sizes = {uint8_t(values[0]), uint8_t(values[1]), uint8_t(values[2])};
+        else if (key == "rank")
+            q.rank = uint8_t(values[0]);
+        else if (key == "stars")
+            q.stars = uint8_t(values[0]);
+        else if (key == "minutes")
+            q.minutes = uint16_t(values[0]);
+        else if (key == "capture")
+            q.capture = values[0] != 0;
+        else if (key == "arrival")
+            q.arrival = Arrival(values[0]);
+        else if (key == "intruder")
+            q.intruder = {uint8_t(values[0]), uint8_t(values[1]), uint8_t(values[2]), uint8_t(values[3])};
+        else
+            return invalid;
+    }
+
+    return {};
+}
+} // namespace QuestForm
 #endif
 class Input {
   public:
@@ -1196,13 +1382,27 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         const size_t count = q.monsters[2] ? 3 : q.monsters[1] ? 2 : 1;
         std::string text = q.capture ? "Capture " : "Hunt ";
 
-        if (q.size <= 80 || q.size >= 120)
-            text += q.size <= 80 ? "Tiny " : "Giant ";
-
-        for (size_t i = 0; i < count; ++i)
-            text += (i == 0 ? "" : i + 1 == count ? " and " : ", ") + monsterName(q.monsters[i]);
+        for (size_t i = 0; i < count; ++i) {
+            const uint8_t size = q.sizes[i];
+            text += (i == 0 ? "" : i + 1 == count ? " and " : ", ") + std::string(size <= 80 ? "Tiny " : size >= 120 ? "Giant " : "") + monsterName(q.monsters[i]);
+        }
 
         return text;
+    };
+
+    // "120% size, " for one size of all, "80/100% sizes, " for several.
+    const auto sizes = [](const CustomQuest& q) {
+        const size_t count = q.monsters[2] ? 3 : q.monsters[1] ? 2 : 1;
+
+        if (std::all_of(q.sizes.begin(), q.sizes.begin() + count, [&](uint8_t size) { return size == q.sizes[0]; }))
+            return q.sizes[0] == 100 ? std::string() : std::to_string(q.sizes[0]) + "% size, ";
+
+        std::string text;
+
+        for (size_t i = 0; i < count; ++i)
+            text += (i ? "/" : "") + std::to_string(q.sizes[i]);
+
+        return text + "% sizes, ";
     };
 
     const auto automaticName = [&](const CustomQuest& q) { return goal(q).substr(0, 43); };
@@ -1242,9 +1442,79 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         start(std::string(city ? "City" : "village") + ", " + saveName());
     };
 
+#ifdef __EMSCRIPTEN__
+    // The web's creator (QuestForm): every option in a form over the page.
+    // The launcher shows what is open behind it; a quest the game cannot take
+    // keeps the form open with the reason. An empty name follows the goal.
+    const auto editInForm = [&]() -> Status {
+        std::string choices;
+        MH3_RETURN_IF_ERROR(QuestForm::Choices(monsterName, choices));
+        const std::string title = edit.storageKey.empty() ? "Create custom quest" : "Edit custom quest";
+        QuestForm::Open(title, choices, edit);
+        Log("quest form open");
+        const std::vector<std::string> rows{"The quest creator is open over the page"};
+
+        while (Pump()) {
+            Draw(*font, title, rows, 0, first, "Save the quest there, or close it with Cancel or Esc to come back here.", "", false);
+            const auto lines = QuestForm::Poll();
+
+            if (!lines)
+                continue;
+
+            if (lines->empty()) {
+                Log("quest form closed");
+                return {};
+            }
+
+            CustomQuest candidate = edit;
+
+            if (const Status read = QuestForm::Read(*lines, candidate); !read.ok()) {
+                QuestForm::Fail(read.message());
+                continue;
+            }
+
+            SetScratchCarrier(candidate);
+
+            if (candidate.name.empty())
+                candidate.name = automaticName(candidate);
+
+            if (const Status saved = SaveCustomQuest(user, candidate); !saved.ok()) {
+                Log("quest form: %s", saved.message().c_str());
+                QuestForm::Fail(saved.message());
+                continue;
+            }
+
+            QuestForm::Close();
+            edit = candidate;
+            Log("custom quest saved: %s (map %u, monsters %u %u %u, arrival %u, intruder %u%%)", edit.name.c_str(), unsigned(edit.map), unsigned(edit.monsters[0]),
+                unsigned(edit.monsters[1]), unsigned(edit.monsters[2]), unsigned(edit.arrival), unsigned(edit.intruder.chance));
+            Message("Custom quest saved. Play it from Quests > Custom quests.");
+            return {};
+        }
+
+        return {};
+    };
+#endif
+
     Log("menu ready");
 
     while (Pump()) {
+#ifdef __EMSCRIPTEN__
+        if (page == Page::Editor) {
+            if (const Status edited = editInForm(); !edited.ok())
+                Message(edited.message());
+
+            if (editorParent == Page::Custom) {
+                MH3_RETURN_IF_ERROR(LoadCustomQuests(user, custom));
+                enter(Page::Custom);
+            } else {
+                enter(Page::Main);
+                selected = MainRow(Item::Create);
+            }
+
+            continue;
+        }
+#endif
         std::string title, detail, footer = "X Select   O Back   D-pad Move";
         std::vector<std::string> rows;
 
@@ -1270,7 +1540,11 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 case Item::Quests:
                     return {"Quests", "Start a quest directly with an existing hunter." + cheats};
                 case Item::Create:
+#ifdef __EMSCRIPTEN__
+                    return {"Create custom quest", "Make a quest of your own in a form: a map, up to three large monsters and their sizes, how they arrive, an intruder."};
+#else
                     return {"Create custom quest", "Make a hunt or capture quest of your own: a map and one or two large monsters."};
+#endif
                 case Item::Cheats:
                     return {"Cheats", "Gameplay toggles for this launch." + cheats};
                 case Item::Widescreen:
@@ -1383,7 +1657,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 const auto& q = custom[std::min(selected, custom.size() - 1)];
 
                 if (q.map) {
-                    detail = QuestCatalog::MapName(q.map) + ": " + goal(q) + ", " + RankName(q.rank) + ", " + (q.size != 100 ? std::to_string(q.size) + "% size, " : "") +
+                    detail = QuestCatalog::MapName(q.map) + ": " + goal(q) + ", " + RankName(q.rank) + ", " + sizes(q) +
                              std::to_string(q.stars) + "*" +
                              (q.minutes ? ", " + std::to_string(q.minutes) + " minutes" : "") + ".";
                     footer = "X Launch   Triangle Edit   O Back   D-pad Move";
@@ -1413,7 +1687,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     "Third monster: " + (edit.monsters[2] ? monsterName(edit.monsters[2]) : std::string("None")),
                     "Objective: " + std::string(edit.capture ? "Capture" : "Hunt"),
                     "Rank: " + std::string(RankName(edit.rank)),
-                    "Size: " + std::to_string(edit.size) + "%",
+                    "Size: " + std::to_string(edit.sizes[0]) + "%",
                     "Time: " + (edit.minutes ? std::to_string(edit.minutes) + " minutes" : "as the map's quest"),
                     "Stars: " + std::to_string(edit.stars),
                     "Save quest"};
@@ -1640,8 +1914,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 if (selected == 6)
                     edit.rank = uint8_t((edit.rank + 3 + step) % 3);
 
+                // Every monster's (the first's shown).
                 if (selected == 7)
-                    edit.size = uint8_t(std::clamp<int>(int(edit.size) + step * 5, 50, 200));
+                    edit.sizes.fill(uint8_t(std::clamp<int>(int(edit.sizes[0]) + step * 5, 50, 200)));
 
                 if (selected == 8)
                     edit.minutes = std::clamp<int>(int(edit.minutes ? edit.minutes : 50) + step, 1, 50);
@@ -1673,7 +1948,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 if (selected == 10 && accept) {
                     MH3_RETURN_IF_ERROR(SaveCustomQuest(user, edit));
                     Log("custom quest saved: %s (map %u, monsters %u %u %u, rank %u, size %u, %u stars)", edit.name.c_str(), unsigned(edit.map), unsigned(edit.monsters[0]),
-                        unsigned(edit.monsters[1]), unsigned(edit.monsters[2]), unsigned(edit.rank), unsigned(edit.size), unsigned(edit.stars));
+                        unsigned(edit.monsters[1]), unsigned(edit.monsters[2]), unsigned(edit.rank), unsigned(edit.sizes[0]), unsigned(edit.stars));
                     Message("Custom quest saved. Play it from Quests > Custom quests.");
 
                     if (editorParent == Page::Custom) {

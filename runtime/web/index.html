@@ -25,6 +25,25 @@
   th { color: var(--muted); font-weight: normal; }
   kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font: 12px ui-monospace, monospace; }
   .note { color: var(--muted); margin: 6px 0; }
+  #quest-form { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0; width: min(760px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px); }
+  #quest-form::backdrop { background: rgba(0, 0, 0, 0.6); }
+  #quest-form form { padding: 16px 20px; }
+  #quest-form h2 { margin: 0 0 8px; font-size: 18px; color: var(--accent); }
+  #quest-form .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; }
+  #quest-form .row label { margin: 4px 0; }
+  #quest-form input, #quest-form select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
+  #quest-form input[type=number] { width: 4.5em; }
+  #quest-form input:focus-visible, #quest-form select:focus-visible, #quest-form button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #quest-form input:disabled, #quest-form select:disabled, #quest-form label:has(input:disabled) { opacity: 0.5; }
+  #quest-form table { margin: 4px 0; }
+  #quest-form td { border: 0; padding: 3px 8px 3px 0; }
+  #quest-form .choice { display: block; margin: 3px 0; }
+  #quest-form #qf-name { width: min(26em, 100%); }
+  #quest-form #qf-patch { width: 100%; box-sizing: border-box; font: 13px ui-monospace, monospace; }
+  #quest-form #qf-error { color: #e07a6a; margin: 8px 0; }
+  #quest-form .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  #quest-form #qf-cancel { background: transparent; color: var(--text); border: 1px solid var(--line); }
   #fps-counter { position: fixed; z-index: 1; padding: 2px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.6); color: #f2f2f2;
     font: 600 15px/1.4 ui-monospace, monospace; pointer-events: none; white-space: nowrap; }
 </style>
@@ -87,15 +106,75 @@
         right button goes back, the wheel scrolls and the hints at the bottom are buttons. Keys: arrow keys or
         <kbd>W</kbd> <kbd>S</kbd> move, <kbd>Enter</kbd> selects, <kbd>Space</kbd> goes back, left and right change a
         value, <kbd>Q</kbd> / <kbd>Shift</kbd> page through lists, <kbd>E</kbd> edits a custom quest (a gamepad: east
-        selects, south goes back, north or west edits).</p>
+        selects, south goes back, north or west edits). The custom quest creator opens as a form over the page:
+        <kbd>Tab</kbd> moves between its fields, <kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels.</p>
     </details>
     <button id="start" disabled>Start</button>
   </section>
   <div id="status"></div>
   <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+  <dialog id="quest-form" aria-labelledby="qf-title">
+    <form>
+      <h2 id="qf-title">Create custom quest</h2>
+      <div class="row">
+        <label>Name <input id="qf-name" maxlength="43" pattern="[ -~]*" title="Printable Latin characters"></label>
+        <label>Map <select id="qf-map"></select></label>
+      </div>
+      <div class="row">
+        <label>Rank <select id="qf-rank"><option value="0">Village</option><option value="1">Low rank</option><option value="2">High rank</option></select></label>
+        <label>Stars <input id="qf-stars" type="number" min="1" max="7" required></label>
+        <label>Time limit <input id="qf-minutes" type="number" min="1" max="50" required> minutes</label>
+        <span><label class="choice"><input id="qf-hunt" type="radio" name="goal" value="0" checked> Hunt</label>
+          <label class="choice"><input id="qf-capture" type="radio" name="goal" value="1"> Capture</label></span>
+        <span id="qf-capture-note" class="note"></span>
+      </div>
+      <fieldset>
+        <legend>Monsters</legend>
+        <table>
+          <tr><td>First</td><td><select id="qf-monster0" aria-label="First monster"></select></td>
+            <td><label>Size <input id="qf-size0" type="number" min="50" max="200" step="1" required> %</label></td></tr>
+          <tr><td>Second</td><td><select id="qf-monster1" aria-label="Second monster"></select></td>
+            <td><label>Size <input id="qf-size1" type="number" min="50" max="200" step="1" required> %</label></td></tr>
+          <tr><td>Third</td><td><select id="qf-monster2" aria-label="Third monster"></select></td>
+            <td><label>Size <input id="qf-size2" type="number" min="50" max="200" step="1" required> %</label></td></tr>
+        </table>
+        <p class="note">The strength and rewards come from the game's quests of this rank, nearest the stars. Sizes: the game's quests use about 90–120%.</p>
+      </fieldset>
+      <fieldset>
+        <legend>How they arrive</legend>
+        <label class="choice"><input type="radio" name="arrival" value="0" checked> All at the start</label>
+        <label class="choice"><input type="radio" name="arrival" value="1"> The second waits until 5 minutes in or until one falls (the same monster again)</label>
+        <label class="choice"><input type="radio" name="arrival" value="2"> The third comes 3 minutes in</label>
+        <label class="choice"><input type="radio" name="arrival" value="3"> One after another (no break or capture rewards)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Intruder</legend>
+        <div class="row">
+          <label>Monster group <select id="qf-intruder"></select></label>
+          <label>Chance <input id="qf-chance" type="number" min="1" max="100" required> %</label>
+          <label>Comes <select id="qf-when"><option value="1">after 3 minutes</option><option value="2">with one monster out</option><option value="3">with two monsters out</option></select></label>
+        </div>
+        <p class="note">Each map's groups, as its quests bring them; the map picks the monster. <span id="qf-intruder-note"></span></p>
+      </fieldset>
+      <details id="qf-patch-details">
+        <summary>Quest entry bytes (advanced)</summary>
+        <p class="note">Written last over the quest's entry: <code>OFFSET=HEX</code> pairs in hex, comma separated, as
+          <code>--quest-patch</code> (<code>310=80000000</code> sets the flag word). Entries the game cannot read can crash it.</p>
+        <input id="qf-patch" spellcheck="false" autocomplete="off" pattern="\s*([0-9A-Fa-f]{1,3}=([0-9A-Fa-f]{2})+\s*)?(,\s*[0-9A-Fa-f]{1,3}=([0-9A-Fa-f]{2})+\s*)*"
+          title="OFFSET=HEX pairs, comma separated" aria-label="Quest entry bytes">
+      </details>
+      <p id="qf-summary" class="note"></p>
+      <p id="qf-error" role="alert" hidden></p>
+      <div class="buttons">
+        <button id="qf-cancel" type="button">Cancel (Esc)</button>
+        <button id="qf-save" type="submit">Save quest (Enter)</button>
+      </div>
+    </form>
+  </dialog>
   <div id="log"></div>
 </main>
 <script src="MH3.js"></script>
+<script src="quest-form.js"></script>
 <script src="mh3-web.js"></script>
 </body>
 </html>
