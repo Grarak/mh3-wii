@@ -39,3 +39,11 @@ constexpr std::chrono::nanoseconds TicksToDuration(uint64_t ticks) noexcept {
 }
 
 } // namespace TimeBaseContract
+
+// Port checks (port_check.cpp, development builds): the guest time base now
+// (mftb: 60.75 MHz ticks since startup), and from PinTimeBase(start) on, the
+// game thread's reads give start, start + 1, ... (a tick a read), so the
+// original's pass and the port's read the same times; 0 returns it to the
+// real clock.
+uint64_t GuestTimeBase();
+void PinTimeBase(uint64_t start);

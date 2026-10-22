@@ -3,6 +3,7 @@
 // ppc_runtime.h re-exports the rest of the ISA package; the CR tier is pulled in
 // by abi_bridge.h for generated code, so this TU asks for it directly.
 #include "isa/ppc_isa_cr.h"
+#include "guest_threads.h"
 #include "guest_worker.h"
 #include "memory.h"
 #include "runtime_log.h"
@@ -10,6 +11,7 @@
 #include "runtime/native/adapters/model_catalog_bridge.h"
 
 #include <array>
+#include <atomic>
 #include <bitset>
 #include <chrono>
 #include <cmath>
@@ -98,9 +100,19 @@ void TransferLockedCache(uint32_t lower) {
     std::memcpy(load ? cache : memory, load ? memory : cache, size);
 }
 
+#ifdef MH3_DEVELOPMENT
+// PinTimeBase: the game thread's next time base value, 0 while not pinned.
+std::atomic<uint64_t> g_pinnedTimeBase{0};
+#endif
+
 // The guest time base: 60.75 MHz ticks (243 MHz bus / 4) since startup. The
 // game reads it often (OSGetTime reads mftbu, mftb and mftbu again).
 uint64_t GetTimeBase() {
+#ifdef MH3_DEVELOPMENT
+    if (g_pinnedTimeBase.load(std::memory_order_relaxed) != 0 && GuestThreads::OnGameThread())
+        return g_pinnedTimeBase.fetch_add(1, std::memory_order_relaxed);
+#endif
+
 #ifdef __vita__
     // Microseconds * 243 / 4, the value NanosecondsToTicks gives for the same
     // whole microseconds, without its 64-bit divisions (software on the A9)
@@ -169,6 +181,16 @@ inline void UpdateFpscrSummary(CpuContext* cpu) {
 }
 
 } // namespace
+
+#ifdef MH3_DEVELOPMENT
+uint64_t GuestTimeBase() {
+    return GetTimeBase();
+}
+
+void PinTimeBase(uint64_t start) {
+    g_pinnedTimeBase.store(start, std::memory_order_relaxed);
+}
+#endif
 
 extern "C" uint32_t PPC_UpdateCarryAdd(uint32_t lhs, uint32_t rhs, uint32_t carryIn) {
     const uint64_t sum = static_cast<uint64_t>(lhs) + static_cast<uint64_t>(rhs) + static_cast<uint64_t>(carryIn & 1u);

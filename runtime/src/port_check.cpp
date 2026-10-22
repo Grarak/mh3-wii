@@ -7,6 +7,7 @@
 #include "guest_call.h"
 #include "gx_host.h"
 #include "memory.h"
+#include "timebase_contract.h"
 
 #include <algorithm>
 #include <bit>
@@ -140,6 +141,12 @@ void RunChecked(CpuContext* ctx, const char* name, int returns, void (*original)
     // The GX FIFO bytes each writes are compared too; only the port's go on.
     std::vector<uint8_t> expectedGx, actualGx;
     CaptureGuestGx(&expectedGx);
+
+    // Both passes read the same time base (a port of code that reads the
+    // real-time clock, like the quest step's, would differ by the time a
+    // pass takes).
+    const uint64_t time = GuestTimeBase();
+    PinTimeBase(time);
     original(ctx);
     const CpuContext originalCtx = *ctx;
     expected.Save();
@@ -147,7 +154,9 @@ void RunChecked(CpuContext* ctx, const char* name, int returns, void (*original)
     GameStep::Restore(clock);
     *ctx = entry;
     CaptureGuestGx(&actualGx);
+    PinTimeBase(time);
     port(ctx);
+    PinTimeBase(0);
     CaptureGuestGx(nullptr);
 
     if (!actualGx.empty())
@@ -280,10 +289,14 @@ void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original
     static std::map<std::string, uint64_t> counts;
     static std::set<std::string> reported;
     const CpuContext entry = *ctx;
+    const uint64_t time = GuestTimeBase();
+    PinTimeBase(time);
     original(ctx);
     const uint64_t expected = returns == Returns::Gpr3 ? ctx->gpr[3] : ctx->fpr[1].raw;
     *ctx = entry;
+    PinTimeBase(time);
     port(ctx);
+    PinTimeBase(0);
     const uint64_t actual = returns == Returns::Gpr3 ? ctx->gpr[3] : ctx->fpr[1].raw;
     uint64_t& checks = counts[name];
     ++checks;
@@ -333,6 +346,8 @@ void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*origina
     }
 
     const CpuContext entry = *ctx;
+    const uint64_t time = GuestTimeBase();
+    PinTimeBase(time);
     original(ctx);
     const auto result = [&] { return returns == int(Returns::Gpr3) ? uint64_t(ctx->gpr[3]) : ctx->fpr[1].raw; };
     const uint64_t expectedResult = result();
@@ -345,7 +360,9 @@ void CheckOutputs(CpuContext* ctx, const char* name, int returns, void (*origina
     }
 
     *ctx = entry;
+    PinTimeBase(time);
     port(ctx);
+    PinTimeBase(0);
     uint64_t& checks = counts[name];
     ++checks;
     bool same = true;
