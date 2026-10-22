@@ -6,11 +6,21 @@
 #include "cheats.h"
 
 #include "abi_bridge.h"
+#include "port_check.h"
 #include "ppc_runtime.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+
+namespace QuestStepPorts {
+void ObjectiveDonePort(CpuContext* ctx);
+void QuestStepPort(CpuContext* ctx);
+} // namespace QuestStepPorts
+
+namespace QuestResultPorts {
+void ResultRecordsPort(CpuContext* ctx);
+} // namespace QuestResultPorts
 
 namespace {
 
@@ -77,11 +87,17 @@ REGISTER_NATIVE_FUNCTION_AS(0x80440864, MH3_CheatSaveFill, "CheatSaveFill");
 // back after it.
 extern "C" void func_803975D0(CpuContext* ctx);
 
+namespace {
+void ResultRecords(CpuContext* ctx) {
+    PortCheck::Call(ctx, "QuestResultRecords", PortCheck::Returns::Gpr3, func_803975D0, QuestResultPorts::ResultRecordsPort);
+}
+} // namespace
+
 extern "C" void MH3_CheatArenaRecords(CpuContext* ctx) {
     const uint32_t save = Cheats::UserData();
 
     if (!On(Id::NoArenaRecords) || save == 0) {
-        func_803975D0(ctx);
+        ResultRecords(ctx);
         return;
     }
 
@@ -94,7 +110,7 @@ extern "C" void MH3_CheatArenaRecords(CpuContext* ctx) {
     for (uint32_t i = 0; i < names.size(); ++i)
         names[i] = Memory::Read8(save + kArenaNames + i);
 
-    func_803975D0(ctx);
+    ResultRecords(ctx);
 
     for (uint32_t i = 0; i < kArenaRecords; ++i)
         Memory::Write32(save + kArenaTimes + 4 * i, times[i]);
@@ -163,7 +179,7 @@ extern "C" void MH3_CheatQuestStep(CpuContext* ctx) {
     if (fail && quest != 0)
         Memory::Write32(quest + kReward, 0);
 
-    func_803B0228(ctx);
+    PortCheck::Call(ctx, "QuestStep", func_803B0228, QuestStepPorts::QuestStepPort);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x803B0228, MH3_CheatQuestStep, "CheatQuestStep");
@@ -188,7 +204,7 @@ extern "C" void MH3_CheatObjectiveDone(CpuContext* ctx) {
         }
     }
 
-    func_803AA0C4(ctx);
+    PortCheck::Call(ctx, "QuestObjectiveDone", PortCheck::Returns::Gpr3, func_803AA0C4, QuestStepPorts::ObjectiveDonePort);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x803AA0C4, MH3_CheatObjectiveDone, "CheatObjectiveDone");
