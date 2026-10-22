@@ -49,6 +49,10 @@ inline bool Originals() {
 // and leaves the port's result in place.
 void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*));
 
+// Run that also compares the return register (r3, or f1).
+enum class Returns;
+void Run(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*));
+
 // For ports that write no guest memory but their callee stack frames: runs
 // the original and then the port from the same registers on every call and
 // compares the return register (r3 when gpr, f1 otherwise) bit for bit,
@@ -103,6 +107,14 @@ inline void Fuzz(CpuContext* ctx, char kind, uint32_t work) {
 inline void Call(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
     if (Enabled(name))
         Run(ctx, name, original, port);
+    else
+        port(ctx);
+}
+
+// Call for ports with a result: the check compares the return register too.
+inline void Call(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+    if (Enabled(name))
+        Run(ctx, name, returns, original, port);
     else
         port(ctx);
 }

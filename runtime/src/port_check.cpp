@@ -109,7 +109,9 @@ bool Close(uint32_t a, uint32_t b) {
 } // namespace
 #endif
 
-void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+namespace {
+// Run, and with `returns` (Returns, or -1 for none) the return register too.
+void RunChecked(CpuContext* ctx, const char* name, int returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
 #ifdef MH3_DEVELOPMENT
     static std::set<std::string> reported;
     static std::map<std::string, uint32_t> counts;
@@ -189,6 +191,17 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     if (ctx->gpr[1] != originalCtx.gpr[1] || ctx->gpr[2] != originalCtx.gpr[2] || ctx->gpr[13] != originalCtx.gpr[13])
         lines += "  stack/sda registers differ after return\n";
 
+    if (returns >= 0) {
+        const uint64_t want = returns == int(Returns::Gpr3) ? originalCtx.gpr[3] : originalCtx.fpr[1].raw;
+        const uint64_t got = returns == int(Returns::Gpr3) ? ctx->gpr[3] : ctx->fpr[1].raw;
+
+        if (want != got) {
+            char line[96];
+            std::snprintf(line, sizeof line, "  returns original %llx port %llx\n", static_cast<unsigned long long>(want), static_cast<unsigned long long>(got));
+            lines += line;
+        }
+    }
+
     if (expectedGx != actualGx) {
         size_t at = 0;
 
@@ -247,9 +260,19 @@ void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void 
     std::fflush(stdout);
 #else
     (void)name;
+    (void)returns;
     (void)original;
     port(ctx);
 #endif
+}
+} // namespace
+
+void Run(CpuContext* ctx, const char* name, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+    RunChecked(ctx, name, -1, original, port);
+}
+
+void Run(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
+    RunChecked(ctx, name, int(returns), original, port);
 }
 
 void RunPure(CpuContext* ctx, const char* name, Returns returns, void (*original)(CpuContext*), void (*port)(CpuContext*)) {
