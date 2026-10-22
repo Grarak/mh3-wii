@@ -84,6 +84,9 @@ Status ScratchQuestFile(const std::array<std::vector<uint8_t>, 3>& sets, const C
 // by `monster`, a monster list id (--quest-monster).
 Status ReplaceQuestMonster(QuestCatalog::Set set, uint16_t id, uint8_t monster);
 Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t monster);
+
+// Quest `id`'s entry bytes replaced: OFFSET=HEX[,OFFSET=HEX...] (--quest-patch).
+Status PatchQuest(QuestCatalog::Set set, uint16_t id, std::string_view patches);
 Status SaveCustomQuest(const std::filesystem::path& user, const CustomQuest& quest);
 
 // The valid custom quests of user, by name; invalid records are skipped.

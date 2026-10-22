@@ -149,6 +149,8 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 (any monster in the arena pit: --quest 9004 --spawn 0,300,0)\n"
                                "  --quest-small <name|id>        (with --quest) replace the quest's small monsters\n"
                                "                                 (a field area full: --quest 1028 --area 1)\n"
+                               "  --quest-patch <off>=<hex>[,...] (with --quest) replace bytes of the quest's entry\n"
+                               "                                 (hex offset into the entry, then the bytes)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --weapon <kind>[:<id>]         (with any of the above) the hunter wears that weapon: great-sword,\n"
                                "                                 sword, hammer, lance, long-sword, switch-axe (id 1 by default) or\n"
@@ -206,7 +208,7 @@ void StartQuestBoot(int argc, char** argv) {
     const std::string_view id = argv[2];
     int area = -1, number = -1;
     std::vector<int> exitNumbers;
-    std::string monster, small;
+    std::string monster, small, patch;
 
     for (int i = 3; i < argc; ++i) {
         const std::string_view option = argv[i];
@@ -221,6 +223,8 @@ void StartQuestBoot(int argc, char** argv) {
             monster = argv[++i];
         else if (option == "--quest-small" && i + 1 < argc)
             small = argv[++i];
+        else if (option == "--quest-patch" && i + 1 < argc)
+            patch = argv[++i];
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]) == "exit:tour")
             ++i, RequestQuestTour();
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
@@ -307,6 +311,11 @@ void StartQuestBoot(int argc, char** argv) {
 
         if (!small.empty())
             CheckStatus(VitaLauncher::ReplaceQuestSmallMonsters(set, uint16_t(quest), monsterId(small)));
+
+        // --quest-patch OFFSET=HEX,...: bytes of the quest's entry replaced
+        // (development: flags, monster slots, objectives).
+        if (!patch.empty())
+            CheckStatus(VitaLauncher::PatchQuest(set, uint16_t(quest), patch));
     }
 
     const auto index = [&](int shown) {

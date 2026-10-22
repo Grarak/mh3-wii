@@ -803,6 +803,47 @@ Status ReplaceQuestSmallMonsters(QuestCatalog::Set set, uint16_t id, uint8_t mon
     return {};
 }
 
+// Development (--quest-patch): bytes of quest `id`'s entry replaced. `patches`
+// is OFFSET=HEX[,OFFSET=HEX...]: an offset into the entry and the bytes from
+// there, both in hex ("310=80000000" sets the flag word).
+Status PatchQuest(QuestCatalog::Set set, uint16_t id, std::string_view patches) {
+    auto& disc = GameDiscImage();
+    std::vector<uint8_t> edited = disc.ReadFile(QuestPath(set));
+    size_t at = 0;
+    MH3_RETURN_IF_ERROR(Entry(edited, id, at));
+    std::vector<size_t> entries;
+    MH3_RETURN_IF_ERROR(Entries(edited, entries));
+    size_t end = edited.size();
+
+    for (size_t other : entries)
+        if (other > at)
+            end = std::min(end, other);
+
+    while (!patches.empty()) {
+        const size_t comma = std::min(patches.find(','), patches.size());
+        const std::string_view patch = patches.substr(0, comma);
+        patches.remove_prefix(std::min(comma + 1, patches.size()));
+        const size_t equals = patch.find('=');
+        const std::string_view bytes = equals == std::string_view::npos ? std::string_view() : patch.substr(equals + 1);
+
+        if (equals == std::string_view::npos || bytes.empty() || bytes.size() % 2 != 0)
+            return Status::Error("--quest-patch takes OFFSET=HEX[,OFFSET=HEX...]");
+
+        const size_t offset = std::stoul(std::string(patch.substr(0, equals)), nullptr, 16);
+
+        if (at + offset + bytes.size() / 2 > end)
+            return Status::Error("--quest-patch: offset past the quest's entry");
+
+        for (size_t i = 0; i < bytes.size(); i += 2)
+            edited[at + offset + i / 2] = uint8_t(std::stoul(std::string(bytes.substr(i, 2)), nullptr, 16));
+
+        std::fprintf(stderr, "MH3 quest %u: +0x%zX = %.*s\n", unsigned(id), offset, int(bytes.size()), bytes.data());
+    }
+
+    disc.SetFileOverride(QuestPath(set), std::move(edited));
+    return {};
+}
+
 Status ActivateCustomQuest(const CustomQuest& q) {
     MH3_RETURN_IF_ERROR(CheckCapture(q));
     std::vector<uint8_t> edited;
