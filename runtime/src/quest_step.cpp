@@ -14,8 +14,10 @@
 //   0x803B0E28 QuestTimedSpawn(): with the timed flag, frames counted at
 //              +0x697C; when they reach 5 minutes (5.0 * 60 * fps) or a quest
 //              monster falls (+0x6977 0), the second slot's monster, if held
-//              (mode 3), is summoned (SummonRelease); online the leader
-//              summons and tells the others (0x80339AAC)
+//              (mode 3), is summoned (SummonRelease); online every console
+//              does so itself (state 0 goes straight to 2: the leader's
+//              branch of state 1, which tells the others through 0x80339AAC,
+//              is only reached offline, where it moves on to 2)
 //   0x803B0FFC QuestExtraSpawn(): the extra monster (+0x6975): with flag 0x100
 //              3 minutes in the third slot's (+0x6760, copied to the slot
 //              copy +0x331); an intruder of kind 1/2/3 (+0x32E) after 3

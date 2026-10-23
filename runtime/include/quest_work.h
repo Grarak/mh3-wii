@@ -57,6 +57,12 @@ inline uint32_t MoveWork(uint32_t kind) {
     return table && (kind & 0xFF) <= 6 ? Memory::Read32(table + (kind & 0xFF) * 4 + 0x10) : 0;
 }
 
+// 0x800CFB34 get_move_work_max(kind), inlined by the translator: 0 past 6.
+inline uint32_t MoveWorkCount(uint32_t kind) {
+    const uint32_t table = Memory::Read32(kMoveWorks);
+    return table && (kind & 0xFF) <= 6 ? Memory::Read16(table + (kind & 0xFF) * 2) : 0;
+}
+
 // 0x803B33F8 (inlined): the running quest's entry.
 inline uint32_t Entry() {
     return Memory::Read32(kWork + kEntry);

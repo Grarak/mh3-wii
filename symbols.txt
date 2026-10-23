@@ -3287,3 +3287,9 @@
 803b23b8 QuestResultSetup
 8036c9ec OnlineQuestKind
 8036cedc OnlineGoalMet
+# Summons outside the quest's machines and the down notice (summon_calls.cpp).
+801450e4 SummonRulesTick
+80145b28 SummonRules
+80155160 QurupecoEvent
+8015d734 QurupecoCalls
+803a9238 MonsterDownNotice
