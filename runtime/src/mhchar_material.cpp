@@ -5,9 +5,15 @@
 //   0x800E2FA4 (ch, material, compare0, ref0, operation, compare1, ref1):
 //              the alpha test, in the model's copy of the material (MHchar
 //              +0x118 the ScnMdl, nothing without one)
+//   0x800E2948 (ch): the model's material count
 //   0x800E2A0C (ch, channel, GXColor* colour, dirty): every material's colour
 //   0x800E2A84 (ch, channel, u8 alpha, dirty): every material's alpha, its
 //              pixel state the resource's at 255, else blended
+//   0x800767C8 ResMatPix of a ResMat, 0x800767F8 its constructor (dropping
+//              the alignment assert)
+//   0x8007BE10 CopiedMatAccess::GetResMatPix(access, dirty): the pixel copy,
+//              null without one; dirty marks it (0x8007BBF8, bit 0x80)
+//   0x8007E4EC the pixel copy's flush (0x80094180)
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -106,3 +112,58 @@ extern "C" void MH3_CharSetAlphas(CpuContext* ctx) {
     PortCheck::Call(ctx, "CharSetAlphas", func_800E2A84, SetAlphas);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E2A84, MH3_CharSetAlphas, "CharSetAlphas");
+
+extern "C" void MH3_CharMaterialCount(CpuContext* ctx) {
+    uint32_t count;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        count = game.Call<0x800988CC>({frame.Arg(3) + 0x114});
+    }
+
+    ctx->gpr[3] = count;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800E2948, MH3_CharMaterialCount, "CharMaterialCount");
+
+extern "C" void MH3_ResMatPixel(CpuContext* ctx) {
+    uint32_t pixel;
+    {
+        GuestFrame frame(ctx, 0x20);
+        GuestCall game{ctx};
+        pixel = game.Call<0x8006F228>({frame.Arg(3)});
+    }
+
+    ctx->gpr[3] = pixel;
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800767C8, MH3_ResMatPixel, "ResMatPixel");
+
+extern "C" void MH3_ResMatPixelMake(CpuContext* ctx) {
+    W32(ctx->gpr[3], ctx->gpr[4]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800767F8, MH3_ResMatPixelMake, "ResMatPixelMake");
+
+extern "C" void func_8007BE10(CpuContext* ctx);
+extern "C" void MH3_CopiedMatPixel(CpuContext* ctx) {
+    PortCheck::Call(ctx, "CopiedMatPixel", func_8007BE10, [](CpuContext* c) {
+        uint32_t pixel;
+        {
+            GuestFrame frame(c, 0x20);
+            GuestCall game{c};
+            const uint32_t access = frame.Arg(3), mdl = R32(access);
+            pixel = mdl ? R32(access + 0x20) : 0;
+
+            if (pixel && frame.Arg(4))
+                game.Call<0x8007BBF8>({mdl, R32(access + 4), 0x80});
+        }
+
+        c->gpr[3] = pixel;
+    });
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8007BE10, MH3_CopiedMatPixel, "CopiedMatPixel");
+
+extern "C" void MH3_CopiedMatFlush(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    game.Call<0x80094180>({frame.Arg(3), 0});
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8007E4EC, MH3_CopiedMatFlush, "CopiedMatFlush");

@@ -11,6 +11,7 @@
 //   0x80126098 EnemyData(em): the species' data, EnemyActionTable of its kind
 //              (+3) and variant (+0xA)
 //   0x8012D090 EnemyDying(em): 1 in mode 11, or mode 12 by 0x8012D270
+//   0x8012D204 EnemyFlag1F5(em): u8 +0x1F5
 //   0x8012D0D8 EnemyInArea(em): 1 in the hunter's area (+0x1E1)
 //   0x80140C64 EnemyActionTable(u8 group, u8 variant): the action table
 //              word of the group (the table at *(0x8065B2F8)); group 0x20
@@ -162,6 +163,11 @@ extern "C" void MH3_EnemyData(CpuContext* ctx) {
     ctx->gpr[3] = ActionTable(MemoryInline::FlatRead8(em + 3), MemoryInline::FlatRead8(em + 0xA));
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80126098, MH3_EnemyData, "EnemyData");
+
+extern "C" void MH3_EnemyFlag1F5(CpuContext* ctx) {
+    ctx->gpr[3] = MemoryInline::FlatRead8(ctx->gpr[3] + 0x1F5);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012D204, MH3_EnemyFlag1F5, "EnemyFlag1F5");
 
 extern "C" void func_8012D090(CpuContext* ctx);
 extern "C" void MH3_EnemyDying(CpuContext* ctx) {

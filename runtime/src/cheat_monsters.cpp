@@ -290,6 +290,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x8013369C, MH3_MonsterOnMap, "MonsterOnMap");
 // monsters in play inactive: their state reads 0xFF meanwhile. The monster
 // control's `freeze` holds one monster the same way (monster_control.cpp).
 extern "C" void func_80137980(CpuContext* ctx);
+void MH3_MonsterStepPort(CpuContext* ctx);
 
 extern "C" void MH3_CheatMonsterStep(CpuContext* ctx) {
     const uint32_t monster = ctx->gpr[3];
@@ -298,7 +299,7 @@ extern "C" void MH3_CheatMonsterStep(CpuContext* ctx) {
     if (freeze)
         Memory::Write8(monster + kSpawn, 0xFF);
 
-    func_80137980(ctx);
+    PortCheck::Call(ctx, "MonsterStep", func_80137980, MH3_MonsterStepPort);
 
     if (freeze && Memory::Read8(monster + kSpawn) == 0xFF)
         Memory::Write8(monster + kSpawn, 0);
@@ -307,16 +308,10 @@ extern "C" void MH3_CheatMonsterStep(CpuContext* ctx) {
 REGISTER_NATIVE_FUNCTION_AS(0x80137980, MH3_CheatMonsterStep, "CheatMonsterStep");
 
 // 0x803C4878: 1 while an event scene (state 4, the byte 0x806D4FA0) plays.
-// 0x801382A0 skips the monster's sight, awareness and target updates then
-// (its call returns to 0x80138720); Monster can't see you (US 0x801386BC, EU
-// 0x80138720: the branch taken) always skips them. A precise native
+// Monster can't see you is in the port of its caller 0x801382A0
+// (enemy_step.cpp). A precise native
 // (docs/optimizations/cpu/native-function-ports.md): translated callers call it directly.
 extern "C" void MH3_CheatEventDemoState4(CpuContext* ctx) {
-    if (On(Id::MonsterCantSeeYou) && ctx->lr == 0x80138720) {
-        ctx->gpr[3] = 1;
-        return;
-    }
-
     ctx->gpr[3] = MemoryInline::FlatRead8(0x806D4FA0) == 4 ? 1 : 0;
 }
 
