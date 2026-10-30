@@ -41,16 +41,15 @@ constexpr const char* ModelFormat = "mh3-model-packs 2\n";
 constexpr const char* TextureFormat = "mh3-texture-packs 4\n";
 constexpr uint32_t RecordMagic = 0x5243334d; // "M3CR"
 constexpr unsigned Workers = 3;
-#ifdef __vita__
-// A model workspace is ~30 MiB of the 112 MiB newlib heap: one at a time.
+
+// A model workspace is ~30 MiB of the Vita's 112 MiB newlib heap: one at a
+// time. The Vita's limits hold everywhere, so that the Linux builds show what
+// it will do.
 constexpr unsigned ModelWorkers = 1;
 
 // The game thread waits once this much indexed file data awaits conversion.
 constexpr size_t MaxPendingBytes = 16u << 20;
-#else
-constexpr unsigned ModelWorkers = Workers;
-constexpr size_t MaxPendingBytes = 48u << 20;
-#endif
+
 // Extracted stream files (cache/files): the disc's audio streams, copied out
 // as plain files at their first read so that later reads skip the image's
 // decompression and decryption. Least recently used files go beyond
