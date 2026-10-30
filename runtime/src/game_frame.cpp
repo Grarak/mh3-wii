@@ -12,6 +12,7 @@
 // The phase byte (0x8065AA83) records how far the frame got (1 started,
 // 2 logic, 3 draw, 4 done).
 #include "abi_bridge.h"
+#include "runtime/native/adapters/model_catalog_bridge.h"
 #include "cheats.h"
 #include "monster_control.h"
 #include "fatal.h"
@@ -456,6 +457,7 @@ void LaunchScenePrepare(CpuContext* cpu) {
 #ifdef MH3_DEVELOPMENT
     prepareTiming.launched = MH3SplitClock::now();
 #endif
+    NoteNativeDrawHandoff();
     DrawThread::Thread().Submit(*cpu, RunPrepareJob, nullptr);
 #ifdef MH3_DEVELOPMENT
     prepareTiming.woke = DrawThread::Thread().LastSubmitWoke();
@@ -756,6 +758,7 @@ extern "C" void MH3_GameFrame(CpuContext* ctx) {
         // the draw. So it does under port checks (see the walk above).
         const bool serial = render && FrameDraw::DeferredSceneWalksGraph();
         NativeFrameSubmittedToDraw();
+        NoteNativeDrawHandoff();
         DrawThread::Thread().Submit(*ctx, RunDrawJob, &overlapRender);
 
         if (serial || PortCheck::Set())

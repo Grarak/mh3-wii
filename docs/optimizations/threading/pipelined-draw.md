@@ -67,11 +67,21 @@ What the logic may still do beside the draw, and how it waits:
   address 0. Every g3d destructor that reaches `G3dObj::~G3dObj` is a native
   port (`runtime/src/g3d_destroy.cpp`), and a destroy waits at its start
   while the draw holds the object or the model an animation is bound to.
-- **Material animation** (`CalcMat`) writes a model's texture SRT, colours
-  and texture patterns in place; 1.6% of those writes at the beach happen
-  while a draw is in flight, and a draw that captures such a material
-  afterwards uses the next step's value (a sea scroll differing by 0.002 in
-  30 of 450,000 checked draws). This is accepted.
+- **Material animation** (`CalcMat`) writes a model's texture SRT and
+  texture patterns in place; 1.6% of those writes at the beach happen while
+  a draw is in flight, and a draw that captures such a material afterwards
+  uses the next step's value (a sea scroll differing by 0.002 in 30 of
+  450,000 checked draws). This is accepted.
+- **Pixel and colour groups** keep their handoff's values: a step's first
+  write of such a block beside a draw holds a version of its fields, and
+  that draw reads the held one (`HoldForDraw`,
+  `runtime/src/model_catalog.cpp`). A step passes through values no draw
+  should see: `MonsterColours` puts a monster's materials back to the
+  resource's, and the species' handler 8, a good part of the step later,
+  raises a broken part's alpha test again. A draw reading the live fields
+  between them showed Great Jaggi's broken frill whole: 17 flickers in 20 s
+  at 96 logical fps on the Pi 5, none with the hold. A fixed 30 Hz step hid
+  it, the draw being done before the next step began.
 - **Material group re-copies**: `CalcMat` also restores the groups an
   animation wrote from the resource every frame (`CopiedMatRefresh`). The
   first copy records the disc source's provenance on the instance's group,
@@ -108,7 +118,7 @@ Spinning instead of parking moved the walk's start from 0.67 to 0.54 ms
 after its launch and the join's wait from 1.32 to 1.24 ms per frame. The Pi 5
 ran the village, Moga (1060), the sandship (14002), The Decisive Battle
 (2006) and Alatreon for 120 s each with the walk on the draw thread without
-a failure of the recording checks. Conflicts that remain (materials and
+a failure of the recording checks. Conflicts that remain (texture SRT and
 animation results read a step late, effect data the logic changes beside
 the effect draw) showed no visible effect so far.
 

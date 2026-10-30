@@ -1439,6 +1439,57 @@ NativeLiveMaterialBlock ReadNativeLiveMaterialBlock(uint32_t address, mh3_model_
 }
 
 namespace {
+// Word compare (memcmp is a byte loop on the Vita).
+bool SameWords(const void* a, const void* b, size_t bytes) {
+    const auto* x = static_cast<const uint32_t*>(a);
+    const auto* y = static_cast<const uint32_t*>(b);
+
+    for (size_t i = 0; i < bytes / 4; i++)
+        if (x[i] != y[i])
+            return false;
+    return true;
+}
+
+static_assert(sizeof(mh3_pack_pixel_inputs) % 4 == 0 && sizeof(mh3_pack_tev_color[4]) % 4 == 0);
+
+bool SameVersion(const NativeMaterialGroupVersion& version, const mh3_native_material_state& fields, bool pixel) {
+    return pixel ? SameWords(&version.pixel, &fields.pixel, sizeof fields.pixel)
+                 : SameWords(version.color, fields.color, sizeof fields.color) && SameWords(version.konst, fields.konst, sizeof fields.konst);
+}
+
+const NativeMaterialGroupVersion* NewVersion(const mh3_native_material_state& fields, bool pixel) {
+    auto* version = new NativeMaterialGroupVersion;
+
+    if (pixel)
+        std::memcpy(&version->pixel, &fields.pixel, sizeof fields.pixel);
+    else {
+        std::memcpy(version->color, fields.color, sizeof fields.color);
+        std::memcpy(version->konst, fields.konst, sizeof fields.konst);
+    }
+
+    return version;
+}
+
+// The handoffs to the draw thread (NoteNativeDrawHandoff).
+uint64_t drawHandoffs = 1;
+
+// Before a write of a pixel or colour block beside a draw. A step passes
+// through values no draw should see: 0x80137434 puts a monster's materials
+// back to the resource's and the species' handler 8 (0x80175E0C), a good part
+// of the step later, raises a broken part's alpha threshold again, so a draw
+// reading the live fields between them showed Great Jaggi's frill whole.
+void HoldForDraw(NativeLiveMaterialBlock& block) {
+    const bool pixel = block.kind == MH3_MODEL_MATERIAL_PIXEL;
+
+    if ((!pixel && block.kind != MH3_MODEL_MATERIAL_COLORS) || block.held_draw == drawHandoffs || PpcThread::CurrentThread() == PpcThread::Draw || !DrawThread::Thread().Pending())
+        return;
+
+    if (const auto* held = block.held.get(); !held || !SameVersion(*held, block.fields, pixel))
+        block.held.Reset(NewVersion(block.fields, pixel));
+
+    block.held_draw = drawHandoffs;
+}
+
 NativeLiveMaterialBlock* WritableLiveBlock(uint32_t address, mh3_model_material_block kind) {
     auto& c = Initialize();
     const auto found = c.live_index.find(LiveKey(Canonical(address, 1), kind));
@@ -1453,6 +1504,7 @@ NativeLiveMaterialBlock* WritableLiveBlock(uint32_t address, mh3_model_material_
     if (!block->writable || mh3_source_intersects(&c.tracker, block->address, block->bytes))
         return nullptr;
 
+    HoldForDraw(*block);
     return block;
 }
 
@@ -1479,9 +1531,15 @@ NativeLiveMaterialBlock* InPlaceCopyBlock(uint32_t destination, uint32_t source,
     if (mh3_source_intersects(&c.tracker, destination, bytes))
         Checked(mh3_source_retire(&c.tracker, destination, bytes));
 
+    HoldForDraw(*block);
     return block;
 }
 } // namespace
+
+void NoteNativeDrawHandoff() {
+    std::lock_guard guard(catalogLock);
+    ++drawHandoffs;
+}
 
 NativeLiveMaterialBlock* WritableNativeLiveMaterialBlock(uint32_t address, mh3_model_material_block kind) {
     std::lock_guard guard(catalogLock);
@@ -1595,22 +1653,14 @@ bool SameGroup(const mh3_native_material_state& a, const mh3_native_material_sta
     }
 }
 
-// Word compare (memcmp is a byte loop on the Vita).
-bool SameWords(const void* a, const void* b, size_t bytes) {
-    const auto* x = static_cast<const uint32_t*>(a);
-    const auto* y = static_cast<const uint32_t*>(b);
-
-    for (size_t i = 0; i < bytes / 4; i++)
-        if (x[i] != y[i])
-            return false;
-    return true;
-}
-
-static_assert(sizeof(mh3_pack_pixel_inputs) % 4 == 0 && sizeof(mh3_pack_tev_color[4]) % 4 == 0);
 } // namespace
 
 const NativeMaterialGroupVersion* VersionNativeLiveMaterialGroup(const NativeLiveMaterialBlock& block) {
     std::lock_guard guard(catalogLock);
+
+    if (block.held_draw == drawHandoffs && block.held.get() && PpcThread::CurrentThread() == PpcThread::Draw)
+        return block.held.get();
+
     auto& copy = block.group;
     const auto& fields = block.fields;
     const auto* current = copy.get();
@@ -1620,21 +1670,12 @@ const NativeMaterialGroupVersion* VersionNativeLiveMaterialGroup(const NativeLiv
     // Setters stamp a new generation even when they store the same values.
     const bool pixel = block.kind == MH3_MODEL_MATERIAL_PIXEL;
 
-    if (current && (pixel ? SameWords(&current->pixel, &fields.pixel, sizeof fields.pixel)
-                          : SameWords(current->color, fields.color, sizeof fields.color) && SameWords(current->konst, fields.konst, sizeof fields.konst))) {
+    if (current && SameVersion(*current, fields, pixel)) {
         copy.generation = fields.generation;
         return current;
     }
 
-    auto* version = new NativeMaterialGroupVersion;
-
-    if (pixel)
-        std::memcpy(&version->pixel, &fields.pixel, sizeof fields.pixel);
-    else {
-        std::memcpy(version->color, fields.color, sizeof fields.color);
-        std::memcpy(version->konst, fields.konst, sizeof fields.konst);
-    }
-
+    const auto* version = NewVersion(fields, pixel);
     copy.Reset(version);
     copy.generation = fields.generation;
     return version;

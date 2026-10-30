@@ -171,6 +171,11 @@ struct NativeLiveMaterialBlock {
     // Pixel and colour blocks: the group version draws reference.
     mutable NativeGroupCopy group;
 
+    // And the one the draw in flight keeps once the logic step beside it
+    // writes the block: the fields of that draw's handoff (held_draw).
+    mutable NativeGroupCopy held;
+    uint64_t held_draw = 0;
+
     // Typed writes may update this node in place (any publication, and a new
     // block or owner over its bytes, clears it).
     bool writable = false;
@@ -197,6 +202,10 @@ void MarkNativeLiveMaterialBlockWritable(uint32_t address, mh3_model_material_bl
  * before any producer publication, source write/retirement or guest callback.
  * Mutable setters must use ReadNativeLiveMaterialBlock's private snapshot. */
 const NativeLiveMaterialBlock& ReadNativeLiveMaterialBlockView(uint32_t address, mh3_model_material_block kind);
+/* Game thread, before a job goes to the draw thread: what the logic writes
+ * from here on is not for that job's draw, which keeps these pixel and colour
+ * fields (VersionNativeLiveMaterialGroup). */
+void NoteNativeDrawHandoff();
 /* Mapping belongs to a certified pipeline source extent. Mutable/copy blocks
  * keep the admitted origin; unknown writes retire them. No live command read. */
 void ReadNativeModelCoordinateMap(uint32_t pipeline, uint8_t mapping[8], uint8_t* known);
