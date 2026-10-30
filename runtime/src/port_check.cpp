@@ -21,6 +21,11 @@
 #include <string>
 #include <vector>
 
+#ifdef MH3_DEVELOPMENT
+std::vector<uint8_t> MH3MotionWindowsSave();
+void MH3MotionWindowsRestore(const std::vector<uint8_t>& bytes);
+#endif
+
 namespace PortCheck {
 
 #ifdef MH3_DEVELOPMENT
@@ -67,18 +72,20 @@ bool OriginalsSlow() {
 namespace {
 
 struct Snapshot {
-    std::vector<uint8_t> bytes;
+    std::vector<uint8_t> bytes, windows;
     static uint8_t* Mem1() { return Memory::GetPointer(Memory::kMem1CachedBase, Memory::kMem1Size); }
     static uint8_t* Mem2() { return Memory::GetPointer(Memory::kMem2CachedBase, Memory::kMem2Size); }
     void Save() {
         bytes.resize(Memory::kMem1Size + Memory::kMem2Size);
         std::memcpy(bytes.data(), Mem1(), Memory::kMem1Size);
         std::memcpy(bytes.data() + Memory::kMem1Size, Mem2(), Memory::kMem2Size);
+        windows = MH3MotionWindowsSave();
     }
 
     void Restore() const {
         std::memcpy(Mem1(), bytes.data(), Memory::kMem1Size);
         std::memcpy(Mem2(), bytes.data() + Memory::kMem1Size, Memory::kMem2Size);
+        MH3MotionWindowsRestore(windows);
     }
 
     static uint32_t Address(size_t offset) { return offset < Memory::kMem1Size ? Memory::kMem1CachedBase + uint32_t(offset) : Memory::kMem2CachedBase + uint32_t(offset - Memory::kMem1Size); }

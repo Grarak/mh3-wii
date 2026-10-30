@@ -23,6 +23,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <vector>
 #include <cmath>
 #include <unordered_map>
 #ifdef MH3_DEVELOPMENT
@@ -665,3 +667,18 @@ extern "C" void MH3_MHcharMotionEnding(CpuContext* ctx) {
     PortCheck::Call(ctx, "MHcharMotionEnding", func_800E21FC, MHcharMotionEndingPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x800E21FC, MH3_MHcharMotionEnding, "MHcharMotionEnding");
+
+#ifdef MH3_DEVELOPMENT
+// MH3_PORT_CHECK: the frame windows are host state beside the guest RAM it
+// restores. Kept, the original's run used up a mode-0 event the port's then
+// missed.
+std::vector<uint8_t> MH3MotionWindowsSave() {
+    std::vector<uint8_t> bytes(sizeof aheadWindows);
+    std::memcpy(bytes.data(), aheadWindows.data(), bytes.size());
+    return bytes;
+}
+
+void MH3MotionWindowsRestore(const std::vector<uint8_t>& bytes) {
+    std::memcpy(aheadWindows.data(), bytes.data(), bytes.size());
+}
+#endif
