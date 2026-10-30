@@ -6,6 +6,7 @@
 
 #include "abi_bridge.h"
 #include "monster_control.h"
+#include "port_check.h"
 #include "guest_call.h"
 #include "ppc_runtime.h"
 
@@ -258,15 +259,17 @@ extern "C" void MH3_MonsterCountdown81A(CpuContext* ctx) {
 
 REGISTER_NATIVE_FUNCTION_AS(0x80131EF0, MH3_MonsterCountdown81A, "MonsterCountdown81A");
 
-// 0x80137434 (monster): sets the model's material colours, scaled by +0x1D4.
-// Ghost world (C2 at US 0x80137478, EU 0x801374DC) makes it 0.125.
+// 0x80137434 (monster): sets the model's material colours, scaled by +0x1D4
+// (enemy_step.cpp). Ghost world (C2 at US 0x80137478, EU 0x801374DC) makes it
+// 0.125.
 extern "C" void func_80137434(CpuContext* ctx);
+void MH3_MonsterColoursPort(CpuContext* ctx);
 
 extern "C" void MH3_CheatMonsterColour(CpuContext* ctx) {
     if (On(Id::GhostWorld))
         Memory::WriteFloat32(ctx->gpr[3] + kAlpha, 0.125f);
 
-    func_80137434(ctx);
+    PortCheck::Call(ctx, "MonsterColours", func_80137434, MH3_MonsterColoursPort);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x80137434, MH3_CheatMonsterColour, "CheatMonsterColour");

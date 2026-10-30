@@ -3293,3 +3293,25 @@
 80155160 QurupecoEvent
 8015d734 QurupecoCalls
 803a9238 MonsterDownNotice
+
+# Monster parts (enemy_parts.cpp).
+8011f6b8 EnemyDamageResolve
+8011eaf4 EnemyPartStage
+8011ea68 EnemyPartBreak
+8011e858 EnemyPartResetHits
+8011e918 EnemyPartResetStagger
+8011e9c4 EnemyPartsReset
+80126914 EnemyStaggerRecord
+801266f4 EnemyStaggerKind
+8011e83c EnemyPartLevelAdd
+8011e8fc EnemyPartStaggerAdd
+8011ea40 EnemyPartLevel
+8011ea54 EnemyPartStagger
+8011e6a4 EnemyHasReactions
+8011e7c4 EnemySetHealth
+8012e924 EnemyBrokenStageTwo
+80175e0c Em012PartAlpha
+801541e8 EmPartAlpha
+801763d8 Em014PartStage
+80143c78 MonstersMove
+80143ddc MonstersActive

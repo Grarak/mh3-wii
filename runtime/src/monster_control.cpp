@@ -16,7 +16,12 @@
 //   every TICKS MODE SUB  start it every TICKS ticks of game time (30 a
 //                         second); `every off` stops
 //   ai off|on             the AI picks no action (it waits between commands)
-//   freeze on|off         hold the monster's step (it stands still)
+//   freeze on|off         hold the monster's step (it stands still; its
+//                         per-step handlers stop too, so a broken part's
+//                         alpha test falls back: use `ai off` to look at one)
+//   break PART [N]        raise part PART's level N times (1) as hits running
+//                         out its counter do: stages, breaks, effects
+//                         (enemy_parts.cpp)
 //   face DEGREES          set its yaw
 //   goto X Y Z            place it
 //   hunter save|back      remember the local hunter's place, put it back
@@ -70,6 +75,9 @@ enum : uint32_t {
     EnemyData = 0x80126098,   // get_enemy_data (work)
     SetPosition = 0x801460BC, // (work; f1-f3)
     SetAngles = 0x80146170,   // (work; f1-f3 degrees)
+    PartLevelAdd = 0x8011E83C, // (work, part, n)
+    PartResetHits = 0x8011E858, // (work, part)
+    PartStage = 0x8011EAF4,   // (work, part)
     HunterAction = 0x80275B28, // FieldNextAction (plw, u8 kind, u16 action, u16 flags)
 };
 
@@ -212,7 +220,18 @@ void Run(GuestCall& game, Control& c, const std::string& line) {
         c.ai = arg != "off";
     else if (word == "freeze" && in >> arg)
         c.frozen = arg == "on" && need() ? work : 0;
-    else if (word == "face" && in >> x) {
+    else if (word == "break" && in >> a) {
+        const unsigned count = in >> b ? b : 1;
+
+        for (unsigned i = 0; i < count && need(); ++i) {
+            game.Call<PartLevelAdd>({work, a, 1});
+            game.Call<PartResetHits>({work, a});
+            game.Call<PartStage>({work, a, 0});
+        }
+
+        if (work)
+            std::fprintf(stderr, "MH3 monster control: part %u level %u, broken bits %02x\n", a, Memory::Read8(work + 0x838 + a * 6), Memory::Read8(work + 0x14));
+    } else if (word == "face" && in >> x) {
         if (need())
             game.Call<SetAngles>({work}, {0.0, double(x), 0.0});
     } else if (word == "goto" && in >> x >> y >> z) {
