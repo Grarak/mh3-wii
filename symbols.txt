@@ -3315,3 +3315,14 @@
 801763d8 Em014PartStage
 80143c78 MonstersMove
 80143ddc MonstersActive
+80126098 EnemyData
+8012d090 EnemyDying
+8012d0d8 EnemyInArea
+8017638c Em012Handler11
+803a92a4 QuestPartBroken
+80170664 Em012Reset
+80170868 Em012Step
+80176304 Em012Heal
+800e2fa4 CharAlphaTest
+800e2a0c CharSetColours
+800e2a84 CharSetAlphas

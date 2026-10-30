@@ -54,14 +54,24 @@
 //   0x801763D8 Em014PartStage(em, part): handler 0x14 of kinds 12 and 14: at
 //              kind 14's first head level, 0x803B9C04(em, position, 100)
 //   0x8012E924 (em): 2 when u8 +0x14 is 2, else 0
+//   0x8017638C (em, r4): handler 0x11: 1 when r4 is 1 and part 1's level is even
+//   0x803A92A4 (kind, id, bit): the quest's count of a break, kept with the
+//              quest work (+0x6803 + kind * 8 + bit), and 0x803B633C told
+//   0x80170664 (em): handler 0: the stagger timer (s16 +0x328) and +0x32A clear
+//   0x80170868 (em): handler 2: the timer counts down, and a monster whose
+//              icon's area went (0x80343948 +8 is -1) loses its slot +0x46C
+//   0x80176304 (em): handler 0xD: the timer clear; 0x8012ED54 on, health back
+//              through EnemyEveryNScaled, 5% of the maximum
 // MonsterColours (0x80137434) sets every material back to the resource's
 // earlier in the step, so the live fields hold the unbroken test between the
 // two: a draw must not read them there (HoldForDraw, model_catalog.cpp).
 #include "abi_bridge.h"
+#include "game_step.h"
 #include "guest_call.h"
 #include "memory.h"
 #include "port_check.h"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace {
@@ -81,6 +91,7 @@ enum : uint32_t {
     kLevel = 0x7C8,        // u8: the monster's
     kPartDamage = 0x7CA,   // s16[8]: the step's
     kKindDamage = 0x7DA,   // s16[2][8]
+    kTimer = 0x328,        // s16: the Jaggi family's
     kAt800 = 0x800,        // u8
     kAt801 = 0x801,        // u8
     kReactBits = 0x80E,    // u16
@@ -677,6 +688,63 @@ void EmPartAlpha(CpuContext* ctx) {
     AlphaTest(game, em, 2, broken ? 120 : 70, broken ? 220 : 255);
 }
 
+uint32_t Handler11(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    return (frame.Arg(4) & 0xFF) == 1 && !(R8(PartAt(frame.Arg(3), 1)) & 1);
+}
+
+void QuestPartBroken(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t kind = frame.Arg(3) & 0xFF, bit = frame.Arg(5) & 0xFF;
+
+    if (game.Call<0x800CF2E4>() == 1)
+        return;
+
+    const uint32_t quest = game.Call<0x803A880C>();
+
+    if (!quest || bit >= 8)
+        return;
+
+    const uint32_t count = bit + quest + kind * 8 + 0x6803;
+    W8(count, R8(count) + 1);
+    game.Call<0x803B633C>({kind, bit});
+}
+
+void JaggiStep(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t em = frame.Arg(3);
+
+    if (const int32_t timer = S16(em + kTimer); timer > 0)
+        W16(em + kTimer, uint32_t(std::max(timer - int32_t(GameStep::Ticks()), 0)));
+
+    if (game.Call<Dead>({em}) != 0)
+        return;
+
+    const uint32_t icon = game.Call<0x80343A38>({R8(em + kKind), R8(em + 0xA)});
+    const uint32_t slot = game.Call<0x80343948>({icon & 0xFF, R8(em + 0x46C)});
+
+    if (slot && S8(slot + 8) == -1) {
+        W8(em + 0x46C, 0xFF);
+        game.Call<0x8013AB28>({em});
+    }
+}
+
+void JaggiHeal(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t em = frame.Arg(3);
+    W16(em + kTimer, 0);
+
+    if (game.Call<0x8012ED54>({em}) != 1)
+        return;
+
+    game.Call<0x8012ECD8>({em});
+    const float rate = game.F1();
+    game.Call<0x8011E750>({em, uint32_t(int32_t(0.05f * float(int32_t(R32(em + kMaxHealth))))), 1}, {rate - 0.05f});
+}
+
 void Em014PartStage(CpuContext* ctx) {
     GuestFrame frame(ctx, 0x20);
     GuestCall game{ctx};
@@ -799,3 +867,36 @@ extern "C" void MH3_Em014PartStage(CpuContext* ctx) {
     PortCheck::Call(ctx, "Em014PartStage", func_801763D8, Em014PartStage);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x801763D8, MH3_Em014PartStage, "Em014PartStage");
+
+extern "C" void func_8017638C(CpuContext* ctx);
+extern "C" void MH3_Em012Handler11(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em012Handler11", func_8017638C, [](CpuContext* c) {
+        const uint32_t result = Handler11(c);
+        c->gpr[3] = result;
+    });
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8017638C, MH3_Em012Handler11, "Em012Handler11");
+
+extern "C" void func_803A92A4(CpuContext* ctx);
+extern "C" void MH3_QuestPartBroken(CpuContext* ctx) {
+    PortCheck::Call(ctx, "QuestPartBroken", func_803A92A4, QuestPartBroken);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x803A92A4, MH3_QuestPartBroken, "QuestPartBroken");
+
+extern "C" void MH3_Em012Reset(CpuContext* ctx) {
+    W8(ctx->gpr[3] + 0x32A, 0);
+    W16(ctx->gpr[3] + kTimer, 0);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80170664, MH3_Em012Reset, "Em012Reset");
+
+extern "C" void func_80170868(CpuContext* ctx);
+extern "C" void MH3_Em012Step(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em012Step", func_80170868, JaggiStep);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80170868, MH3_Em012Step, "Em012Step");
+
+extern "C" void func_80176304(CpuContext* ctx);
+extern "C" void MH3_Em012Heal(CpuContext* ctx) {
+    PortCheck::Call(ctx, "Em012Heal", func_80176304, JaggiHeal);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80176304, MH3_Em012Heal, "Em012Heal");

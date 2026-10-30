@@ -8,6 +8,10 @@
 //              in u8 +0xA, 6 the part's damage level (0x8011EA40) >= b, 7
 //              u8 +0x761 & a; `want` 1 needs it true, 0 false, others
 //              ignore it
+//   0x80126098 EnemyData(em): the species' data, EnemyActionTable of its kind
+//              (+3) and variant (+0xA)
+//   0x8012D090 EnemyDying(em): 1 in mode 11, or mode 12 by 0x8012D270
+//   0x8012D0D8 EnemyInArea(em): 1 in the hunter's area (+0x1E1)
 //   0x80140C64 EnemyActionTable(u8 group, u8 variant): the action table
 //              word of the group (the table at *(0x8065B2F8)); group 0x20
 //              picks entries 1-6 by variant, every other group entry 0
@@ -98,6 +102,19 @@ void ActionTablePort(CpuContext* p) {
     p->gpr[3] = ActionTable(p->gpr[3], p->gpr[4]);
 }
 
+uint32_t Dying(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t em = frame.Arg(3);
+    return MemoryInline::FlatRead8(em + 0x1E5) == 11 || game.Call<0x8012D270>({em, 12, 255}) == 1;
+}
+
+uint32_t InArea(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    return (game.Call<0x802AFCE8>() & 0xFF) == MemoryInline::FlatRead8(frame.Arg(3) + 0x1E1);
+}
+
 } // namespace
 
 extern "C" void func_8012FA28(CpuContext* ctx);
@@ -139,3 +156,27 @@ extern "C" void MH3_EnemyActionTable(CpuContext* ctx) {
     ctx->gpr[3] = ActionTableChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4]);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80140C64, MH3_EnemyActionTable, "EnemyActionTable");
+
+extern "C" void MH3_EnemyData(CpuContext* ctx) {
+    const uint32_t em = ctx->gpr[3];
+    ctx->gpr[3] = ActionTable(MemoryInline::FlatRead8(em + 3), MemoryInline::FlatRead8(em + 0xA));
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80126098, MH3_EnemyData, "EnemyData");
+
+extern "C" void func_8012D090(CpuContext* ctx);
+extern "C" void MH3_EnemyDying(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EnemyDying", func_8012D090, [](CpuContext* c) {
+        const uint32_t dying = Dying(c);
+        c->gpr[3] = dying;
+    });
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012D090, MH3_EnemyDying, "EnemyDying");
+
+extern "C" void func_8012D0D8(CpuContext* ctx);
+extern "C" void MH3_EnemyInArea(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EnemyInArea", func_8012D0D8, [](CpuContext* c) {
+        const uint32_t in = InArea(c);
+        c->gpr[3] = in;
+    });
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012D0D8, MH3_EnemyInArea, "EnemyInArea");
