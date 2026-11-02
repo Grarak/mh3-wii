@@ -80,11 +80,15 @@ texture activity). Measured on the Vita:
 
   | Scene | General | Forms | Limit |
   | --- | ---: | ---: | ---: |
-  | Flooded Forest shore | 17.50 | 14.68 | 13.75 |
+  | Flooded Forest area 1 | 17.50 | 14.68 | 13.75 |
   | Desert cave | 12.16 | 10.13 | 9.57 |
   | Alatreon | 11.64 | 10.56 | 10.37 |
   | Tundra | 12.94 | 12.23 | 12.22 |
   | City, BASIC forms kept | 11.87 | 11.51 | |
+
+  Flooded Forest's area 3 has no pair: 80 to 87% of its triangles are already
+  `_pure` and 2 to 3% use these forms, against 58% in area 1. With the forms it
+  takes 12.1 to 15.0 ms by view, on the surface and underwater.
 
 ## Example
 
@@ -110,5 +114,6 @@ removal, which psp2shaderperf cannot show, and `_lerp` saved 6 cycles per
 fragment without a measurable gain. Compare only runs that drew the same scene,
 checked by their index counts: an idle hunter spawns in different places and
 monsters find him, so pin the spawn and hold the monsters. Survey several views
-of a map: Flooded Forest's water and its shore use different programs. Check every new vertex program's mode
-in psp2shaderperf: one dynamic branch makes it per instance.
+of a map, and confirm the area a run ended in: Flooded Forest's areas 1 and 3 use
+different programs. Check every new vertex program's mode in psp2shaderperf: one
+dynamic branch makes it per instance.
