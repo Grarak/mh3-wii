@@ -11,7 +11,7 @@ class DiscImage;
 // An imported language: a pack file in <game data>/languages/ with the
 // language's strings, its font and any replacement files. The game runs as
 // the English game; the strings replace the English text as it loads, and
-// live in guest memory the arena gives up.
+// live at the end of MEM2, which a Wii keeps for IOS and the game never uses.
 //
 //   Text archives (data00, 10, 11, 20): the strings' offsets are patched
 //   after a load (load_file), so they point out of the buffer, whose size the
@@ -39,8 +39,8 @@ const std::string& Selected();
 // Whether a pack is in use; loads it at the first call.
 bool Active();
 
-// The pack's strings and atlas take the end of the MEM2 arena: the new end.
-uint32_t Reserve(uint32_t arenaEnd);
+// Puts the pack's strings and atlas into guest memory.
+void Place();
 
 // The replacement files of every installed pack, readable from `disc`: the
 // launcher chooses the language after the asset cache starts. The boot FST

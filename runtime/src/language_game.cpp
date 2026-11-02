@@ -13,6 +13,9 @@ namespace LanguagePack {
 namespace {
 constexpr uint32_t kEuropeanSize = 512;
 
+// Above the 0x93620000 where a Wii's game memory ends.
+constexpr uint32_t kGuestArea = 0x93800000, kGuestBytes = 7u << 20;
+
 struct Game {
     Pack read;
     uint32_t base = 0, atlas = 0;
@@ -70,18 +73,18 @@ bool Active() {
     return true;
 }
 
-uint32_t Reserve(uint32_t arenaEnd) {
+void Place() {
     if (!Active())
-        return arenaEnd;
+        return;
 
     auto& p = *pack;
     auto& contents = p.read.contents;
     const uint32_t size = GuestSize(p.read);
 
-    if (size > 8u << 20)
+    if (size > kGuestBytes)
         MH3_THROW(std::runtime_error("The language pack takes more guest memory than the game can spare"));
 
-    p.base = (arenaEnd - size) & ~31u;
+    p.base = kGuestArea;
     std::memcpy(Memory::GetPointer(p.base, uint32_t(contents.text.size())), contents.text.data(), contents.text.size());
 
     if (!contents.atlas.empty()) {
@@ -91,7 +94,6 @@ uint32_t Reserve(uint32_t arenaEnd) {
     }
 
     std::fprintf(stderr, "MH3 language: %s, %u KiB of guest memory\n", contents.name.c_str(), size / 1024);
-    return p.base;
 }
 
 void PatchFst(uint32_t fst, uint32_t bytes) {

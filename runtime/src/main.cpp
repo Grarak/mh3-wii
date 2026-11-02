@@ -695,11 +695,11 @@ int main(int argc, char** argv) {
         // for (custom quests, --quest-monster).
         const uint32_t cameraRow = drawArea - CameraMouse::kRowBytes;
         CameraMouse::ReserveRow(cameraRow);
-        const uint32_t questLists = cameraRow - QuestPlacement::kBytes;
-        QuestPlacement::Apply(questLists);
+        const uint32_t mem2ArenaHi = cameraRow - QuestPlacement::kBytes;
+        QuestPlacement::Apply(mem2ArenaHi);
 
         // An imported language's strings and font.
-        const uint32_t mem2ArenaHi = LanguagePack::Reserve(questLists);
+        LanguagePack::Place();
         LanguagePack::PatchFst(arenaHi, fstSize);
         LanguagePack::PatchExecutable();
         Memory::Write32(0x80003128, mem2ArenaHi);
