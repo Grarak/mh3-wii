@@ -174,6 +174,10 @@ Rules learned on hardware [doc: renderer status, "GXM rules"]:
   that returned zero blue and alpha on the device (the offline and runtime
   compilers produced the same code). Computing RG and BA as two float2
   chains fixed it.
+- The same bug hit a uniform-only product: `coefficient * float4(rgb, alpha)` in
+  a material's animated picks returned alpha 0 **[devkit]**. Colour stayed right,
+  so only materials that read that alpha showed it: alpha-tested ones drew
+  nothing. Written two lanes at a time, it works.
 - Matrix slot selectors are integral U8 attributes and are cast directly;
   `int(selector + 0.5)` made the optimized array index round slots 3 and 9
   up.
