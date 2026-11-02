@@ -104,6 +104,9 @@ class DiscFile {
 };
 
 namespace {
+// Discs end before this.
+constexpr uint64_t kVirtualFiles = 0x120000000ull;
+
 Status Exists(const std::filesystem::path& path, bool& exists) {
 #ifdef __vita__
     SceIoStat stat{};
@@ -385,7 +388,37 @@ void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>&
                 data[it->offset + byte - offset] = it->bytes[byte];
 }
 
+Status DiscImage::AddVirtualFile(uint64_t offset, uint32_t bytes, const std::filesystem::path& source, uint64_t at) {
+    // One descriptor for a pack's files: the Vita has few.
+    if (virtualFiles.empty() || virtualPath != source) {
+        auto file = std::make_shared<DiscFile>();
+        MH3_RETURN_IF_ERROR(file->Open(source));
+        virtualFiles.push_back({offset, at, bytes, std::move(file)});
+        virtualPath = source;
+        return {};
+    }
+
+    virtualFiles.push_back({offset, at, bytes, virtualFiles.back().source});
+    return {};
+}
+
+// DVD reads round up: what is past the file reads as zeros.
+Status DiscImage::ReadVirtual(uint64_t offset, uint8_t* output, size_t length) const {
+    for (const auto& file : virtualFiles)
+        if (offset >= file.offset && offset - file.offset <= file.bytes + uint64_t(0x8000)) {
+            const uint64_t into = offset - file.offset;
+            const size_t count = into < file.bytes ? size_t(std::min<uint64_t>(length, file.bytes - into)) : 0;
+            std::fill_n(output + count, length - count, uint8_t(0));
+            return count ? file.source->Read(file.at + into, output, count) : Status{};
+        }
+
+    return Status::Error("Disc read outside the replacement files");
+}
+
 Status DiscImage::ReadRaw(uint64_t offset, uint8_t* output, size_t length) const {
+    if (!virtualFiles.empty() && offset >= kVirtualFiles)
+        return ReadVirtual(offset, output, length);
+
     if (packed)
         return ReadPartition(offset, output, length);
 

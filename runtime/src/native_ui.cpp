@@ -1,5 +1,6 @@
 // RMHP08 application UI paths, reconstructed from their Ghidra C listings.
 // This is the guest ABI boundary; typed C writes native attributes directly.
+#include "language_pack.h"
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "guest_call.h"
@@ -843,6 +844,7 @@ static uint32_t ProduceFontAtlas(CpuContext* cpu) {
         MH3_THROW(std::runtime_error("Native font producer image exceeds its decoded bytes"));
 
     NativeUIFontAtlasProduced(destination + payload);
+    LanguagePack::EuropeanAtlasDecoded(destination + payload, Memory::Read16(destination + header + 2), Memory::Read16(destination + header), Memory::Read32(destination + header + 4));
     return bytes;
 }
 
@@ -970,6 +972,20 @@ extern "C" void MH3_FontFlush(CpuContext* cpu) {
         auto binding = ReadNativeTextureObject(0x8065B408);
         binding.sampler.min_filter = binding.sampler.mag_filter = 1;
         binding.source.min_lod = binding.source.max_lod = 0;
+
+        // An imported language's atlas, the European glyphs in it.
+        if (const auto* language = LanguagePack::ActiveFont()) {
+            static uint32_t generation = NextGeneration(language->atlas);
+
+            if (!ReadNativeTextureGeneration(language->atlas))
+                MarkNativeTextureProduced(language->atlas, generation);
+
+            binding.source.resource_address = binding.source.payload_address = language->atlas;
+            binding.source.width = uint16_t(language->width);
+            binding.source.height = uint16_t(language->height);
+            binding.source.generation = generation;
+        }
+
         BindNativeTexture(binding);
         const auto records = Memory::Read32(font + 0x44);
 

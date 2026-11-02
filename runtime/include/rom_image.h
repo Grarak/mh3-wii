@@ -4,15 +4,20 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
-// The European RMHP08 disc image (RVZ, WIA or decrypted ISO), read in place.
+// A disc image (RVZ, WIA or decrypted ISO), read in place: the European game
+// RMHP08 or, for its language, the Japanese RMHJ08.
 // The native decoder (rom_decoder.cpp) decodes RVZ/WIA chunks and the Wii
 // encryption; a decrypted ISO is read sector by sector. Reads are positioned and serialized: any thread may read.
 class RomImage {
   public:
-    // Opens the image and checks that it is the European game disc.
-    static Status Open(const std::filesystem::path& path, std::unique_ptr<RomImage>& image);
+    // Opens the image and checks that it is that game's disc.
+    static Status Open(const std::filesystem::path& path, std::unique_ptr<RomImage>& image, const char* game = "RMHP08");
+
+    // The disc's game ID, without opening its partition.
+    static Status Identify(const std::filesystem::path& path, std::string& game);
     ~RomImage();
     RomImage(const RomImage&) = delete;
 
@@ -36,7 +41,7 @@ class RomImage {
 
   private:
     RomImage();
-    Status Load(const std::filesystem::path& path);
+    Status Load(const std::filesystem::path& path, const char* game);
     class Source;
     std::unique_ptr<Source> source;
     mutable std::mutex lock;

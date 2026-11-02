@@ -34,6 +34,11 @@ class DiscImage {
     uint64_t FileOffset(const std::string& name) const;
     uint32_t FileSize(const std::string& name) const;
 
+    // Bytes of another file (`bytes` at `at`) read at `offset`, past the
+    // disc's end: a language's replacement for a file, once the boot FST
+    // points there.
+    Status AddVirtualFile(uint64_t offset, uint32_t bytes, const std::filesystem::path& source, uint64_t at);
+
     // FileSize without stopping the game: 0 for a name the FST lacks.
     uint32_t FileSizeOrZero(const std::string& name) const;
 
@@ -62,6 +67,15 @@ class DiscImage {
     uint64_t partitionSize = 0;
     bool packed = false;
     std::map<uint64_t, std::vector<uint8_t>> fileOverrides;
+    struct VirtualFile {
+        uint64_t offset, at;
+        uint32_t bytes;
+        std::shared_ptr<DiscFile> source;
+    };
+
+    std::vector<VirtualFile> virtualFiles;
+    std::filesystem::path virtualPath;
+    Status ReadVirtual(uint64_t offset, uint8_t* output, size_t length) const;
     void ApplyFileOverrides(uint64_t offset, std::vector<uint8_t>& data) const;
     struct NativeTexturePatch {
         uint64_t offset;
@@ -75,3 +89,7 @@ class DiscImage {
 
 // Shared by IOS disc requests and the development quest catalog.
 DiscImage& GameDiscImage();
+
+// Opens the game's data again: the launcher has added a language. Nothing may
+// hold the image or the asset cache.
+void ReloadGameData();

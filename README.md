@@ -195,6 +195,27 @@ defaults (WASD moves, a click captures the mouse for the camera, left and
 right buttons attack, Q held with a click scrolls the item bar, Space evades:
 [controls](docs/vita-controls.md)); SDL gamepads work too.
 
+## Languages
+
+The European disc has English, French, German, Italian and Spanish. The launcher's **Import a language** adds more; on Linux, `MH3 --import-language FILE` does, and `MH3_LANGUAGE=CODE` plays one.
+
+- **Japanese** comes from your own Japanese disc (RMHJ08): put its image in `languages/` in the game data folder (`ux0:data/mh3-wii/disc/languages` on the Vita). Its text, font and textures are copied into the language, so you can delete the image afterwards. You still play from the European disc. The name entry keyboard stays Latin.
+- **Translations** are JSON files in the same folder. **Write a translation template** (or `MH3 --export-language FILE`) writes `template.json` with all the English text. Give your copy a `code`, a `name` and translated `strings`:
+
+```json
+{
+  "format": 1,
+  "code": "zh-hans",
+  "name": "Chinese (Simplified)",
+  "font": "NotoSansSC-Regular.ttf",
+  "strings": {
+    "data00.0.5": "小桶爆弹"
+  }
+}
+```
+
+Strings you leave out or unchanged stay English, so a translation can start small; remove the rest. `name` shows in the launcher, so it must use plain Latin letters. `font` is needed when the text has characters the game's font lacks (it has Western European letters): a TrueType or OpenType file beside the JSON file. Textures stay English in a translation.
+
 ## License
 
 The translator and the code derived from WiiCompiled are GPLv3 (`LICENSE`,

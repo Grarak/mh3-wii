@@ -1,4 +1,6 @@
 #include "asset_cache.h"
+#include "language_pack.h"
+#include <optional>
 #include "fatal.h"
 #include "fs_status.h"
 #include "disc_image.h"
@@ -1542,6 +1544,8 @@ struct Game {
     DiscImage image;
     std::unique_ptr<AssetCache> cache;
     explicit Game(const char* root) : image(root) {
+        const auto languageFiles = LanguagePack::RegisterFiles(image, root);
+
         if (!image.Packed() || image.HasNativeTextureMap() || std::getenv("MH3_NATIVE_ASSET_DIR"))
             return;
 
@@ -1554,6 +1558,10 @@ struct Game {
                 MH3_THROW(std::runtime_error("Oversized texture source: " + name));
 
             sources.push_back({name, image.FileOffset(name), bytes});
+
+            for (const auto& file : languageFiles)
+                if (file.name == name)
+                    sources.push_back({name + " (language)", file.offset, file.bytes});
         }
 
         // The audio streams (16/srt): read in small pieces over minutes of play.
@@ -1569,13 +1577,22 @@ struct Game {
     ~Game() { image.SetReader({}); }
 };
 
+std::optional<Game> game;
+
 Game& GameData() {
     // The launcher's disc preparation completes before this lazy instance.
-    const char* path = std::getenv("MH3_DISC_DIR");
-    static Game game(path ? path : "Assets/DATA");
-    return game;
+    if (!game) {
+        const char* path = std::getenv("MH3_DISC_DIR");
+        game.emplace(path ? path : "Assets/DATA");
+    }
+
+    return *game;
 }
 } // namespace
+
+void ReloadGameData() {
+    game.reset();
+}
 
 DiscImage& GameDiscImage() {
     return GameData().image;

@@ -17,6 +17,9 @@
 #include "msaa.h"
 #include "ssaa.h"
 #include "language.h"
+#include "language_import.h"
+#include "language_pack.h"
+#include "rom_image.h"
 #include "../src/net/online.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
@@ -954,6 +957,61 @@ void Draw(Font& font, const std::string& title, const std::vector<std::string>& 
     Wait(8000);
 }
 
+std::filesystem::path japaneseDisc;
+
+// The Japanese disc may lie among the translations too.
+void FindJapaneseDisc(const std::filesystem::path& directory) {
+    std::error_code error;
+    std::filesystem::directory_iterator entries(directory, error);
+
+    for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
+        if (const auto extension = entries->path().extension(); extension == ".iso" || extension == ".rvz" || extension == ".wia")
+            if (std::string game; RomImage::Identify(entries->path(), game).ok() && game == "RMHJ08")
+                japaneseDisc = entries->path();
+}
+
+// Runs an import on a worker; the screen shows its steps.
+Status ImportScreen(Font& font, const std::function<Status(const LanguageImport::Progress&)>& work) {
+    std::mutex mutex;
+    std::string step = "Starting";
+    Status result;
+    std::atomic<bool> finished = false;
+    std::jthread worker([&] {
+        aurora::pin_current_thread(aurora::ThreadRole::Worker);
+        const Status status = work([&](const std::string& s) {
+            std::lock_guard guard(mutex);
+            step = s;
+        });
+
+        std::lock_guard guard(mutex);
+        result = status;
+        finished.store(true, std::memory_order_release);
+    });
+
+    unsigned frames = 0;
+
+    while (!finished.load(std::memory_order_acquire)) {
+        std::string label;
+        {
+            std::lock_guard guard(mutex);
+            label = step;
+        }
+
+        auto& rects = shown;
+        Frame(rects);
+        Rect(rects, 42, 46, 876, 48, ink);
+        font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  Importing a language", gold, 840);
+        font.Text(rects, 150, 243, label + std::string(frames++ / 20 % 4, '.'), ink, 660);
+        font.Text(rects, 45, 513, "Keep the application open", light, 890);
+        PresentScreen(&rects);
+        Pump();
+        Wait(12000);
+    }
+
+    worker.join();
+    return result;
+}
+
 // The disc image stays in base; its metadata and the converted-asset cache live
 // in base/disc. A development install of a prepared disc directly in base is used as is.
 Status EnsureDisc(Font& font, const std::filesystem::path& base) {
@@ -990,6 +1048,12 @@ Status EnsureDisc(Font& font, const std::filesystem::path& base) {
             return FsStatus::Failure("status", type, entry.path());
 
         if (regular && (entry.path().extension() == ".iso" || entry.path().extension() == ".rvz" || entry.path().extension() == ".wia")) {
+            // The Japanese disc only gives its language.
+            if (std::string game; RomImage::Identify(entry.path(), game).ok() && game == "RMHJ08") {
+                japaneseDisc = entry.path();
+                continue;
+            }
+
             if (!iso.empty())
                 return Status::Error("There is more than one disc image in " + base.string() + ". Leave only your European Monster Hunter Tri (RMHP08) ISO, RVZ or WIA there.");
 
@@ -1002,6 +1066,8 @@ Status EnsureDisc(Font& font, const std::filesystem::path& base) {
 
     if (!DiscReady(output))
         output = base / "disc";
+
+    FindJapaneseDisc(LanguagePack::Directory(output));
 
     if (output != base) {
         screen("Checking game data");
@@ -1079,6 +1145,7 @@ void StartGame(Font& font, const std::string& what) {
 
 enum class Page {
     Main,
+    Languages,
     Categories,
     Saves,
     Quests,
@@ -1105,7 +1172,7 @@ const char* OnOff(bool on) {
 // The main menu's rows. The web build connects nowhere: it leaves out the
 // City and the online settings (the online quests, played offline, stay).
 // Its WebGPU renderer supersamples instead of multisampling.
-enum class Item { Start, Village, City, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Language, Online };
+enum class Item { Start, Village, City, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Language, ImportLanguage, Online };
 
 constexpr Item MainItems[]{Item::Start,
                            Item::Village,
@@ -1124,6 +1191,7 @@ constexpr Item MainItems[]{Item::Start,
                            Item::Msaa,
 #endif
                            Item::Language,
+                           Item::ImportLanguage,
 #ifndef __EMSCRIPTEN__
                            Item::Online
 #endif
@@ -1213,6 +1281,10 @@ void LoadSettings(const std::filesystem::path& base) {
                 if (value == language.code)
                     SetLanguageSetting(language.system);
 
+            for (const auto& language : LanguagePack::Installed(std::getenv("MH3_DISC_DIR")))
+                if (value == language.code)
+                    LanguagePack::Select(language.code);
+
             continue;
         }
 
@@ -1257,6 +1329,9 @@ Status SaveSettings(const std::filesystem::path& base) {
     for (const auto& known : GameLanguages())
         if (LanguageSetting() == known.system)
             language = known.code;
+
+    if (!LanguagePack::Selected().empty())
+        language = LanguagePack::Selected().c_str();
 
     {
         std::ofstream file(temporary, std::ios::trunc);
@@ -1331,6 +1406,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         Message(warning);
 
     LoadSettings(base);
+    const std::filesystem::path gameData = std::getenv("MH3_DISC_DIR");
     const char* userDirectory = std::getenv("MH3_USER_DIR");
     const auto user = std::filesystem::path(userDirectory ? userDirectory : "saves");
     Page page = Page::Main;
@@ -1355,14 +1431,55 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     bool skipTls = SkipTlsSetting();
 
     // The game reads it at startup; English unless the settings name another.
-    const auto languages = GameLanguages();
+    // Imported languages follow.
+    struct Choice {
+        std::string name, code;
+        uint8_t system;
+    };
+
+    std::vector<Choice> languages;
     size_t language = 0;
+    const auto listLanguages = [&] {
+        languages.clear();
 
-    for (size_t i = 0; i < languages.size(); ++i)
-        if (LanguageSetting() == languages[i].system)
-            language = i;
+        for (const auto& known : GameLanguages())
+            languages.push_back({known.name, known.code, known.system});
 
-    SetLanguageSetting(languages[language].system);
+        for (const auto& pack : LanguagePack::Installed(gameData))
+            languages.push_back({pack.name, pack.code, 0});
+
+        language = 0;
+        const std::string& imported = LanguagePack::Selected();
+
+        for (size_t i = 0; i < languages.size(); ++i)
+            if (i < GameLanguages().size() ? imported.empty() && LanguageSetting() == languages[i].system : languages[i].code == imported)
+                language = i;
+    };
+
+    const auto applyLanguage = [&] {
+        const bool imported = language >= GameLanguages().size();
+        SetLanguageSetting(imported ? GameLanguages()[0].system : languages[language].system);
+        LanguagePack::Select(imported ? languages[language].code : std::string());
+    };
+
+    listLanguages();
+    applyLanguage();
+
+    // What the language page offers: the Japanese disc, translation files in
+    // the languages folder, and the template.
+    std::vector<std::filesystem::path> translations;
+    const auto listTranslations = [&] {
+        translations.clear();
+        std::error_code error;
+        std::filesystem::directory_iterator entries(LanguagePack::Directory(gameData), error);
+
+        for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
+            if (entries->path().extension() == ".json" && entries->path().filename() != "template.json")
+                translations.push_back(entries->path());
+
+        std::sort(translations.begin(), translations.end());
+    };
+
     SaveSlot save{};
     std::vector<SaveSlot> saves;
     std::vector<QuestCatalog::Quest> quests;
@@ -1599,7 +1716,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                             : ssaa == 2 ? "2x supersampling: 1.41 times the width and height, filtered down. About twice the GPU work."
                                         : "4x supersampling: twice the width and height, filtered down: the smoothest picture. About four times the GPU work."};
                 case Item::Language:
-                    return {std::string("Language: ") + languages[language].name, "The game's text, menus and keyboard: English, French, German, Italian or Spanish."};
+                    return {std::string("Language: ") + languages[language].name, language < GameLanguages().size() ? "The game's text, menus and keyboard." : "An imported language: its text, with the English keyboard."};
+                case Item::ImportLanguage:
+                    return {"Import a language", "Add the Japanese game's language from its disc, or a translation file."};
                 case Item::Online:
                     return {"Online settings: " + onlineServer + (skipTls ? " (no TLS)" : ""), "The server the game's City mode connects to."};
                 }
@@ -1614,6 +1733,30 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             detail = describe(item).second;
             values = item == Item::FrameLimit || item == Item::Msaa || item == Item::Ssaa || item == Item::Language;
             footer = "X Select   D-pad Move";
+            break;
+        }
+        case Page::Languages: {
+            title = "Import a language";
+
+            if (!japaneseDisc.empty())
+                rows.push_back("Japanese");
+
+            for (const auto& file : translations)
+                rows.push_back(file.filename().string());
+
+            rows.push_back("Write a translation template");
+            const size_t fromDisc = japaneseDisc.empty() ? 0 : 1, at = std::min(selected, rows.size() - 1);
+
+            if (at < fromDisc)
+                detail = "Text, font and textures from " + japaneseDisc.filename().string() + ". The disc is not needed afterwards.";
+            else if (at < fromDisc + translations.size())
+                detail = "Add this translation. Texts it lacks stay English.";
+            else
+                detail = "Writes template.json with the game's English text to " + LanguagePack::Directory(gameData).string() + ". Translate it and rename it: it appears here.";
+
+            if (japaneseDisc.empty())
+                detail += " Japanese needs the Japanese disc image (RMHJ08) in " + LanguagePack::Directory(gameData).string() + ".";
+
             break;
         }
         case Page::Categories: {
@@ -1843,6 +1986,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 enter(Page::Main);
                 selected = MainRow(Item::Online);
                 break;
+            case Page::Languages:
+                enter(Page::Main);
+                selected = MainRow(Item::ImportLanguage);
+                break;
             case Page::Main:
                 break;
             }
@@ -2032,8 +2179,8 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
             if (onMain(Item::Language) && (accept || direction)) {
                 language = (language + languages.size() + (direction ? direction : 1)) % languages.size();
-                SetLanguageSetting(languages[language].system);
-                Log("language %s", languages[language].code);
+                applyLanguage();
+                Log("language %s", languages[language].code.c_str());
                 return SaveSettings(base);
             }
 
@@ -2109,6 +2256,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     upscaling = !upscaling;
                     SetUpscalingSetting(upscaling);
                     Log("upscaling %s", upscaling ? "on" : "off");
+                } else if (item == Item::ImportLanguage) {
+                    listTranslations();
+                    enter(Page::Languages);
                 } else if (item == Item::Online)
                     enter(Page::Online);
 
@@ -2178,6 +2328,40 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 const std::string value = LauncherCheats::ValueLabel(cheat);
                 Log("cheat %s %s%s", LauncherCheats::List()[cheat].name, LauncherCheats::Enabled(cheat) ? "on" : "off", value.empty() ? "" : (" (" + value + ")").c_str());
                 break;
+            }
+            case Page::Languages: {
+                const size_t fromDisc = japaneseDisc.empty() ? 0 : 1, at = selected;
+                std::string summary, code;
+                ReloadGameData();
+
+                if (at == fromDisc + translations.size()) {
+                    MH3_RETURN_IF_ERROR(FsStatus::CreateDirectories(LanguagePack::Directory(gameData)));
+                    const Status status = LanguageImport::ExportTemplate(LanguagePack::Directory(gameData) / "template.json", gameData);
+                    Message(status.ok() ? "Wrote template.json to " + LanguagePack::Directory(gameData).string() + "." : status.message());
+                    break;
+                }
+
+                const Status status = ImportScreen(*font, [&](const LanguageImport::Progress& progress) {
+                    if (at < fromDisc) {
+                        code = "ja";
+                        return LanguageImport::ImportJapanese(japaneseDisc, gameData, progress, summary);
+                    }
+
+                    progress("Reading the translation");
+                    return LanguageImport::ImportTranslation(translations[at - fromDisc], gameData, code, summary);
+                });
+
+                if (!status.ok()) {
+                    Message(status.message());
+                    break;
+                }
+
+                // It becomes the language.
+                LanguagePack::Select(code);
+                listLanguages();
+                applyLanguage();
+                Message("Imported: " + summary);
+                return SaveSettings(base);
             }
             case Page::Online:
                 if (selected == 1) {

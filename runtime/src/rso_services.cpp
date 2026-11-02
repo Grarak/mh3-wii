@@ -3,6 +3,7 @@
 #include "abi_bridge.h"
 #include "village_boot.h"
 #include "self_test.h"
+#include "language_pack.h"
 #include "generated/rso_binding.h"
 #include "generated/rso_overlays/map_village.h"
 #include "generated/rso_overlays/quest_field.h"
@@ -311,6 +312,7 @@ extern "C" void func_80992FC8(CpuContext*);
 extern "C" void MH3_DemoProlog(CpuContext* cpu) {
     using namespace DemoBinding;
     VerifyModule(cpu, "demo_data.rso", Base, Text, Size, Checksum);
+    LanguagePack::PatchDemoData(Base);
     func_80992FC8(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80992FC8, MH3_DemoProlog, "MH3_DemoProlog");

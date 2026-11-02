@@ -547,6 +547,44 @@ async function setup() {
     startButton.disabled = false;
   });
 
+  // Languages: files for the launcher's import, in the game data's folder.
+  const languages = async () => (await directory.getDirectoryHandle('disc')).getDirectoryHandle('languages', { create: true });
+  const languageInput = document.getElementById('language-files');
+
+  languageInput.addEventListener('change', async () => {
+    try {
+      if (!(await exists(directory, 'disc/rom.txt')))
+        throw new Error('start the game once first');
+
+      const folder = await languages();
+
+      for (const file of languageInput.files) {
+        status(`Copying ${file.name} into browser storage`);
+        const writable = await (await folder.getFileHandle(file.name, { create: true })).createWritable();
+        await file.stream().pipeTo(writable);
+      }
+
+      status('Language files added: see Import a language in the launcher');
+    } catch (error) {
+      status(`Language files not added: ${error.message}`);
+    }
+
+    languageInput.value = '';
+  });
+
+  document.getElementById('language-template').addEventListener('click', async () => {
+    try {
+      const file = await (await (await languages()).getFileHandle('template.json')).getFile();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(file);
+      link.download = 'template.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch {
+      status('No template yet: write it with Import a language in the launcher');
+    }
+  });
+
   for (const id of ['save-folder', 'save-files']) {
     const input = document.getElementById(id);
     input.addEventListener('change', () => {

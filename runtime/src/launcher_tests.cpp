@@ -3,6 +3,7 @@
 #include "disc_image.h"
 #include "load_progress.h"
 #include "launcher_convert.h"
+#include "language_import.h"
 #include "launcher_texture_inventory.h"
 #include "gfx/native_texture_decode.hpp"
 #include "gfx/texture_convert.hpp"
@@ -311,8 +312,30 @@ void CheckTextures(const std::filesystem::path& root) {
 }
 } // namespace
 
+void CheckTranslationFiles() {
+    LanguageImport::Translation parsed;
+    const auto ok = LanguageImport::ParseTranslation(
+        "{ \"format\": 1, \"note\": [1, {\"a\": \"}\"}], \"code\": \"zh-hans\", \"name\": \"Chinese\", \"font\": \"a.ttf\","
+        " \"strings\": {\"data00.0.5\": \"\\u3042\\n\\\"x\\\"\", \"data00.0.6\": \"\xE3\x81\x82\"} }",
+        parsed);
+    Check(ok.ok(), "translation parses");
+    Check(parsed.code == "zh-hans" && parsed.name == "Chinese" && parsed.font == "a.ttf", "translation fields");
+    Check(parsed.strings.at("data00.0.5") == "\xE3\x81\x82\n\"x\"" && parsed.strings.at("data00.0.6") == "\xE3\x81\x82", "translation strings");
+
+    for (const char* bad : {"{\"code\": \"xx\", \"name\": \"a\"}", "{\"format\": 1, \"code\": \"en\", \"name\": \"a\"}", "{\"format\": 1, \"code\": \"xx\", \"name\": \"\"}",
+                            "{\"format\": 1, \"code\": \"xx\", \"name\": \"a\", \"strings\": {\"k\": \"\\ud83d\"}}", "{\"format\": 1, \"code\": \"xx\", \"name\": \"a\"", "[]"}) {
+        LanguageImport::Translation rejected;
+        Check(!LanguageImport::ParseTranslation(bad, rejected).ok(), "bad translation rejected");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--translation-files") {
+            CheckTranslationFiles();
+            return 0;
+        }
+
         if (argc == 3 && std::string_view(argv[1]) == "--disc-ready") {
             return VitaLauncher::DiscReady(argv[2]) ? 0 : 1;
         }

@@ -59,6 +59,12 @@
       upscaling, the frame limit, SSAA and the language. No online play.</p>
     <label>Disc image <input id="disc" type="file" accept=".rvz,.wia,.iso"></label>
     <fieldset>
+      <legend>Languages</legend>
+      <label>Add the Japanese disc or a translation <input id="language-files" type="file" multiple accept=".rvz,.wia,.iso,.json,.ttf,.otf"></label>
+      <button id="language-template" type="button">Download the translation template</button>
+      <p class="note">Start once first. Added files appear under the launcher's Import a language, which also writes the template.</p>
+    </fieldset>
+    <fieldset>
       <legend>Save</legend>
       <p id="save-status" class="note"></p>
       <label>Import a save folder <input id="save-folder" type="file" webkitdirectory></label>

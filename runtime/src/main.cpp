@@ -1,3 +1,5 @@
+#include "language_import.h"
+#include "language_pack.h"
 #include "abi_bridge.h"
 #include "fatal.h"
 #include <aurora/fatal.hpp>
@@ -159,6 +161,9 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 the launcher's list by its name (\"InfHP\"; with its\n"
                                "                                 group when lists share it, \"Bully:ActionRepeater\"),\n"
                                "                                 with a value by label or number\n"
+                               "  --import-language <file>       add a language: the Japanese disc (RVZ, WIA or ISO) or\n"
+                               "                                 a translation (.json); MH3_LANGUAGE=<code> plays it\n"
+                               "  --export-language <file>       write a translation file of the English text\n"
                                "  --rom <image>                  (with any of the above) play from the European disc\n"
                                "                                 (RVZ, WIA or ISO); remembered in disc/ next to the executable\n";
 
@@ -498,6 +503,24 @@ int main(int argc, char** argv) {
         }
 #ifndef __vita__
         PrepareGameData(rom);
+
+        if (argc == 3 && std::string_view(argv[1]) == "--import-language") {
+            const std::filesystem::path file = argv[2], data = std::getenv("MH3_DISC_DIR");
+            std::string summary, code;
+
+            if (file.extension() == ".json")
+                CheckStatus(LanguageImport::ImportTranslation(file, data, code, summary));
+            else
+                CheckStatus(LanguageImport::ImportJapanese(file, data, [](const std::string& step) { std::cerr << "MH3 language: " << step << "\n"; }, summary));
+
+            std::cout << summary << "\n";
+            return 0;
+        }
+
+        if (argc == 3 && std::string_view(argv[1]) == "--export-language") {
+            CheckStatus(LanguageImport::ExportTemplate(argv[2], std::getenv("MH3_DISC_DIR")));
+            return 0;
+        }
 #if (defined(MH3_DEVELOPMENT) || defined(__EMSCRIPTEN__)) && defined(MH3_HAS_AURORA)
         // The Vita launcher's menus, then the game as they start it. Its disc
         // directory is MH3_DISC_DIR as on the Vita: prepared game data, or a
@@ -672,8 +695,13 @@ int main(int argc, char** argv) {
         // for (custom quests, --quest-monster).
         const uint32_t cameraRow = drawArea - CameraMouse::kRowBytes;
         CameraMouse::ReserveRow(cameraRow);
-        const uint32_t mem2ArenaHi = cameraRow - QuestPlacement::kBytes;
-        QuestPlacement::Apply(mem2ArenaHi);
+        const uint32_t questLists = cameraRow - QuestPlacement::kBytes;
+        QuestPlacement::Apply(questLists);
+
+        // An imported language's strings and font.
+        const uint32_t mem2ArenaHi = LanguagePack::Reserve(questLists);
+        LanguagePack::PatchFst(arenaHi, fstSize);
+        LanguagePack::PatchExecutable();
         Memory::Write32(0x80003128, mem2ArenaHi);
         Memory::Write32(0x80003130, 0x935E0000);
         Memory::Write32(0x80003134, 0x93600000);

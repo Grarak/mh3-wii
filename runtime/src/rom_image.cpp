@@ -154,7 +154,7 @@ class RomImage::Source {
 
         // The decoder treats ISO sectors as encrypted. nodtool's decrypted
         // ISO marks byte 0x61; the bounded sector reader below reads it.
-        if (header[0x61] == 1 && std::string(header.begin(), header.begin() + 6) == "RMHP08")
+        if (const std::string game(header.begin(), header.begin() + 6); header[0x61] == 1 && (game == "RMHP08" || game == "RMHJ08"))
             return {};
 
         std::array<uint8_t, 512> error{};
@@ -205,23 +205,33 @@ class RomImage::Source {
 RomImage::RomImage() = default;
 RomImage::~RomImage() = default;
 
-Status RomImage::Open(const std::filesystem::path& path, std::unique_ptr<RomImage>& image) {
+Status RomImage::Open(const std::filesystem::path& path, std::unique_ptr<RomImage>& image, const char* game) {
     std::unique_ptr<RomImage> opened(new RomImage);
-    MH3_RETURN_IF_ERROR(opened->Load(path));
+    MH3_RETURN_IF_ERROR(opened->Load(path, game));
     image = std::move(opened);
+    return {};
+}
+
+Status RomImage::Identify(const std::filesystem::path& path, std::string& game) {
+    std::unique_ptr<RomImage> opened(new RomImage);
+    opened->source = std::make_unique<Source>();
+    MH3_RETURN_IF_ERROR(opened->source->Open(path));
+    std::vector<uint8_t> header;
+    MH3_RETURN_IF_ERROR(opened->ReadDisc(0, 0x100, header));
+    game.assign(header.begin(), header.begin() + 6);
     return {};
 }
 
 // Each vector Word reads below has the size that was read, so the words are
 // always there.
-Status RomImage::Load(const std::filesystem::path& path) {
+Status RomImage::Load(const std::filesystem::path& path, const char* game) {
     source = std::make_unique<Source>();
     MH3_RETURN_IF_ERROR(source->Open(path));
     std::vector<uint8_t> discHeader;
     MH3_RETURN_IF_ERROR(ReadDisc(0, 0x100, discHeader));
 
-    if (std::string(discHeader.begin(), discHeader.begin() + 6) != "RMHP08" || Word(discHeader, 0x18) != 0x5d1c9ea3)
-        return Status::Error("Expected the European RMHP08 Wii disc image.");
+    if (std::string(discHeader.begin(), discHeader.begin() + 6) != game || Word(discHeader, 0x18) != 0x5d1c9ea3)
+        return Status::Error(std::string("Expected the ") + (std::string_view(game) == "RMHP08" ? "European" : "Japanese") + " " + game + " Wii disc image.");
 
     std::vector<uint8_t> groups;
     MH3_RETURN_IF_ERROR(ReadDisc(0x40000, 32, groups));
@@ -262,7 +272,7 @@ Status RomImage::Load(const std::filesystem::path& path) {
     std::vector<uint8_t> boot;
     MH3_RETURN_IF_ERROR(ReadPartition(0, 0x440, boot));
 
-    if (std::string(boot.begin(), boot.begin() + 6) != "RMHP08" || Word(boot, 0x18) != 0x5d1c9ea3)
+    if (std::string(boot.begin(), boot.begin() + 6) != game || Word(boot, 0x18) != 0x5d1c9ea3)
         return Status::Error("ISO partition is encrypted. Convert with nodtool convert --decrypt before transferring.");
 
     return {};

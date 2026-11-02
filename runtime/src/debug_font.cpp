@@ -26,9 +26,13 @@
 // 1 to 3 UTF-8 bytes, 0xFFFFFFFF for a malformed sequence (not in the table).
 // MH3_PORT_CHECK=flKnjMsgNumPtr,FontTextColumns,FontGlyphColumns,FontGlyphIndex
 // checks every call, FontPutsText its writes now and then.
+//
+// An imported language's font (language_pack.h) goes on after the table, in a
+// larger atlas holding the European glyphs at their cells.
 #include "abi_bridge.h"
 #include "fatal.h"
 #include "guest_flat_memory.h"
+#include "language_pack.h"
 #include "memory.h"
 #include "port_check.h"
 
@@ -52,14 +56,15 @@ using MemoryInline::FlatWrite16;
 using MemoryInline::FlatWrite32;
 using MemoryInline::FlatWriteFloat32;
 
-constexpr uint32_t kFontWork = 0x80796D98, kGlyphs = 0x80580818;
-constexpr uint8_t kAbsent = 0xFF;
+constexpr uint32_t kFontWork = 0x80796D98, kGlyphs = 0x80580818, kTableGlyphs = 228;
+constexpr uint16_t kAbsent = 0xFFFF;
 
 // Code -> table index (kAbsent: none), built on first use.
-uint8_t glyphIndex[0x10000];
+uint16_t glyphIndex[0x10000];
 std::atomic<int> glyphState{0}; // 0 unbuilt, 1 building, 2 built
+const LanguagePack::Font* languageFont = nullptr;
 
-const uint8_t* GlyphMap() {
+const uint16_t* GlyphMap() {
     if (glyphState.load(std::memory_order_acquire) == 2) [[likely]]
         return glyphIndex;
 
@@ -72,7 +77,7 @@ const uint8_t* GlyphMap() {
         return glyphIndex;
     }
 
-    std::memset(glyphIndex, kAbsent, sizeof(glyphIndex));
+    std::memset(glyphIndex, 0xFF, sizeof(glyphIndex));
 
     for (uint32_t i = 0;; ++i) {
         const uint16_t code = Memory::Read16(kGlyphs + i * 4);
@@ -80,13 +85,17 @@ const uint8_t* GlyphMap() {
         if (code == 0xFFFF)
             break;
 
-        if (i >= kAbsent)
-            MH3_THROW(std::runtime_error("Debug font glyph table exceeds its native map"));
-
         // The original returns the first match.
         if (glyphIndex[code] == kAbsent)
             glyphIndex[code] = uint8_t(i);
     }
+
+    languageFont = LanguagePack::ActiveFont();
+
+    if (languageFont)
+        for (size_t i = 0; i < languageFont->glyphs->size(); ++i)
+            if (const uint16_t code = (*languageFont->glyphs)[i].code; code != 0xFFFE)
+                glyphIndex[code] = uint16_t(kTableGlyphs + i);
 
     // Without '?' the original searches forever.
     if (glyphIndex['?'] == kAbsent)
@@ -96,13 +105,16 @@ const uint8_t* GlyphMap() {
     return glyphIndex;
 }
 
-uint32_t GlyphIndex(const uint8_t* map, uint32_t code) {
-    const uint8_t index = code <= 0xFFFF ? map[code] : kAbsent;
+uint32_t GlyphIndex(const uint16_t* map, uint32_t code) {
+    const uint16_t index = code <= 0xFFFF ? map[code] : kAbsent;
     return index != kAbsent ? index : map['?'];
 }
 
 // 0x8005C010: the glyph's narrow, 1 past the font's glyphs.
 uint32_t GlyphNarrow(uint32_t font, uint32_t index) {
+    if (languageFont && index >= kTableGlyphs)
+        return (*languageFont->glyphs)[index - kTableGlyphs].narrow;
+
     return index < FlatRead32(font + 0x1C) ? FlatRead16(kGlyphs + index * 4 + 2) : 1;
 }
 
@@ -139,7 +151,7 @@ uint32_t Utf8Next(const uint8_t*& p) {
 }
 
 // The columns of a character other than NUL and newline.
-uint32_t Columns(uint32_t font, const uint8_t* map, uint32_t code) {
+uint32_t Columns(uint32_t font, const uint16_t* map, uint32_t code) {
     if (!FlatRead32(font + 0x30)) {
         if (int32_t(code) <= 0x0F)
             return 2;
@@ -153,7 +165,7 @@ uint32_t Columns(uint32_t font, const uint8_t* map, uint32_t code) {
 
 uint32_t TextColumns(uint32_t text) {
     const uint32_t font = FlatRead32(kFontWork);
-    const uint8_t* map = GlyphMap();
+    const uint16_t* map = GlyphMap();
     const uint8_t* p = GuestFlat::Host(text);
     uint32_t columns = 0;
 
@@ -166,7 +178,7 @@ uint32_t TextColumns(uint32_t text) {
 
 uint32_t TextAfterColumns(uint32_t text, int32_t limit) {
     const uint32_t font = FlatRead32(kFontWork);
-    const uint8_t* map = GlyphMap();
+    const uint16_t* map = GlyphMap();
     const uint8_t* start = GuestFlat::Host(text);
     const uint8_t* p = start;
     int32_t columns = 0;
@@ -209,7 +221,9 @@ void PutGlyph(uint32_t font, uint32_t x, uint32_t y, uint32_t index) {
     while (slot < used && FlatRead16(font + 0x160A0 + uint32_t(slot) * 2) != (index & 0xFFFF))
         ++slot;
 
-    if (slot == used || used <= 0) {
+    // A language's font has every glyph in its atlas; a screen of its text
+    // can outgrow the list.
+    if (!languageFont && (slot == used || used <= 0)) {
         if (used >= int32_t(FlatRead32(font + 0x1609C)))
             return;
 
@@ -221,8 +235,18 @@ void PutGlyph(uint32_t font, uint32_t x, uint32_t y, uint32_t index) {
     const float cell = FlatReadFloat32(0x807981E0), z = FlatReadFloat32(0x807981E4), scale = FlatReadFloat32(0x807981E8);
     const float left = float(int32_t(x)), top = float(int32_t(y));
     const float right = float(int32_t(x + FlatRead32(font + 0x15060))), bottom = float(int32_t(y + FlatRead32(font + 0x15064)));
-    const float u = float((index & 0xF) << 5) * scale, v = float((index >> 4) << 5) * scale;
-    const float u1 = u + cell, v1 = v + cell;
+    float u = float((index & 0xF) << 5) * scale, v = float((index >> 4) << 5) * scale, u1 = u + cell, v1 = v + cell;
+
+    if (languageFont) {
+        uint32_t column = 0, row = 0;
+        LanguagePack::GlyphCell(index, languageFont->width, column, row);
+        const float width = 32.0f / float(languageFont->width), height = 32.0f / float(languageFont->height);
+        u = float(column) * width;
+        v = float(row) * height;
+        u1 = u + width;
+        v1 = v + height;
+    }
+
     const float corners[4][4]{{left, top, u, v}, {right, top, u1, v}, {right, bottom, u1, v1}, {left, bottom, u, v1}};
 
     for (uint32_t i = 0; i < 4; ++i) {
@@ -247,7 +271,7 @@ void PutGlyph(uint32_t font, uint32_t x, uint32_t y, uint32_t index) {
 void PutsText(uint32_t text, uint32_t index) {
     const uint32_t font = FlatRead32(kFontWork);
     const uint32_t lineX = FlatRead32(font + 0x15068);
-    const uint8_t* map = GlyphMap();
+    const uint16_t* map = GlyphMap();
     const uint8_t* p = GuestFlat::Host(text);
 
     while (const uint32_t code = Utf8Next(p)) {
@@ -268,7 +292,7 @@ void PutsText(uint32_t text, uint32_t index) {
                 index = GlyphIndex(map, code);
                 shift = GlyphNarrow(font, index);
 
-                if (index >= FlatRead32(font + 0x1C))
+                if (index >= (languageFont ? kTableGlyphs + uint32_t(languageFont->glyphs->size()) : FlatRead32(font + 0x1C)))
                     draw = false;
                 else if (FlatRead32(font + 0x1505C) >= FlatRead32(font + 0x15058))
                     return;

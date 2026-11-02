@@ -169,6 +169,13 @@ Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path
         if (cache)
             MH3_RETURN_IF_ERROR(FsStatus::Rename(output / "cache", staging / "cache"));
 
+        // And the imported languages.
+        bool languages = false;
+        MH3_RETURN_IF_ERROR(FsStatus::Exists(output / "languages", languages));
+
+        if (languages)
+            MH3_RETURN_IF_ERROR(FsStatus::Rename(output / "languages", staging / "languages"));
+
         MH3_RETURN_IF_ERROR(FsStatus::RemoveAll(output));
     }
 #ifdef __vita__

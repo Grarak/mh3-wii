@@ -6,6 +6,7 @@
 #include "native_graphics.h"
 #include "widescreen.h"
 #include "language.h"
+#include "language_pack.h"
 #include "../native/mh3_render_mode.h"
 #include <array>
 #include <cstdlib>
@@ -25,6 +26,8 @@ constexpr int32_t ModePointer = -0x46B8;
 constexpr uint32_t WideAspect = 0x80797F68;
 std::optional<bool> launcherSetting;
 std::optional<uint8_t> launcherLanguage;
+
+constexpr uint8_t kEnglish = 1;
 
 // Wii SC language numbers (SC_LANG_*), in the launcher's order.
 constexpr GameLanguage Languages[]{
@@ -106,6 +109,12 @@ void SetLanguageSetting(uint8_t system) {
 // software keyboard its layout.
 extern "C" void func_804DD150(CpuContext* cpu);
 extern "C" void MH3_SCGetLanguage(CpuContext* cpu) {
+    // An imported language replaces the English game's text.
+    if (LanguagePack::Active()) {
+        cpu->gpr[3] = kEnglish;
+        return;
+    }
+
     if (const auto setting = LanguageSetting()) {
         cpu->gpr[3] = *setting;
         return;
