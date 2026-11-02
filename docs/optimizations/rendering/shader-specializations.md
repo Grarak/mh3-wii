@@ -21,6 +21,8 @@ for the cycles (last column):
 | `_pure` | MODULATE with one texture, literal zero offsets and one scales | `t0 · v` directly | yes |
 | `_lerp` | BASIC with constant a, b and d and c from texture 0 (the effect particles) | base and slope from uniforms, which GXM's secondary program evaluates once per draw; one multiply-add per fragment | the same equation rearranged; GLES frames of the Alatreon fight within 3 levels |
 | `_vlerp` (with `quad_*_lerp`) | a run of `_lerp` particle quads that differ only in their colours | each quad's base and slope from its vertices; one draw for the run | the same base and slope, computed on the CPU in single precision |
+| `_vmix` | BASIC with one texture: `mix(K, t0, v)` plus a constant, alpha `t0.a · v.a` | the equation written out, no input selects | same equation; host frames match outside animation |
+| `_mmix` | BASIC with two textures and the raster product: `mix(K, S · t0, t1)` plus a constant, alpha `S · t0.a + t1.a · (1 - A)` | the equation written out, no input selects | same equation; host frames match outside animation |
 | `_a1` (GXM) | an unblended RGB-only draw to a target certified to hold alpha 1 everywhere | writes A=1 with a full RGBA mask, which keeps hidden-surface removal on | yes |
 | half-precision colours (GXM) | all Cg fragment programs except the ones with dynamic picks | 11 significant bits instead of 24 | at most one 8-bit step |
 | Fog per vertex | every fogged draw | the vertex stage computes the whole fog amount (clamped distance, curve, clamp); the fragment blends by it | exact for linear curves where a triangle's corners are all inside the fog range; across its ends the clamp is taken at the corners |
@@ -64,6 +66,12 @@ texture activity). Measured on the Vita:
   time (8.75/9.12 → 8.67/9.22 ms): the particles' cost is not their
   arithmetic (commit "Fold the one-texture lerp equation into a
   multiply-add").
+- `_vmix`, `_mmix`: the general BASIC program selects eight inputs per
+  fragment, 43 to 50 cycles for the City's walls and props. Written out they
+  take 8 to 17 (`basic_t2_fog_a1_ras_gpu` 34 → 10, `basic_t1_alpha_fog_a1_gpu`
+  50 → 17). City walk, GPU busy 17.3 → 11.5 ms per frame, 52 → 59 fps. A
+  blunt test showed the cost before any of this was written: every BASIC draw
+  on the cheapest program took the main scene's 3D time from 11.9 to 4.1 ms.
 
 ## Example
 

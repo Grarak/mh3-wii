@@ -57,7 +57,7 @@ A new variant field must reach the key domain; the compiler enforces it
 
 ```cpp
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 21, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 22, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 ```
 
 The fragment domain is a loop over every model, texture count and flag

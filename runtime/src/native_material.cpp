@@ -329,9 +329,9 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     // Every field in its own bits: vertex and lighting 2, lights 4, model 2,
-    // texgens 3 each, textures 3, the chain form 4.
+    // texgens 3 each, textures 3, the chain form 4, the BASIC form 2.
     const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 2 | uint64_t(variant.lights) << 4 | uint64_t(variant.model) << 8 | uint64_t(variant.textures) << 33 |
-                         uint64_t(variant.chain) << 36 |
+                         uint64_t(variant.chain) << 36 | uint64_t(variant.basic_form) << 40 |
                          uint64_t(variant.overlay) << 12 | uint64_t(variant.alpha_test) << 13 | uint64_t(variant.fog) << 14 | uint64_t(variant.texgen[0]) << 15 | uint64_t(variant.texgen[1]) << 18 |
                          uint64_t(variant.texgen[2]) << 21 | uint64_t(variant.linear_fog) << 24 | uint64_t(variant.pure_modulate) << 25 | uint64_t(variant.target_alpha_one) << 26 |
                          uint64_t(variant.material_gpu) << 27 | uint64_t(variant.dynamic) << 28 | uint64_t(variant.basic_lerp) << 29 | uint64_t(variant.skinned) << 30 |
@@ -612,6 +612,42 @@ bool BasicLerp(const mh3_shade_material& shading) {
     return true;
 }
 
+bool Zero(const mh3_shade_constant& constant) {
+    return constant.kind[0] == MH3_SHADE_CONSTANT_ZERO || constant.kind[1] == MH3_SHADE_CONSTANT_ZERO;
+}
+
+bool One(const mh3_shade_constant& constant) {
+    return constant.kind[0] == MH3_SHADE_CONSTANT_ONE && constant.kind[1] == MH3_SHADE_CONSTANT_ONE;
+}
+
+// An input that is only a texture role's or the vertex colour's value, times
+// any constant unless `plain`. Alpha inputs read alpha whatever the swizzle.
+bool Source(const mh3_shade_term& term, uint8_t source, uint8_t role, bool alpha, bool plain = true) {
+    return term.source == source && (source != MH3_SHADE_SOURCE_TEXTURE || term.texture == role) && (alpha || !term.replicate_alpha) && Zero(term.offset) && (!plain || One(term.scale));
+}
+
+bool Constant(const mh3_shade_term& term) {
+    return term.source == MH3_SHADE_SOURCE_NONE;
+}
+
+NativeShaderBasicForm BasicForm(const mh3_shade_material& shading) {
+    if (shading.model != MH3_SHADE_BASIC || shading.overlay)
+        return NativeShaderBasicForm::General;
+
+    const auto& c = shading.color.input;
+    const auto& a = shading.alpha.input;
+
+    if (shading.textures == 1 && !shading.raster_product && Constant(c[0]) && Source(c[1], MH3_SHADE_SOURCE_TEXTURE, 0, false) && Source(c[2], MH3_SHADE_SOURCE_VERTEX, 0, false) && Constant(c[3]) &&
+        Constant(a[0]) && Zero(a[0].offset) && Source(a[1], MH3_SHADE_SOURCE_TEXTURE, 0, true) && Source(a[2], MH3_SHADE_SOURCE_VERTEX, 0, true) && Constant(a[3]) && Zero(a[3].offset))
+        return NativeShaderBasicForm::VertexMix;
+
+    if (shading.textures == 2 && shading.raster_product && Constant(c[0]) && Source(c[1], MH3_SHADE_SOURCE_TEXTURE, 0, false, false) && Source(c[2], MH3_SHADE_SOURCE_TEXTURE, 1, false) && Constant(c[3]) &&
+        Source(a[0], MH3_SHADE_SOURCE_TEXTURE, 1, true) && Constant(a[1]) && Zero(a[1].offset) && Constant(a[2]) && Source(a[3], MH3_SHADE_SOURCE_TEXTURE, 0, true, false))
+        return NativeShaderBasicForm::MaskMix;
+
+    return NativeShaderBasicForm::General;
+}
+
 NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShaderVertex vertex, ShadeLighting lighting) {
     NativeShaderVariant variant;
     variant.vertex = vertex;
@@ -624,6 +660,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.chain = shading.model == MH3_SHADE_CHAIN ? shading.chain : 0;
     variant.pure_modulate = shading.pure_modulate != 0;
     variant.basic_lerp = BasicLerp(shading);
+    variant.basic_form = BasicForm(shading);
     variant.raster_product = shading.raster_product != 0;
     variant.target_alpha_one = aurora::gl::shaded_target_alpha_one();
     variant.textures = shading.textures;

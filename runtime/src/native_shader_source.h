@@ -55,6 +55,20 @@ inline constexpr unsigned NativeShaderTexgenCount = 5;
 inline constexpr unsigned NativeShaderMaxTextures = 3;
 inline constexpr unsigned NativeShaderChainTextures = 5;
 
+// BASIC forms whose sources the material's structure fixes: the program reads
+// them directly instead of selecting them per fragment (psp2shaderperf 28-50
+// cycles to 8-17). Other structures stay General.
+enum class NativeShaderBasicForm : uint8_t {
+    General,
+
+    // mix(k, t0, v) + d, alpha t0 * v (Loc Lac's scenery).
+    VertexMix,
+
+    // mix(k, c * t0, t1) + d, alpha t1 * (1 - k) + c * t0, then times the
+    // vertex colour (Loc Lac's walls: a baked shadow mask).
+    MaskMix
+};
+
 struct NativeShaderVariant {
     // Vertex stage
     NativeShaderVertex vertex = NativeShaderVertex::Mesh;
@@ -96,6 +110,7 @@ struct NativeShaderVariant {
     // BASIC whose saturated result is multiplied by the vertex colour (a
     // closing prev * ras stage, mh3_shade_material::raster_product).
     bool raster_product = false;
+    NativeShaderBasicForm basic_form = NativeShaderBasicForm::General;
 
     // Quad only, a basic_lerp material with material uniforms: each quad's
     // base and slope (mh3_shade_gpu_lerp) come with its vertices, so quads
@@ -109,7 +124,7 @@ struct NativeShaderVariant {
 };
 
 // A new field must reach a stage key, the key domain and the shader bank.
-static_assert(sizeof(NativeShaderVariant) == 21, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
+static_assert(sizeof(NativeShaderVariant) == 22, "update NativeShader*Key, NativeShader*Keys() and docs/optimizations/rendering/offline-shader-bank.md");
 
 // Stage identities. Each stage's source is a function of its key alone, so
 // the GXM shader bank holds one program per key (docs/optimizations/rendering/offline-shader-bank.md).
@@ -140,6 +155,7 @@ struct NativeShaderFragmentKey {
     bool basic_lerp = false;       // only Basic with textures, no overlay
     bool raster_product = false;   // only Basic, no overlay
     bool vertex_lerp = false;      // only basic_lerp with material_gpu
+    NativeShaderBasicForm basic_form = NativeShaderBasicForm::General; // only Basic, per form its textures and raster product
     auto operator<=>(const NativeShaderFragmentKey&) const = default;
 };
 

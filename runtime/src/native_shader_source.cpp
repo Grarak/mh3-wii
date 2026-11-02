@@ -534,6 +534,8 @@ float alpha_input(int i, vec4 t0, vec4 t1, vec4 t2) {
 #define LERP_COLOR_SCALE coefficient(6)
 #define LERP_ALPHA_SCALE coefficient(6).a
 #define LERP_SWIZZLE material.swizzle.z
+#define BASIC_COLOR_SCALE(i) coefficient(4 + i)
+#define BASIC_ALPHA_SCALE(i) coefficient(4 + i).a
 #else
 vec3 color_input(int i, float swizzle, vec4 t0, vec4 t1, vec4 t2) {
     Input s = shade.color_input[i];
@@ -556,6 +558,8 @@ float alpha_input(int i, vec4 t0, vec4 t1, vec4 t2) {
 #define LERP_COLOR_SCALE shade.color_input[2].scale
 #define LERP_ALPHA_SCALE shade.alpha_input[2].scale.a
 #define LERP_SWIZZLE shade.color_input[2].swizzle.x
+#define BASIC_COLOR_SCALE(i) shade.color_input[i].scale
+#define BASIC_ALPHA_SCALE(i) shade.alpha_input[i].scale.a
 #endif
 #endif
 void main() {
@@ -615,6 +619,14 @@ void main() {
     float alpha_slope = alpha_range * LERP_ALPHA_SCALE * (ALPHA_EQUATION.z * ALPHA_EQUATION.y);
     float alpha_base = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * (LERP_ALPHA_OFFSET(0) + alpha_range * LERP_ALPHA_OFFSET(2))) * ALPHA_EQUATION.y;
     vec4 result = clamp(vec4(base, alpha_base) + vec4(slope, alpha_slope) * vec4(mix(t0.rgb, t0.aaa, LERP_SWIZZLE), t0.a), 0.0, 1.0);
+#elif BASIC_VERTEX_MIX
+    vec3 color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * mix(LERP_COLOR_OFFSET(0).rgb, t0.rgb, v_color0.rgb)) * COLOR_EQUATION.y;
+    float alpha = (ALPHA_EQUATION.x + ALPHA_EQUATION.z * t0.a * v_color0.a) * ALPHA_EQUATION.y;
+    vec4 result = clamp(vec4(color, alpha), 0.0, 1.0);
+#elif BASIC_MASK_MIX
+    vec3 color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * mix(LERP_COLOR_OFFSET(0).rgb, BASIC_COLOR_SCALE(1).rgb * t0.rgb, t1.rgb)) * COLOR_EQUATION.y;
+    float alpha = (BASIC_ALPHA_SCALE(3) * t0.a + ALPHA_EQUATION.x + ALPHA_EQUATION.z * t1.a * (1.0 - LERP_ALPHA_OFFSET(2))) * ALPHA_EQUATION.y;
+    vec4 result = clamp(vec4(color, alpha), 0.0, 1.0);
 #else
     vec3 b = color_input(1, SWIZZLE1, t0, t1, t2);
 #if OVERLAY
@@ -1188,6 +1200,8 @@ real alpha_input(int i, real4 t0, real4 t1, real4 t2, real4 v) {
 #define LERP_COLOR_SCALE coefficient(6)
 #define LERP_ALPHA_SCALE coefficient(6).a
 #define LERP_SWIZZLE material.swizzle.z
+#define BASIC_COLOR_SCALE(i) coefficient(4 + i)
+#define BASIC_ALPHA_SCALE(i) coefficient(4 + i).a
 #else
 real3 color_input(int i, real swizzle, real4 t0, real4 t1, real4 t2, real4 v) {
     Input s = shade.color_input[i];
@@ -1210,6 +1224,8 @@ real alpha_input(int i, real4 t0, real4 t1, real4 t2, real4 v) {
 #define LERP_COLOR_SCALE shade.color_input[2].scale
 #define LERP_ALPHA_SCALE shade.alpha_input[2].scale.a
 #define LERP_SWIZZLE shade.color_input[2].swizzle.x
+#define BASIC_COLOR_SCALE(i) shade.color_input[i].scale
+#define BASIC_ALPHA_SCALE(i) shade.alpha_input[i].scale.a
 #endif
 #endif
 real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEXCOORD1, float2 v_uv2 : TEXCOORD2, real4 v_fog : TEXCOORD3,
@@ -1289,6 +1305,19 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     real alpha_slope = alpha_range * LERP_ALPHA_SCALE * (ALPHA_EQUATION.z * ALPHA_EQUATION.y);
     real alpha_base = (LERP_ALPHA_OFFSET(3) + ALPHA_EQUATION.x + ALPHA_EQUATION.z * (LERP_ALPHA_OFFSET(0) + alpha_range * LERP_ALPHA_OFFSET(2))) * ALPHA_EQUATION.y;
     real4 result = saturate(real4(base, alpha_base) + real4(slope, alpha_slope) * real4(lerp(t0.rgb, t0.aaa, real(LERP_SWIZZLE)), t0.a));
+#elif BASIC_VERTEX_MIX
+    // The general program selects these sources per fragment (basic_t1_a1_gpu
+    // 28 -> 8 cycles).
+    real3 k = LERP_COLOR_OFFSET(0).rgb;
+    real3 color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * (k + (t0.rgb - k) * v.rgb)) * COLOR_EQUATION.y;
+    real alpha = (ALPHA_EQUATION.x + ALPHA_EQUATION.z * t0.a * v.a) * ALPHA_EQUATION.y;
+    real4 result = saturate(real4(color, alpha));
+#elif BASIC_MASK_MIX
+    // basic_t2_fog_a1_ras_gpu 34 -> 10 cycles.
+    real3 k = LERP_COLOR_OFFSET(0).rgb;
+    real3 color = (LERP_COLOR_OFFSET(3).rgb + COLOR_EQUATION.x + COLOR_EQUATION.z * (k + (BASIC_COLOR_SCALE(1).rgb * t0.rgb - k) * t1.rgb)) * COLOR_EQUATION.y;
+    real alpha = (BASIC_ALPHA_SCALE(3) * t0.a + ALPHA_EQUATION.x + ALPHA_EQUATION.z * t1.a * (1.0h - LERP_ALPHA_OFFSET(2))) * ALPHA_EQUATION.y;
+    real4 result = saturate(real4(color, alpha));
 #else
     real3 b = color_input(1, SWIZZLE1, t0, t1, t2, v);
 #if OVERLAY
@@ -1472,7 +1501,8 @@ bool Dynamic(const NativeShaderVariant& variant) {
 std::string FragmentDefines(const NativeShaderFragmentKey& key) {
     return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("LAYERS", key.model == NativeShaderModel::Layers) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
            Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
-           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product) + (key.vertex_lerp ? Define("VERTEX_LERP", 1) : "");
+           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product) + Define("BASIC_VERTEX_MIX", key.basic_form == NativeShaderBasicForm::VertexMix) +
+           Define("BASIC_MASK_MIX", key.basic_form == NativeShaderBasicForm::MaskMix) + (key.vertex_lerp ? Define("VERTEX_LERP", 1) : "");
 }
 
 std::string GlslVertex(const NativeShaderVertexKey& key) {
@@ -1586,6 +1616,11 @@ NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& var
     key.raster_product = variant.raster_product && variant.model == NativeShaderModel::Basic && !variant.overlay;
     key.vertex_lerp = variant.vertex_lerp && key.basic_lerp && variant.material_gpu;
 
+    if (variant.model == NativeShaderModel::Basic && !variant.overlay && !key.basic_lerp &&
+        ((variant.basic_form == NativeShaderBasicForm::VertexMix && variant.textures == 1 && !key.raster_product) ||
+         (variant.basic_form == NativeShaderBasicForm::MaskMix && variant.textures == 2 && key.raster_product)))
+        key.basic_form = variant.basic_form;
+
     // LAYERS has no Material block (mh3_shade_gpu_bake) and no overlay.
     if (variant.model == NativeShaderModel::Layers)
         key.overlay = key.material_gpu = key.dynamic = false;
@@ -1636,8 +1671,10 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
     for (unsigned model = 0; model < NativeShaderModelCount; ++model)
         for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
             for (unsigned chain = 0; chain < (model == unsigned(NativeShaderModel::Chain) ? MH3_SHADE_CHAIN_FORMS : 1u); ++chain)
+            for (unsigned form = 0; form < (model == unsigned(NativeShaderModel::Basic) ? 3u : 1u); ++form)
             for (unsigned flags = 0; flags < 2048; ++flags) {
                 v.model = NativeShaderModel(model);
+                v.basic_form = NativeShaderBasicForm(form);
                 v.textures = uint8_t(textures);
                 v.chain = uint8_t(chain);
                 v.overlay = flags & 1;
@@ -1718,7 +1755,7 @@ std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
     return std::string(models[unsigned(key.model)]) + (key.model == NativeShaderModel::Chain ? std::to_string(key.chain) : "") + "_t" + std::to_string(key.textures) +
            (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
-           (key.basic_lerp ? (key.vertex_lerp ? "_vlerp" : "_lerp") : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
+           (key.basic_lerp ? (key.vertex_lerp ? "_vlerp" : "_lerp") : "") + (key.basic_form == NativeShaderBasicForm::VertexMix ? "_vmix" : key.basic_form == NativeShaderBasicForm::MaskMix ? "_mmix" : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }
 
 std::string NativeShaderVertexName(NativeShaderVariant variant) {
