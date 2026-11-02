@@ -1291,13 +1291,14 @@ void CountQuadFill(const AuroraNativeQuadVertex* vertices, uint32_t quads, const
 // cost. Every 240 frames, per frame: draws, the extra index ranges of a mesh
 // (palette batches), ranges drawn again (instances, passes), runs of
 // consecutive draws sharing program and material, the assets with the most
-// draws, and the programs (vertex+fragment stage names) with their draws and
-// triangles.
+// draws, and the programs (vertex+fragment stage names, BASIC with its
+// equation) with their draws and triangles.
 struct CensusDraw {
     uint32_t asset, model, shape, mesh, first, triangles;
     uint64_t material;
     GLuint program;
     bool batch;
+    std::string label;
 };
 
 struct Census {
@@ -1305,8 +1306,7 @@ struct Census {
     uint32_t frameId = 0, frames = 0;
     uint64_t draws = 0, batchDraws = 0, ranges = 0, meshes = 0, runs = 0, materials = 0, programs = 0;
     std::map<uint32_t, std::array<uint64_t, 3>> assets; // draws, ranges, meshes
-    std::map<GLuint, std::array<uint64_t, 2>> byProgram; // draws, triangles
-    std::map<GLuint, std::string> names;                 // kept across reports
+    std::map<std::string, std::array<uint64_t, 2>> byLabel; // draws, triangles
 } census;
 
 void CensusFrame() {
@@ -1340,9 +1340,9 @@ void CensusFrame() {
 
     for (const auto& d : f) {
         byAsset[d.asset].push_back(&d);
-        auto& program = c.byProgram[d.program];
-        ++program[0];
-        program[1] += d.triangles;
+        auto& label = c.byLabel[d.label];
+        ++label[0];
+        label[1] += d.triangles;
     }
 
     for (auto& [asset, draws] : byAsset) {
@@ -1383,24 +1383,22 @@ void CensusFrame() {
         std::fprintf(stderr, "MH3 draw census:   asset %5u: %.1f draws, %.1f ranges, %.1f meshes\n", top[i].second, t[0] / n, t[1] / n, t[2] / n);
     }
 
-    std::vector<std::pair<uint64_t, GLuint>> programs;
+    std::vector<std::pair<uint64_t, std::string>> labels;
 
-    for (const auto& [program, totals] : c.byProgram)
-        programs.emplace_back(totals[1], program);
+    for (const auto& [label, totals] : c.byLabel)
+        labels.emplace_back(totals[1], label);
 
-    std::sort(programs.rbegin(), programs.rend());
+    std::sort(labels.rbegin(), labels.rend());
 
-    for (size_t i = 0; i < programs.size() && i < 16; ++i) {
-        const auto& t = c.byProgram[programs[i].second];
-        std::fprintf(stderr, "MH3 draw census:   program %s: %.1f draws, %.0f triangles\n", c.names[programs[i].second].c_str(), t[0] / n, t[1] / n);
+    for (size_t i = 0; i < labels.size() && i < 24; ++i) {
+        const auto& t = c.byLabel[labels[i].second];
+        std::fprintf(stderr, "MH3 draw census:   program %s: %.1f draws, %.0f triangles\n", labels[i].second.c_str(), t[0] / n, t[1] / n);
     }
 
-    auto names = std::move(c.names);
     c = {};
-    c.names = std::move(names);
 }
 
-void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GLuint program, const NativeShaderVariant& variant) {
+void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GLuint program, const NativeShaderVariant& variant, const mh3_shade_material& shading) {
     static const bool enabled = ProfileOptions().Has("census");
 
     if (!enabled)
@@ -1413,10 +1411,8 @@ void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GL
         census.frameId = frame;
     }
 
-    if (auto& name = census.names[program]; name.empty())
-        name = NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant);
-
-    census.frame.push_back({mesh.asset_id, mesh.model_id, mesh.shape_id, mesh.mesh_index, mesh.first_index, mesh.index_count / 3, material, program, mesh.palette_batch != nullptr});
+    census.frame.push_back({mesh.asset_id, mesh.model_id, mesh.shape_id, mesh.mesh_index, mesh.first_index, mesh.index_count / 3, material, program, mesh.palette_batch != nullptr,
+                            NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant) + (shading.model == MH3_SHADE_BASIC ? BasicStructure(shading) : std::string())});
 }
 #endif
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
@@ -1643,7 +1639,7 @@ void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeMod
     blocks->viewRevision = shade.viewRevision;
     const GLuint program = ShadeProgram(variant)->get();
 #ifdef MH3_DEVELOPMENT
-    CountCensusDraw(mesh, entry.key, program, variant);
+    CountCensusDraw(mesh, entry.key, program, variant, shading);
     const NativeRenderPartScope gl(NativeRenderSplit::Gl);
 #endif
     aurora::gl::draw_shaded_mesh(*resident.buffer, layout, bind, resident.mesh->vertex_offset, resident.mesh->vertex_count, resident.mesh->index_offset + mesh.first_index * 2, mesh.index_count,
