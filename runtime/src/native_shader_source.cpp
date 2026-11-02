@@ -580,6 +580,17 @@ void main() {
     vec4 result;
     result.rg = clamp(t0.rg * v_color0.rg, 0.0, 1.0);
     result.ba = clamp(t0.ba * v_color0.ba, 0.0, 1.0);
+#elif MODULATE && MODULATE_DOUBLE && OVERLAY
+#if MATERIAL_GPU
+    vec4 overlay = coefficient(6), kv = coefficient(3);
+#else
+    vec4 overlay = shade.overlay, kv = shade.kv;
+#endif
+    vec4 result = vec4(min((t0.rgb + overlay.rgb * t1.rgb * t2.rgb) * v_color0.rgb * 2.0, vec3(1.0)), t0.a * v_color0.a * kv.a);
+#elif MODULATE && MODULATE_DOUBLE
+    vec4 result = vec4(min(t0.rgb * v_color0.rgb * 2.0, vec3(1.0)), t0.a * v_color0.a);
+#elif MODULATE && MODULATE_HALF
+    vec4 result = vec4(t0.rgb * v_color0.rgb * 0.5, t0.a * v_color0.a);
 #elif MODULATE
 #if MATERIAL_GPU
     vec4 w0 = coefficient(0), w1 = coefficient(1), offset = coefficient(2), kv = coefficient(3), kc = coefficient(4);
@@ -1253,6 +1264,27 @@ real4 main(real4 v_color0 : COLOR0, float2 v_uv0 : TEXCOORD0, float2 v_uv1 : TEX
     real4 result;
     result.rg = saturate(t0.rg * v.rg);
     result.ba = saturate(t0.ba * v.ba);
+#elif MODULATE && MODULATE_DOUBLE && OVERLAY
+    // As below (modulate_t3_overlay_fog_linear 17 -> 8 cycles).
+#if MATERIAL_GPU
+    real4 overlay = coefficient(6), kv = coefficient(3);
+#else
+    real4 overlay = shade.overlay, kv = shade.kv;
+#endif
+    real4 result;
+    result.rgb = min((t0.rgb + overlay.rgb * t1.rgb * t2.rgb) * v.rgb * 2.0h, 1.0h);
+    result.a = t0.a * v.a * kv.a;
+#elif MODULATE && MODULATE_DOUBLE
+    // Written out, as the BASIC forms below; the product is never negative, so
+    // min clamps it for a cycle less than saturate (psp2shaderperf
+    // modulate_t1_fog_linear 10 -> 5 cycles).
+    real4 result;
+    result.rgb = min(t0.rgb * v.rgb * 2.0h, 1.0h);
+    result.a = t0.a * v.a;
+#elif MODULATE && MODULATE_HALF
+    real4 result;
+    result.rgb = t0.rgb * v.rgb * 0.5h;
+    result.a = t0.a * v.a;
 #elif MODULATE
 #if MATERIAL_GPU
     real4 w0 = coefficient(0), w1 = coefficient(1), offset = coefficient(2), kv = coefficient(3), kc = coefficient(4);
@@ -1487,6 +1519,15 @@ bool PureModulate(const NativeShaderVariant& variant) {
     return variant.pure_modulate && variant.model == NativeShaderModel::Modulate && variant.textures == 1 && !variant.overlay;
 }
 
+// The forms replace the one-texture and overlay MODULATE programs, not the pure product.
+bool ScaledModulate(const NativeShaderVariant& variant) {
+    if (variant.model != NativeShaderModel::Modulate || PureModulate(variant))
+        return false;
+
+    const bool plain = variant.textures == 1 && !variant.overlay;
+    return (variant.form == NativeShaderForm::Double && (plain || (variant.textures == 3 && variant.overlay))) || (variant.form == NativeShaderForm::Half && plain);
+}
+
 // Animated picks are evaluated by one-texture MODULATE programs only: their
 // uniform-only coefficient code fits GXM's secondary program (psp2shaderperf:
 // +0..1 cycle). BASIC already needs ~100 secondary attributes; its picks would
@@ -1495,14 +1536,15 @@ bool PureModulate(const NativeShaderVariant& variant) {
 // animated picks gets a per-draw resolved copy of its Material block instead
 // (ResolvesOnCpu, native_material.cpp). The pure product reads no coefficient.
 bool Dynamic(const NativeShaderVariant& variant) {
-    return variant.material_gpu && variant.dynamic && variant.model == NativeShaderModel::Modulate && !PureModulate(variant);
+    return variant.material_gpu && variant.dynamic && variant.model == NativeShaderModel::Modulate && !PureModulate(variant) && !ScaledModulate(variant);
 }
 
 std::string FragmentDefines(const NativeShaderFragmentKey& key) {
     return Define("MODULATE", key.model == NativeShaderModel::Modulate) + Define("LAYERS", key.model == NativeShaderModel::Layers) + Define("TEXTURES", key.textures) + Define("OVERLAY", key.overlay) + Define("ALPHA_TEST", key.alpha_test) + Define("FOG", key.fog) +
            Define("LINEAR_FOG", key.linear_fog) + Define("PURE_MODULATE", key.pure_modulate) + Define("TARGET_ALPHA_ONE", key.target_alpha_one) + Define("MATERIAL_GPU", key.material_gpu) +
-           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product) + Define("BASIC_VERTEX_MIX", key.basic_form == NativeShaderBasicForm::VertexMix) +
-           Define("BASIC_MASK_MIX", key.basic_form == NativeShaderBasicForm::MaskMix) + (key.vertex_lerp ? Define("VERTEX_LERP", 1) : "");
+           Define("DYNAMIC", key.dynamic) + Define("BASIC_LERP", key.basic_lerp) + Define("RASTER_PRODUCT", key.raster_product) + Define("BASIC_VERTEX_MIX", key.form == NativeShaderForm::VertexMix) +
+           Define("BASIC_MASK_MIX", key.form == NativeShaderForm::MaskMix) + Define("MODULATE_DOUBLE", key.form == NativeShaderForm::Double) +
+           Define("MODULATE_HALF", key.form == NativeShaderForm::Half) + (key.vertex_lerp ? Define("VERTEX_LERP", 1) : "");
 }
 
 std::string GlslVertex(const NativeShaderVertexKey& key) {
@@ -1616,10 +1658,11 @@ NativeShaderFragmentKey NativeShaderFragmentKeyOf(const NativeShaderVariant& var
     key.raster_product = variant.raster_product && variant.model == NativeShaderModel::Basic && !variant.overlay;
     key.vertex_lerp = variant.vertex_lerp && key.basic_lerp && variant.material_gpu;
 
-    if (variant.model == NativeShaderModel::Basic && !variant.overlay && !key.basic_lerp &&
-        ((variant.basic_form == NativeShaderBasicForm::VertexMix && variant.textures == 1 && !key.raster_product) ||
-         (variant.basic_form == NativeShaderBasicForm::MaskMix && variant.textures == 2 && key.raster_product)))
-        key.basic_form = variant.basic_form;
+    if ((variant.model == NativeShaderModel::Basic && !variant.overlay && !key.basic_lerp &&
+         ((variant.form == NativeShaderForm::VertexMix && variant.textures == 1 && !key.raster_product) ||
+          (variant.form == NativeShaderForm::MaskMix && variant.textures == 2 && key.raster_product))) ||
+        ScaledModulate(variant))
+        key.form = variant.form;
 
     // LAYERS has no Material block (mh3_shade_gpu_bake) and no overlay.
     if (variant.model == NativeShaderModel::Layers)
@@ -1671,10 +1714,10 @@ std::vector<NativeShaderFragmentKey> NativeShaderFragmentKeys() {
     for (unsigned model = 0; model < NativeShaderModelCount; ++model)
         for (unsigned textures = 0; textures <= NativeShaderMaxTextures; ++textures)
             for (unsigned chain = 0; chain < (model == unsigned(NativeShaderModel::Chain) ? MH3_SHADE_CHAIN_FORMS : 1u); ++chain)
-            for (unsigned form = 0; form < (model == unsigned(NativeShaderModel::Basic) ? 3u : 1u); ++form)
+            for (unsigned form = 0; form < NativeShaderFormCount; ++form)
             for (unsigned flags = 0; flags < 2048; ++flags) {
                 v.model = NativeShaderModel(model);
-                v.basic_form = NativeShaderBasicForm(form);
+                v.form = NativeShaderForm(form);
                 v.textures = uint8_t(textures);
                 v.chain = uint8_t(chain);
                 v.overlay = flags & 1;
@@ -1752,10 +1795,11 @@ std::string NativeShaderVertexName(const NativeShaderVertexKey& key) {
 
 std::string NativeShaderFragmentName(const NativeShaderFragmentKey& key) {
     static constexpr const char* models[NativeShaderModelCount] = {"basic", "modulate", "layers", "chain"};
+    static constexpr const char* FormNames[NativeShaderFormCount] = {"", "_vmix", "_mmix", "_x2", "_half"};
     return std::string(models[unsigned(key.model)]) + (key.model == NativeShaderModel::Chain ? std::to_string(key.chain) : "") + "_t" + std::to_string(key.textures) +
            (key.overlay ? "_overlay" : "") + (key.pure_modulate ? "_pure" : "") +
            (key.alpha_test ? "_alpha" : "") + (key.fog ? (key.linear_fog ? "_fog_linear" : "_fog") : "") + (key.target_alpha_one ? "_a1" : "") +
-           (key.basic_lerp ? (key.vertex_lerp ? "_vlerp" : "_lerp") : "") + (key.basic_form == NativeShaderBasicForm::VertexMix ? "_vmix" : key.basic_form == NativeShaderBasicForm::MaskMix ? "_mmix" : "") + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
+           (key.basic_lerp ? (key.vertex_lerp ? "_vlerp" : "_lerp") : "") + FormNames[unsigned(key.form)] + (key.raster_product ? "_ras" : "") + (key.material_gpu ? (key.dynamic ? "_gpu_dyn" : "_gpu") : "");
 }
 
 std::string NativeShaderVertexName(NativeShaderVariant variant) {

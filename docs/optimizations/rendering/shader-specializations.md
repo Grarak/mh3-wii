@@ -23,6 +23,7 @@ for the cycles (last column):
 | `_vlerp` (with `quad_*_lerp`) | a run of `_lerp` particle quads that differ only in their colours | each quad's base and slope from its vertices; one draw for the run | the same base and slope, computed on the CPU in single precision |
 | `_vmix` | BASIC with one texture: `mix(K, t0, v)` plus a constant, alpha `t0.a · v.a` | the equation written out, no input selects | same equation; host frames match outside animation |
 | `_mmix` | BASIC with two textures and the raster product: `mix(K, S · t0, t1)` plus a constant, alpha `S · t0.a + t1.a · (1 - A)` | the equation written out, no input selects | same equation; host frames match outside animation |
+| `_x2`, `_half` | one-texture MODULATE that is `t0 · v` with GX's colour scale of 2 or ½; `_x2` also the overlay family, `(t0 + k · t1 · t2) · v · 2` | the equation written out, no coefficients; a product cannot go negative, so `_x2` clamps with `min` | same equation; host frames match outside animation |
 | `_a1` (GXM) | an unblended RGB-only draw to a target certified to hold alpha 1 everywhere | writes A=1 with a full RGBA mask, which keeps hidden-surface removal on | yes |
 | half-precision colours (GXM) | all Cg fragment programs except the ones with dynamic picks | 11 significant bits instead of 24 | at most one 8-bit step |
 | Fog per vertex | every fogged draw | the vertex stage computes the whole fog amount (clamped distance, curve, clamp); the fragment blends by it | exact for linear curves where a triangle's corners are all inside the fog range; across its ends the clamp is taken at the corners |
@@ -69,9 +70,21 @@ texture activity). Measured on the Vita:
 - `_vmix`, `_mmix`: the general BASIC program selects eight inputs per
   fragment, 43 to 50 cycles for the City's walls and props. Written out they
   take 8 to 17 (`basic_t2_fog_a1_ras_gpu` 34 → 10, `basic_t1_alpha_fog_a1_gpu`
-  50 → 17). City walk, GPU busy 17.3 → 11.5 ms per frame, 52 → 59 fps. A
-  blunt test showed the cost before any of this was written: every BASIC draw
-  on the cheapest program took the main scene's 3D time from 11.9 to 4.1 ms.
+  50 → 17). With `_x2`, the City standing still: GPU busy 18.49 → 11.51 ms per
+  frame, 50 → 59 fps (5% fewer indices in the second run).
+- `_x2`, `_half`: `modulate_t1_fog_linear` 10 → 5 cycles, with alpha test 20 →
+  11, the overlay program 17 → 8. Most lit scenery is `t0 · v · 2`, which the
+  pure program's test refused only for the scale. GPU busy per frame, the same
+  scene on both sides (below), and the limit with every non-pure mesh draw on
+  the 1-cycle program:
+
+  | Scene | General | Forms | Limit |
+  | --- | ---: | ---: | ---: |
+  | Flooded Forest shore | 17.50 | 14.68 | 13.75 |
+  | Desert cave | 12.16 | 10.13 | 9.57 |
+  | Alatreon | 11.64 | 10.56 | 10.37 |
+  | Tundra | 12.94 | 12.23 | 12.22 |
+  | City, BASIC forms kept | 11.87 | 11.51 | |
 
 ## Example
 
@@ -94,5 +107,8 @@ its whole input range before using it (an exhaustive or randomized
 comparison of the two programs' C mirrors).
 Measure GPU time, not shader cycles: `_a1` gains through hidden-surface
 removal, which psp2shaderperf cannot show, and `_lerp` saved 6 cycles per
-fragment without a measurable gain. Check every new vertex program's mode
+fragment without a measurable gain. Compare only runs that drew the same scene,
+checked by their index counts: an idle hunter spawns in different places and
+monsters find him, so pin the spawn and hold the monsters. Survey several views
+of a map: Flooded Forest's water and its shore use different programs. Check every new vertex program's mode
 in psp2shaderperf: one dynamic branch makes it per instance.

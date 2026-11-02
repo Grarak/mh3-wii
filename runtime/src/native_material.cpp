@@ -329,9 +329,9 @@ const mh3_shade_scene& ShadeScene(uint64_t& upload) {
 
 aurora::gl::ProgramPtr& ShadeProgram(const NativeShaderVariant& variant) {
     // Every field in its own bits: vertex and lighting 2, lights 4, model 2,
-    // texgens 3 each, textures 3, the chain form 4, the BASIC form 2.
+    // texgens 3 each, textures 3, the chain form 4, the written-out form 3.
     const uint64_t key = uint64_t(variant.vertex) | uint64_t(variant.lighting) << 2 | uint64_t(variant.lights) << 4 | uint64_t(variant.model) << 8 | uint64_t(variant.textures) << 33 |
-                         uint64_t(variant.chain) << 36 | uint64_t(variant.basic_form) << 40 |
+                         uint64_t(variant.chain) << 36 | uint64_t(variant.form) << 40 |
                          uint64_t(variant.overlay) << 12 | uint64_t(variant.alpha_test) << 13 | uint64_t(variant.fog) << 14 | uint64_t(variant.texgen[0]) << 15 | uint64_t(variant.texgen[1]) << 18 |
                          uint64_t(variant.texgen[2]) << 21 | uint64_t(variant.linear_fog) << 24 | uint64_t(variant.pure_modulate) << 25 | uint64_t(variant.target_alpha_one) << 26 |
                          uint64_t(variant.material_gpu) << 27 | uint64_t(variant.dynamic) << 28 | uint64_t(variant.basic_lerp) << 29 | uint64_t(variant.skinned) << 30 |
@@ -630,22 +630,46 @@ bool Constant(const mh3_shade_term& term) {
     return term.source == MH3_SHADE_SOURCE_NONE;
 }
 
-NativeShaderBasicForm BasicForm(const mh3_shade_material& shading) {
+NativeShaderForm BasicForm(const mh3_shade_material& shading) {
     if (shading.model != MH3_SHADE_BASIC || shading.overlay)
-        return NativeShaderBasicForm::General;
+        return NativeShaderForm::General;
 
     const auto& c = shading.color.input;
     const auto& a = shading.alpha.input;
 
     if (shading.textures == 1 && !shading.raster_product && Constant(c[0]) && Source(c[1], MH3_SHADE_SOURCE_TEXTURE, 0, false) && Source(c[2], MH3_SHADE_SOURCE_VERTEX, 0, false) && Constant(c[3]) &&
         Constant(a[0]) && Zero(a[0].offset) && Source(a[1], MH3_SHADE_SOURCE_TEXTURE, 0, true) && Source(a[2], MH3_SHADE_SOURCE_VERTEX, 0, true) && Constant(a[3]) && Zero(a[3].offset))
-        return NativeShaderBasicForm::VertexMix;
+        return NativeShaderForm::VertexMix;
 
     if (shading.textures == 2 && shading.raster_product && Constant(c[0]) && Source(c[1], MH3_SHADE_SOURCE_TEXTURE, 0, false, false) && Source(c[2], MH3_SHADE_SOURCE_TEXTURE, 1, false) && Constant(c[3]) &&
         Source(a[0], MH3_SHADE_SOURCE_TEXTURE, 1, true) && Constant(a[1]) && Zero(a[1].offset) && Constant(a[2]) && Source(a[3], MH3_SHADE_SOURCE_TEXTURE, 0, true, false))
-        return NativeShaderBasicForm::MaskMix;
+        return NativeShaderForm::MaskMix;
 
-    return NativeShaderBasicForm::General;
+    return NativeShaderForm::General;
+}
+
+// t0 * v, the two in either order, with nothing else in the equation but a
+// factor on v unless `plain`.
+bool Product(const mh3_shade_equation& equation, bool alpha, bool plain = true) {
+    const auto& in = equation.input;
+    const bool ordered = Source(in[1], MH3_SHADE_SOURCE_TEXTURE, 0, alpha) && Source(in[2], MH3_SHADE_SOURCE_VERTEX, 0, alpha, plain);
+    const bool swapped = Source(in[1], MH3_SHADE_SOURCE_VERTEX, 0, alpha, plain) && Source(in[2], MH3_SHADE_SOURCE_TEXTURE, 0, alpha);
+    return (ordered || swapped) && Constant(in[0]) && Zero(in[0].offset) && Constant(in[3]) && Zero(in[3].offset) && !equation.subtract && !equation.bias;
+}
+
+// GX's scale codes are 1 for two and 3 for a half (mh3_shade.c). As for the
+// pure product, only an exact classification.
+NativeShaderForm ModulateForm(const mh3_shade_material& shading) {
+    if (shading.model != MH3_SHADE_MODULATE || shading.pure_modulate || !(shading.quality & MH3_SHADE_EXACT) || shading.alpha.scale || !Product(shading.color, false))
+        return NativeShaderForm::General;
+
+    if (shading.overlay)
+        return shading.textures == 3 && shading.color.scale == 1 && Product(shading.alpha, true, false) ? NativeShaderForm::Double : NativeShaderForm::General;
+
+    if (shading.textures != 1 || !Product(shading.alpha, true))
+        return NativeShaderForm::General;
+
+    return shading.color.scale == 1 ? NativeShaderForm::Double : shading.color.scale == 3 ? NativeShaderForm::Half : NativeShaderForm::General;
 }
 
 NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShaderVertex vertex, ShadeLighting lighting) {
@@ -660,7 +684,7 @@ NativeShaderVariant ShadeVariant(const mh3_shade_material& shading, NativeShader
     variant.chain = shading.model == MH3_SHADE_CHAIN ? shading.chain : 0;
     variant.pure_modulate = shading.pure_modulate != 0;
     variant.basic_lerp = BasicLerp(shading);
-    variant.basic_form = BasicForm(shading);
+    variant.form = shading.model == MH3_SHADE_MODULATE ? ModulateForm(shading) : BasicForm(shading);
     variant.raster_product = shading.raster_product != 0;
     variant.target_alpha_one = aurora::gl::shaded_target_alpha_one();
     variant.textures = shading.textures;
@@ -1155,7 +1179,7 @@ double ClippedScreens(const float* a, const float* b, const float* c) {
     return std::abs(area) / 8; // the clip square's area is 4
 }
 
-// BASIC structure: per input source (0, T role, V; ' replicates alpha) with
+// The equation: per input source (0, T role, V; ' replicates alpha) with
 // offset + scale constants (Z 1 H R K F kind, r/k one minus R/K, index), then subtract/bias/scale.
 std::string BasicStructure(const mh3_shade_material& shading) {
     const auto constant = [](const mh3_shade_constant& c) {
@@ -1291,8 +1315,9 @@ void CountQuadFill(const AuroraNativeQuadVertex* vertices, uint32_t quads, const
 // cost. Every 240 frames, per frame: draws, the extra index ranges of a mesh
 // (palette batches), ranges drawn again (instances, passes), runs of
 // consecutive draws sharing program and material, the assets with the most
-// draws, and the programs (vertex+fragment stage names, BASIC with its
-// equation) with their draws and triangles.
+// draws, and the programs (vertex+fragment stage names, with the equation
+// except for CHAIN, whose steps it does not show) with their draws and
+// triangles.
 struct CensusDraw {
     uint32_t asset, model, shape, mesh, first, triangles;
     uint64_t material;
@@ -1412,7 +1437,7 @@ void CountCensusDraw(const mh3_resolved_mesh_submit& mesh, uint64_t material, GL
     }
 
     census.frame.push_back({mesh.asset_id, mesh.model_id, mesh.shape_id, mesh.mesh_index, mesh.first_index, mesh.index_count / 3, material, program, mesh.palette_batch != nullptr,
-                            NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant) + (shading.model == MH3_SHADE_BASIC ? BasicStructure(shading) : std::string())});
+                            NativeShaderVertexName(variant) + "+" + NativeShaderFragmentName(variant) + (shading.model == MH3_SHADE_CHAIN ? std::string() : BasicStructure(shading))});
 }
 #endif
 void SubmitShadedModelMesh(const mh3_resolved_mesh_submit& mesh, const NativeModelGPUView& resident) {
