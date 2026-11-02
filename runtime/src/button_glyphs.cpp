@@ -103,17 +103,21 @@ constexpr Source kSources[] = {
     {0x7158f3c28c529062, kRGBA8, 256, 288, kMenu01},     // ger
     {0x036498912db0d7c4, kRGBA8, 256, 288, kMenu01},     // ita
     {0xe1de26d428cef80d, kRGBA8, 256, 288, kMenu01},     // spa
+    {0x6836dda163d02048, kRGBA8, 256, 288, kMenu01},     // Japanese disc's
     {0x7d0224435340dd77, kRGB5A3, 512, 256, kReward02},  // reward02, eng
     {0x124e7f02838c6b91, kRGB5A3, 512, 256, kReward02},  // fre
     {0xfe560a70bdec0eca, kRGB5A3, 512, 256, kReward02},  // ger
     {0xd421a69587ee1bdc, kRGB5A3, 512, 256, kReward02},  // ita
     {0x79e3c370d96da4f5, kRGB5A3, 512, 256, kReward02},  // spa
+    {0x969659ebf2d8f049, kRGB5A3, 512, 256, kReward02},  // Japanese disc's
     {0x211cb0901d1766a4, kRGB5A3, 768, 256, kTitleMenu}, // every language's
+    {0x416fd803b5bc2ba9, kRGB5A3, 768, 256, kTitleMenu}, // Japanese disc's
     {0x008debac7dac382d, kRGB5A3, 288, 288, kCharmake},  // eng
     {0xfdb60a610840ce3c, kRGB5A3, 288, 288, kCharmake},  // fre
     {0x3cb15245ef6da7af, kRGB5A3, 288, 288, kCharmake},  // ger
     {0x19d11d879f3a7c94, kRGB5A3, 288, 288, kCharmake},  // ita
     {0x0940f4f12bed1bdf, kRGB5A3, 288, 288, kCharmake},  // spa
+    {0x7dab5a2266a06369, kRGB5A3, 288, 288, kCharmake},  // Japanese disc's
 };
 
 constexpr uint8_t kInk[3] = {78, 78, 87}; // the letters' colour

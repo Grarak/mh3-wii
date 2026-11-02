@@ -20,11 +20,12 @@ spec = importlib.util.spec_from_file_location('link_rso', ROOT / 'scripts/link_r
 link_rso = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(link_rso)
 
-# The Japanese executable's array of the system messages.
-SYSTEM_MESSAGES = 0x806C5CF0
+# The Japanese executable's arrays of the system and save messages.
+SYSTEM_MESSAGES, SAVE_MESSAGES = 0x806C5CF0, 0x806C5D50
 
-# In a run's overlay number: the strings are scrambled (each byte inverted).
-SCRAMBLED = 8
+# In a run's overlay number: the strings are scrambled (each byte inverted),
+# or start with a player.
+SCRAMBLED, PLAYER_1, PLAYER_2 = 8, 16, 32
 
 # The Japanese executable's index of the guide's lines, and their second part.
 GUIDE_INDEX, GUIDE_LATER = 0x806B10A8, 0x806B0FC0
@@ -326,7 +327,11 @@ class EuropeOverlay(Overlay):
 
 
 # demo_data's menus the Japanese overlay has under no name, by slot.
-MENU_SLOTS = {'title_mychar_menu_msg': 0x22540, 'title_mychar_pl_msg': 0x22548, 'title_mychar_add_msg': 0x22550, 'title_mychar_same_msg': 0x22560, 'title_file_name_msg': 0x22468}
+MENU_SLOTS = {'title_mychar_menu_msg': 0x22540, 'title_mychar_pl_msg': 0x22548, 'title_mychar_add_msg': 0x22550, 'title_mychar_same_msg': 0x22560, 'title_file_name_msg': 0x22468,
+              'title_mychar_guide_msg_1p': 0x22558, 'title_mychar_guide_msg_2p': 0x22558}
+
+# The Japanese game writes the player before these two.
+MENU_PLAYERS = {'title_mychar_guide_msg_1p': PLAYER_1, 'title_mychar_guide_msg_2p': PLAYER_2}
 
 
 def menus(result, europe, overlay):
@@ -346,7 +351,7 @@ def menus(result, europe, overlay):
         scrambled = name.startswith('gallery_') and name != 'gallery_daynight_msg_eng'
 
         if partner is not None:
-            result.add('demo_data', 0, slot // 4, MODULES['demo_data'] | (SCRAMBLED if scrambled else 0), partner, count)
+            result.add('demo_data', 0, slot // 4, MODULES['demo_data'] | (SCRAMBLED if scrambled else 0) | MENU_PLAYERS.get(name[:-4], 0), partner, count)
 
 
 class Utf8Overlay(EuropeOverlay):
@@ -459,8 +464,9 @@ def main():
     quest_lines(result, 'data20', (args.europe / '00/data20_eng.bin').read_bytes(), quest, MODULES['quest_data'], report)
     menus(result, europeDemo, demo)
 
-    # The system messages: same order, same length.
+    # The system and save messages: same order, same length.
     result.add('main', 0, 0, MODULES['main'], SYSTEM_MESSAGES, 24)
+    result.add('main', 1, 0, MODULES['main'], SAVE_MESSAGES, 9)
     print('pairs', result.total, 'runs', len(result.runs))
 
     write(args.output, result)

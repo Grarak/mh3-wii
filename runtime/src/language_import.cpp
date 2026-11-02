@@ -37,7 +37,14 @@ using namespace LanguagePack;
 constexpr uint32_t kCell = 32;
 constexpr uint32_t kAtlasWidth = 2048;
 constexpr uint32_t kEuropeanGlyphTable = 0x80580818, kEuropeanGlyphs = 228;
-constexpr uint32_t kSystemMessages = 0x80608928, kSystemMessageCount = 24;
+
+// main.dol's message arrays, English: the disc and controller messages, the
+// save check's at boot.
+struct MessageTable {
+    uint32_t slots, count;
+};
+
+constexpr MessageTable kMessages[]{{0x80608928, 24}, {0x8060AEB0, 9}};
 
 // A Japanese glyph (20 by 20) keeps its share of the 24-pixel quad a 32-pixel
 // cell fills.
@@ -255,8 +262,9 @@ Status Catalogue(DiscImage& disc, const Executable& executable, std::vector<Item
             items.push_back({kDemoData, 0, slot / 4, TextAt(demo.data, demo.slots.at(slot))});
     }
 
-    for (uint32_t i = 0; i < kSystemMessageCount; ++i)
-        items.push_back({kExecutable, 0, i, TextAt(executable.data, executable.Offset(executable.Pointer(kSystemMessages + i * 4)))});
+    for (uint32_t table = 0; table < std::size(kMessages); ++table)
+        for (uint32_t i = 0; i < kMessages[table].count; ++i)
+            items.push_back({kExecutable, table, i, TextAt(executable.data, executable.Offset(executable.Pointer(kMessages[table].slots + i * 4)))});
 
     for (const uint32_t file : {kQuest00, kQuest01, kQuest03}) {
         const Bytes bytes = disc.ReadFile(kFileNames[file]);
@@ -518,7 +526,7 @@ Status Build(const std::filesystem::path& gameData, const std::string& code, con
 
             pack.fields.push_back({item.file, item.entry, item.offset, item.bytes, TextHash(item.english.c_str()), store(text)});
         } else {
-            const uint32_t slot = item.file == kExecutable ? kSystemMessages + item.word * 4 : item.word;
+            const uint32_t slot = item.file == kExecutable ? kMessages[item.entry].slots + item.word * 4 : item.word;
             pack.references.push_back({item.file, item.entry, slot, store(text)});
         }
     }
@@ -673,7 +681,7 @@ constexpr std::pair<const char*, const char*> kReplacedFiles[]{
     {"id/waku.brres", "04/waku_eng.brres"},   {"system/loading.tpl", "00/loading_eng.tpl"},
 };
 
-constexpr uint32_t kOverlayCount = 5, kScrambled = 8;
+constexpr uint32_t kOverlayCount = 5, kScrambled = 8, kPlayer1 = 16, kPlayer2 = 32;
 constexpr const char* kOverlayNames[kOverlayCount]{"rel/com_data.rso", "rel/lobby_data.rso", "rel/quest_data.rso", "rel/demo_data.rso", "rel/net_data.rso"};
 
 // The Japanese game's text for the European keys.
@@ -722,7 +730,8 @@ Status JapaneseStrings(const JapaneseDisc& disc, std::map<std::string, std::stri
                 for (auto& byte : raw)
                     byte ^= 0xFF;
 
-            strings[Key(run.file, run.entry, run.word + k * run.wordStep)] = FromShiftJis(raw);
+            const std::string player = run.overlay & kPlayer1 ? "\xEF\xBC\x91\xEF\xBC\xB0" : run.overlay & kPlayer2 ? "\xEF\xBC\x92\xEF\xBC\xB0" : ""; // full-width 1P, 2P
+            strings[Key(run.file, run.entry, run.word + k * run.wordStep)] = player + FromShiftJis(raw);
         }
 
     // Quests: the same entries, the text scrambled in fixed fields.
