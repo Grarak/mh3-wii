@@ -3368,3 +3368,6 @@
 800513dc VecAdd
 8005101c RotVecX
 80051178 RotVecZ
+8028fa84 SegmentDistanceSq
+802908a4 SegmentCapsule
+8029015c CapsuleSphere

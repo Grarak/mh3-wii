@@ -31,10 +31,15 @@
 //     within the radius of it, the sphere's leading point (the centre
 //     moved by the radius against the normal) crossing the plane inside the
 //     triangle. Collecting, recorded as a hit (centre `from`, flags as below,
-//     the distance travelled to the contact at 0x806AE4B8). The path where
-//     the crossing falls outside (the edges as capsules, 0x802908A4) stays
-//     translated: the port runs the original then, which recomputes from
-//     the start (nothing before it writes).
+//     the distance travelled to the contact at 0x806AE4B8). Where the
+//     crossing falls outside, the triangle's edges as capsules: the nearest
+//     hit is the contact, recorded with flags 0x7F and the way to it as the
+//     normal. Only an edge needing 0x802905FC (rounding past a clamp) runs
+//     the original, which recomputes from the start.
+//   0x802908A4 (segment, capsule, entry out, exit out) -> 1 when the segment
+//     touches the capsule; 0x8029015C (capsule, sphere, point, direction,
+//     depth) -> 1 when the sphere overlaps it; 0x8028FA84 the closest points
+//     of two segments.
 //   0x80292524 LandSweepTriangleCandidateFilter (sweep record, triangle,
 //     point) -> 1 when the sphere touches the triangle, recorded as hit
 //     count 0x80797018 (at most 9): the triangle (0x806AE0F8, 0x3C each, the
@@ -364,10 +369,280 @@ uint32_t CandidateFilter(uint32_t sweep, uint32_t triangle, uint32_t point) {
     cpu->gpr[3] = CandidateFilter(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5]);
 }
 
+// ---- capsules ----
+
+constexpr float kCapsuleTiny = 1e-5f; // 0x8079C7E0
+
+float Sqrt(float x) {
+    return x > 0.0f ? x * RSqrt(x) : 0.0f;
+}
+
+float Clamp01(float x) {
+    return x < 0.0f ? 0.0f : x <= 1.0f ? x : 1.0f;
+}
+
+// The unit vector x, y, 0.
+V3 Axis(float x, float y) {
+#if MH3_SWEEP_NEON
+    const float lanes[4] = {x, y, 0.0f, 0.0f};
+    return {vld1q_f32(lanes)};
+#else
+    return {x, y, 0.0f};
+#endif
+}
+
+// The moving segment (0x802908A4's first argument: start +0, end +0xC,
+// direction +0x18, bounding sphere +0x24, +0x30).
+struct Segment {
+    V3 start, end, dir, centre;
+    float bound;
+};
+
+// CapsuleSetup's 0x8028F5BC output: start +0, end +0xC, radius +0x18,
+// direction +0x1C, bounding sphere +0x28, +0x34.
+struct Capsule {
+    V3 start, end, dir, centre;
+    float radius, bound;
+};
+
+Capsule MakeCapsule(V3 start, V3 end, float radius) {
+    const V3 centre = (start + end) * 0.5f;
+    return {start, end, end - start, centre, radius, Length(start - centre) + radius};
+}
+
+Segment LoadSegment(uint32_t a) {
+    return {Load(a), Load(a + 0xC), Load(a + 0x18), Load(a + 0x24), ReadF(a + 0x30)};
+}
+
+Capsule LoadCapsule(uint32_t c) {
+    return {Load(c), Load(c + 0xC), Load(c + 0x1C), Load(c + 0x28), ReadF(c + 0x18), ReadF(c + 0x34)};
+}
+
+// 0x8028FA84: the squared distance between the segments from a along da and
+// from b along db, and how far along each the closest points are.
+float SegmentDistanceSq(V3 a, V3 da, V3 b, V3 db, float& s, float& t) {
+    const V3 between = a - b;
+    const float aa = Dot(da, da), bb = Dot(db, db), f = Dot(db, between);
+
+    s = t = 0.0f;
+
+    if (!(aa > kTiny) && !(bb > kTiny))
+        return Dot(between, between);
+
+    if (!(aa > kTiny)) {
+        t = Clamp01(f / bb);
+    } else {
+        const float c = Dot(da, between);
+
+        if (!(bb > kTiny)) {
+            s = Clamp01(-c / aa);
+        } else {
+            const float ab = Dot(da, db), denominator = aa * bb - ab * ab;
+
+            if (denominator != 0.0f)
+                s = Clamp01((ab * f - c * bb) / denominator);
+
+            t = (f + ab * s) / bb;
+
+            if (t < 0.0f) {
+                s = Clamp01(-c / aa);
+                t = 0.0f;
+            } else if (t > 1.0f) {
+                s = Clamp01((ab - c) / aa);
+                t = 1.0f;
+            }
+        }
+    }
+
+    const V3 gap = (b + db * t) - (a + da * s);
+    return Dot(gap, gap);
+}
+
+// 0x8028F8D0: the squared distance from a point to a segment, t the closest
+// point's place along it.
+float SegmentPointDistanceSq(V3 start, V3 dir, V3 point, float& t) {
+    const V3 v = point - start;
+    const float length2 = Dot(dir, dir);
+    t = 0.0f;
+
+    if (!(length2 >= 1e-5f))
+        return Dot(v, v);
+
+    t = Clamp01(Dot(v, dir) / length2);
+    const V3 rest = v - dir * t;
+    return Dot(rest, rest);
+}
+
+// 0x80290820: whether a point is in the capsule.
+bool InCapsule(V3 point, const Capsule& c) {
+    float t;
+    return SegmentPointDistanceSq(c.start, c.dir, point, t) < c.radius * c.radius;
+}
+
+// 0x802908A4: whether the segment touches the capsule, and where it enters
+// and leaves. -1 for the case the original hands to 0x802905FC, which needs
+// the closest point past the capsule's end: rounding only, as t is clamped.
+int SegmentCapsule(const Segment& a, const Capsule& b, V3& first, V3& second) {
+    const float reach = a.bound + b.bound;
+    const V3 centres = a.centre - b.centre;
+
+    if (!(Dot(centres, centres) <= reach * reach))
+        return 0;
+
+    float s, t;
+    const float distance2 = SegmentDistanceSq(a.start, a.dir, b.start, b.dir, s, t);
+    const float distance = distance2 >= kCapsuleTiny ? Sqrt(distance2) : 0.0f;
+
+    if (!(distance - b.radius <= 0.0f))
+        return 0;
+
+    if (InCapsule(a.start, b) && InCapsule(a.end, b)) {
+        first = a.start;
+        second = a.end;
+        return 1;
+    }
+
+    if (t > 1.0f || t < 0.0f)
+        return -1;
+
+    V3 across = Cross(Cross(a.dir, b.dir), b.dir);
+
+    if (Dot(across, across) > kTiny)
+        across = across * RSqrt(Dot(across, across));
+
+    const V3 along = a.dir * RSqrt(Dot(a.dir, a.dir));
+    const float half = Sqrt(b.radius * b.radius - distance2) / Dot(along, across);
+    const V3 middle = a.start + a.dir * s;
+    first = middle + along * half;
+    second = middle - along * half;
+    return 1;
+}
+
+extern "C" void func_802908A4(CpuContext* cpu);
+
+void SegmentCapsulePort(CpuContext* cpu) {
+    const uint32_t first = cpu->gpr[5], second = cpu->gpr[6];
+    V3 enters{}, leaves{};
+    const int hit = SegmentCapsule(LoadSegment(cpu->gpr[3]), LoadCapsule(cpu->gpr[4]), enters, leaves);
+
+    if (hit < 0) {
+        func_802908A4(cpu);
+        return;
+    }
+
+    if (hit && first)
+        Store(first, enters);
+
+    if (hit && second)
+        Store(second, leaves);
+
+    cpu->gpr[3] = uint32_t(hit);
+}
+
+// 0x8029015C (capsule, sphere {centre, radius}, closest point out, direction
+// out, f32 depth out): whether the sphere overlaps the capsule, with the
+// point on its axis nearest the sphere's centre.
+void CapsuleSpherePort(CpuContext* cpu) {
+    const uint32_t sphere = cpu->gpr[4], point = cpu->gpr[5], direction = cpu->gpr[6], depth = cpu->gpr[7];
+    const Capsule c = LoadCapsule(cpu->gpr[3]);
+    const V3 centre = Load(sphere);
+    const float radius = ReadF(sphere + 0xC), reach = c.bound + radius;
+    const V3 centres = c.centre - centre;
+
+    if (!(Dot(centres, centres) <= reach * reach)) {
+        cpu->gpr[3] = 0;
+        return;
+    }
+
+    float t;
+    const float distance2 = SegmentPointDistanceSq(c.start, c.dir, centre, t);
+    const V3 closest = c.start + c.dir * t;
+    V3 away = centre - closest;
+    float distance = 0.0f;
+    Store(point, closest);
+
+    if (distance2 >= kCapsuleTiny) {
+        distance = Sqrt(distance2);
+    } else {
+        // The centre on the axis: any direction across it.
+        away = Cross(c.dir, Axis(1.0f, 0.0f));
+
+        if (Dot(away, away) < kCapsuleTiny)
+            away = Cross(c.dir, Axis(0.0f, 1.0f));
+    }
+
+    const float gap = distance - (c.radius + radius);
+    MemoryInline::FlatWriteFloat32(depth, gap);
+
+    if (Dot(away, away) > kTiny)
+        away = away * RSqrt(Dot(away, away));
+
+    Store(direction, away);
+    cpu->gpr[3] = gap < 0.0f ? 1 : 0;
+}
+
 // ---- 0x8029459C ----
 
-// 1 or 0 as the original returns, or -1 when the crossing falls outside the
-// triangle (the original's capsule path).
+// The original's capsule path: the sweep against the triangle's edges. The
+// nearest hit is the contact, the way to it the normal; -1 when an edge needs
+// 0x802905FC, and the original runs instead.
+int SweepEdges(uint32_t record, uint32_t triangle, uint32_t collect, int n) {
+    const V3 from = Load(record + 0xC), to = Load(record), dir = to - from, half = dir * 0.5f;
+    const Segment sweep = {from, to, dir, from + half, Length(half)};
+    const V3 corners[4] = {Load(triangle + 8), Load(triangle + 0x14), Load(triangle + 0x20), Load(triangle + 8)};
+    const float radius = ReadF(record + 0x18);
+    float nearest = 1e6f;
+    V3 contact{}, normal{};
+    int hits = 0;
+
+    MemoryInline::FlatWrite8(kHitEdge + n, 1);
+
+    for (int i = 0; i < 3; ++i) {
+        V3 first{}, second{};
+        const int hit = SegmentCapsule(sweep, MakeCapsule(corners[i], corners[i + 1], radius), first, second);
+
+        if (hit < 0)
+            return -1;
+
+        if (!hit)
+            continue;
+
+        ++hits;
+        const V3 away = first - from;
+        const float distance = Length(away);
+
+        if (distance < nearest) {
+            contact = first;
+            normal = away;
+            nearest = distance;
+        }
+    }
+
+    if (!hits)
+        return 0;
+
+    if (!(collect & 0xFF))
+        return 1;
+
+    Record(n, triangle, from, 0x7F, contact);
+
+    if (Dot(normal, normal) > kTiny)
+        normal = normal * RSqrt(Dot(normal, normal));
+
+    const uint32_t copiedNormal = kHitTriangles + n * kTriangleBytes + 0x2C;
+    Store(copiedNormal, normal);
+
+    for (uint32_t k = 0; k < 12; k += 4)
+        if (std::fabs(ReadF(copiedNormal + k)) < kTiny)
+            MemoryInline::FlatWriteFloat32(copiedNormal + k, 0.0f);
+
+    Store(kHitPlanePoints + n * 12, contact);
+    MemoryInline::FlatWriteFloat32(kSweepFloats + n * 4, nearest);
+    MemoryInline::FlatWrite8(kHitCount, uint8_t(n + 1));
+    return 1;
+}
+
+// 1 or 0 as the original returns, or -1 for the rare case SweepEdges leaves.
 int SweepTriangleFast(uint32_t record, uint32_t triangle, uint32_t collect) {
     const int n = int8_t(MemoryInline::FlatRead8(kHitCount));
 
@@ -393,12 +668,12 @@ int SweepTriangleFast(uint32_t record, uint32_t triangle, uint32_t collect) {
     const float t = (Dot(normal, v0) - Dot(normal, start)) * Recip(Dot(normal, move));
 
     if (t < 0.0f || t > 1.0f)
-        return -1;
+        return SweepEdges(record, triangle, collect, n);
 
     const V3 hit = start + move * t;
 
     if (!PointInTriangle(hit, triangle + 8, normal))
-        return -1;
+        return SweepEdges(record, triangle, collect, n);
 
     if (!(collect & 0xFF))
         return 1;
@@ -622,6 +897,18 @@ extern "C" void MH3_LandSweepTriangle(CpuContext* cpu) {
         SweepTrianglePort(cpu);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8029459C, MH3_LandSweepTriangle, "LandSweepTriangle");
+
+extern "C" void MH3_LandSweepSegmentCapsule(CpuContext* cpu) {
+    PortCheck::Call(cpu, "LandSweepSegmentCapsule", func_802908A4, SegmentCapsulePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x802908A4, MH3_LandSweepSegmentCapsule, "LandSweepSegmentCapsule");
+
+extern "C" void func_8029015C(CpuContext* cpu);
+
+extern "C" void MH3_LandSweepCapsuleSphere(CpuContext* cpu) {
+    PortCheck::Call(cpu, "LandSweepCapsuleSphere", func_8029015C, CapsuleSpherePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8029015C, MH3_LandSweepCapsuleSphere, "LandSweepCapsuleSphere");
 
 extern "C" void func_80293AEC(CpuContext* cpu);
 extern "C" void MH3_LandSweepQuery(CpuContext* cpu) {
