@@ -198,6 +198,22 @@ row, **Online settings**, holds:
 Without the launcher (the host build, a Vita development build started with arguments),
 `MH3_ONLINE_SERVER` and `MH3_ONLINE_SKIP_TLS=1` set the same.
 
+### Ad hoc play
+
+**Ad hoc play** in the launcher's main menu needs no server and no router.
+**Host a game** joins the Vita's ad hoc network, starts the embedded server
+(`runtime/src/net/local_server*`, a C++ port of MH3SP's OPN, LMP and FMP
+servers, with the account check and GameSpy's NAT negotiation) and goes to the
+City. **Join a game** looks 15 s for a host's announcement (a broadcast each
+second on UDP 12419) and goes to its City. The game then runs as it does
+online: the embedded server stands in for the servers, and hunters link
+directly, up to four to a city.
+
+The server keeps nothing: Capcom IDs and friends last as long as the host's
+session. On Linux the same rows use the local network; one player per IP
+applies, since the peer port is fixed. `MH3_LOCAL_SERVER=host` or `join` does
+the same without the launcher.
+
 Against a local MH3SP server (recommended for testing):
 
 ```sh

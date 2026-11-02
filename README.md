@@ -46,7 +46,8 @@ loads them and cached there. Saves live in `ux0:/data/mh3-wii/saves/`
 launcher's menus start the game, quests and custom quests, and set cheats,
 widescreen, upscaling, MSAA and the frame limit
 ([controls](docs/vita-controls.md)). Online play uses the community
-[MH3SP](https://github.com/sepalani/MH3SP) servers ([online](docs/online.md)).
+[MH3SP](https://github.com/sepalani/MH3SP) servers ([online](docs/online.md)),
+or ad hoc play between nearby consoles with no server or router.
 
 The VPK holds the translated code and nothing of the disc: the game's
 executable sections (`sys/main.dol`, checked by hash), textures, models,
