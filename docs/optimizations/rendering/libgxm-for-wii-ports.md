@@ -177,7 +177,8 @@ Rules learned on hardware [doc: renderer status, "GXM rules"]:
 - The same bug hit a uniform-only product: `coefficient * float4(rgb, alpha)` in
   a material's animated picks returned alpha 0 **[devkit]**. Colour stayed right,
   so only materials that read that alpha showed it: alpha-tested ones drew
-  nothing. Written two lanes at a time, it works.
+  nothing. Separate colour and alpha products fix it, at no cost; two lanes at
+  a time works too, but tripled one program's cycles.
 - Matrix slot selectors are integral U8 attributes and are cast directly;
   `int(selector + 0.5)` made the optimized array index round slots 3 and 9
   up.

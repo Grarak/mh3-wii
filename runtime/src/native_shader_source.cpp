@@ -1147,13 +1147,14 @@ real4 coefficient(int k) {
     Pick p = material.pick[k];
     real4 c = anim.palette[int(p.index.x)];
     real4 a = anim.palette[int(p.index.y)];
-    real3 picked = lerp(c.rgb, dot(c, p.color_mask).xxx, real(p.index.z));
     real4 scale = material.coefficient[k];
-    // Two components wide, as MODULATE: as one float4 multiply the alpha lane
-    // came out 0, and a material with an alpha test drew nothing.
+    // Colour and alpha apart: as one float4 multiply the alpha lane came out
+    // 0, and a material with an alpha test drew nothing. Two lanes at a time
+    // works too, but psp2shaderperf modulate_t1_overlay_alpha_a1_gpu_dyn 19 ->
+    // 58 cycles.
     real4 result;
-    result.rg = scale.rg * picked.rg;
-    result.ba = scale.ba * real2(picked.b, dot(a, p.alpha_mask));
+    result.rgb = scale.rgb * lerp(c.rgb, dot(c, p.color_mask).xxx, real(p.index.z));
+    result.a = scale.a * dot(a, p.alpha_mask);
     return result;
 #else
     return material.coefficient[k];
