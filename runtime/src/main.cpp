@@ -1,3 +1,4 @@
+#include "net/local_server.h"
 #include "language_import.h"
 #include "language_pack.h"
 #include "abi_bridge.h"
@@ -168,6 +169,21 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 (RVZ, WIA or ISO); remembered in disc/ next to the executable\n";
 
 #ifndef __vita__
+// MH3_LOCAL_SERVER=ADDRESS hosts the embedded server: other players connect to
+// ADDRESS, this one to itself.
+void HostLocalServer() {
+    const char* address = std::getenv("MH3_LOCAL_SERVER");
+
+    if (!address || !*address)
+        return;
+
+    if (!LocalServer::Start(address))
+        MH3_THROW(std::runtime_error("The local server could not start"));
+
+    setenv("MH3_ONLINE_SERVER", ("127.0.0.1:" + std::to_string(LocalServer::kNasPort)).c_str(), 1);
+    setenv("MH3_ONLINE_SKIP_TLS", "1", 1);
+}
+
 // The disc metadata and converted-asset cache live in disc/ next to the
 // executable (MH3_DISC_DIR overrides it); the disc image is read in place.
 // Every launch checks the image recorded there; --rom records a new one.
@@ -503,6 +519,7 @@ int main(int argc, char** argv) {
         }
 #ifndef __vita__
         PrepareGameData(rom);
+        HostLocalServer();
 
         if (argc == 3 && std::string_view(argv[1]) == "--import-language") {
             const std::filesystem::path file = argv[2], data = std::getenv("MH3_DISC_DIR");

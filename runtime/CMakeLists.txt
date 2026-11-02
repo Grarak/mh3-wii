@@ -279,7 +279,7 @@ include(../generated/build_shards/shards.cmake)
 if(EMSCRIPTEN)
   set(MH3_NET_HOST_SOURCE src/net/net_host_none.cpp)
 else()
-  set(MH3_NET_HOST_SOURCE src/net/net_host_posix.cpp)
+  set(MH3_NET_HOST_SOURCE src/net/net_host_posix.cpp src/net/local_server.cpp src/net/local_server_posix.cpp)
 endif()
 
 if(VITA)

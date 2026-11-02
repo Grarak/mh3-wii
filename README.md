@@ -220,4 +220,7 @@ Strings you leave out or unchanged stay English, so a translation can start smal
 
 The translator and the code derived from WiiCompiled are GPLv3 (`LICENSE`,
 `toolchain/ORIGIN.md`, `toolchain/THIRD-PARTY-NOTICES.md`). Aurora is MIT
-(`aurora-main/LICENSE`).
+(`aurora-main/LICENSE`). The embedded multiplayer server
+(`runtime/src/net/local_server*`) is derived from the
+[MH3 Server Project](https://github.com/sepalani/MH3SP) and stays under its
+AGPL-3.0-or-later.
