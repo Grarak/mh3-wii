@@ -37,7 +37,7 @@ extern "C" void func_804C73F0(CpuContext* ctx); // C_QUATMtx
 extern "C" void func_804C75C0(CpuContext* ctx); // C_QUATSlerp
 extern "C" void func_804C6AB0(CpuContext* ctx); // PSMTXQuat
 extern "C" void func_804C72A0(CpuContext* ctx); // PSVECCrossProduct
-extern "C" void func_804C71E0(CpuContext* ctx); // PSVECNormalize
+extern "C" void MH3_PSVECNormalize(CpuContext* ctx);
 
 namespace {
 
@@ -254,8 +254,8 @@ uint32_t BlendResult(CpuContext* ctx) {
                 for (unsigned c = 0; c < 3; ++c)
                     MemoryInline::FlatWrite32(row0 + 16 * r + 4 * c, Read32(saved + 12 * r + 4 * c));
         } else {
-            call(func_804C71E0, {row0, row0});
-            call(func_804C71E0, {row2, row2});
+            call(MH3_PSVECNormalize, {row0, row0});
+            call(MH3_PSVECNormalize, {row2, row2});
             call(func_804C72A0, {row2, row0, row1});
         }
     }
