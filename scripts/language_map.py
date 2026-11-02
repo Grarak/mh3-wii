@@ -245,39 +245,32 @@ def rows(result, name, entry_index, entry, overlay, module, report):
 
 def talk(result, name, entry_index, entry, overlay, module, europe, descriptor, report):
     """Talk groups: five (table, count) pairs, whose destinations are records
-    {u32, char*} under one name in both overlays."""
+    {u32, char*}: npcTalkDataNNN, then npcScriptNNN_00 to _03. The European
+    overlay names the group's npcTalkScriptNNN; its destinations can be in BSS."""
     groups = struct.unpack('>64I', entry[:256])
-    placed = missing = 0
 
     for i, group in enumerate(groups):
         if not group:
             continue
 
-        first, more = europe.target.get(descriptor + i * 8), europe.target.get(descriptor + i * 8 + 4)
-        destinations = [first] + [europe.target.get(more + k * 8) if more else None for k in range(4)]
+        number = europe.names[europe.target[descriptor + i * 8 + 4]][-3:]
 
-        for pair, destination in enumerate(destinations):
+        for pair in range(5):
             table, count = struct.unpack('>II', entry[group + pair * 8:group + pair * 8 + 8])
 
             if not table or not count:
                 continue
 
-            symbol = europe.names.get(destination)
-            slot = overlay.symbols.get(symbol) if symbol else None
+            symbol = f'npcTalkData{number}' if pair == 0 else f'npcScript{number}_{pair - 1:02}'
+            slot = overlay.symbols.get(symbol)
 
             if slot is None:
-                missing += count
-                report.append(f'{name}.{entry_index} group {i} pair {pair} n={count} no partner for {symbol}')
+                report.append(f'{name}.{entry_index} group {i} pair {pair} n={count} no {symbol}')
                 continue
 
             for k in range(count):
                 if word(entry, table + k * 4) and slot + k * 8 + 4 in overlay.target:
                     result.add(name, entry_index, table // 4 + k, module, slot + k * 8 + 4, 1, slot_step=8)
-                    placed += 1
-                elif word(entry, table + k * 4):
-                    missing += 1
-
-    report.append(f'{name}.{entry_index} talk placed {placed} missing {missing}')
 
 
 def quest_lines(result, name, data, overlay, module, report):
