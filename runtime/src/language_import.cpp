@@ -445,11 +445,11 @@ Status TrueTypeFont(const Bytes& file, Rasterise& out) {
         if (!glyph)
             return false;
 
-        const float scale = stbtt_ScaleForPixelHeight(info.get(), float(kGlyphSize));
-        int ascent = 0, descent = 0, gap = 0, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        stbtt_GetFontVMetrics(info.get(), &ascent, &descent, &gap);
+        // An em of the glyph size, the baseline where full-width glyphs fill it.
+        const float scale = stbtt_ScaleForMappingEmToPixels(info.get(), float(kGlyphSize));
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
         stbtt_GetGlyphBitmapBox(info.get(), glyph, scale, scale, &x0, &y0, &x1, &y1);
-        const int baseline = int((kCell - kGlyphSize) / 2) + int(ascent * scale + 0.5f);
+        const int baseline = int(kCell - kGlyphSize) / 2 + kGlyphSize * 7 / 8;
         const int left = int(kCell - (x1 - x0)) / 2, top = baseline + y0;
 
         if (left < 0 || top < 0 || left + (x1 - x0) > int(kCell) || top + (y1 - y0) > int(kCell))
