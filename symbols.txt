@@ -3377,4 +3377,9 @@
 800407d4 KeyboardUpdateHook
 8044a3c4 KeyboardInput
 8005bea4 Utf8CharSize
+80383c0c ChatLogPost
+80383e38 ChatLogAdd
+804518a0 ChatVisibleColumns
+80451938 ChatPost
+80451a00 ChatPostDirect
 8036c2e8 ShoutoutEditStep
