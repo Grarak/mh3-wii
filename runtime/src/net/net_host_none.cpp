@@ -87,6 +87,8 @@ bool ParseIpv4(const std::string&, uint32_t*) {
     return false;
 }
 
+void UseLinkAddress(uint32_t) {}
+
 void AddHostOverride(std::string, uint32_t) {}
 
 void AddPortOverride(uint16_t, uint16_t) {}

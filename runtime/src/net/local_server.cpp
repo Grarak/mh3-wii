@@ -26,8 +26,13 @@
 #include <map>
 #include <optional>
 #include <random>
+#include <string_view>
 #include <thread>
 #include <vector>
+
+#ifdef MH3_HAS_AURORA
+#include <aurora/thread_role.hpp>
+#endif
 
 namespace LocalServer {
 namespace {
@@ -214,6 +219,22 @@ Optional ReadOptional(Reader& in) {
     return fields;
 }
 
+// The searches' optional fields: also a type, which goes unused.
+Optional ReadDetailed(Reader& in) {
+    Optional fields;
+    in.U32();
+    const uint32_t count = in.U32();
+
+    for (uint32_t i = 0; i < count && !in.failed; ++i) {
+        const uint8_t id = uint8_t(in.U8());
+        const bool present = in.U8();
+        in.U8();
+        fields.push_back({id, present ? std::optional<uint32_t>(in.U32()) : std::nullopt});
+    }
+
+    return fields;
+}
+
 Bytes PackOptional(const Optional& fields) {
     Bytes out(1, char(fields.size()));
 
@@ -376,6 +397,7 @@ struct State {
     std::list<Session> sessions;
     std::map<Bytes, std::array<Bytes, 6>> consoles; // support code -> Capcom IDs
     std::map<Bytes, Bytes> names;                   // Capcom ID -> hunter
+    std::map<Bytes, std::vector<Bytes>> friends;    // Capcom ID -> Capcom IDs
     std::list<Client> clients;
 };
 
@@ -389,6 +411,7 @@ struct Client {
     uint16_t port = 0;
     Session* session = nullptr;
     Bytes input, output;
+    std::vector<Bytes> found; // a search's results, between its head and data
     Clock::time_point opened = Clock::now(), pinged = Clock::now();
     bool requested = false, closing = false, ended = false;
 };
@@ -415,6 +438,14 @@ void Send(Client& client, uint32_t id, const Bytes& data, uint32_t sequence) {
     U16(client.output, sequence);
     U32(client.output, id);
     client.output += data;
+}
+
+// An error for the player in place of the answer.
+void Alert(Client& client, uint32_t id, const Bytes& message, uint32_t sequence) {
+    Bytes out;
+    U32(out, 1); // 0 hides it
+    Lp2(out, message);
+    Send(client, id | 1, out, sequence);
 }
 
 void Broadcast(const Players& players, uint32_t id, const Bytes& data, uint32_t sequence, const Session* except) {
@@ -479,11 +510,17 @@ Bytes GatePack(uint32_t index, const Gate& gate) {
     return PackLayer(index, gate.name, gate.Population(), uint32_t(gate.players.Capacity()), gate.State(), 2, nullptr, nullptr, nullptr);
 }
 
-Bytes CityPack(uint32_t gateIndex, uint32_t index, const City& city, bool withPath) {
+// `listed`: its place in the list it goes into. A city with a leader always
+// says where it is.
+Bytes CityPack(uint32_t gateIndex, uint32_t index, const City& city, bool withPath, uint32_t listed) {
     const uint32_t inQuest = city.InQuest();
     const Bytes path = LayerPath(gateIndex, index);
     const Bytes pathname = state->world.name + "\t" + state->world.gates[gateIndex - 1].name + "\t" + city.name;
-    return PackLayer(index, city.name, uint32_t(city.players.Count()), uint32_t(city.players.Capacity()), city.State(), 3, withPath ? &path : nullptr, &inQuest, &pathname);
+    return PackLayer(listed, city.name, uint32_t(city.players.Count()), uint32_t(city.players.Capacity()), city.State(), 3, withPath || city.leader ? &path : nullptr, &inQuest, &pathname);
+}
+
+Bytes CityPack(uint32_t gateIndex, uint32_t index, const City& city, bool withPath) {
+    return CityPack(gateIndex, index, city, withPath, index);
 }
 
 Bytes DummyLayer() {
@@ -498,12 +535,178 @@ Bytes DummyLayer() {
     return fields.Pack();
 }
 
+Bytes HunterStats(const Session& s) {
+    return Bytes(reinterpret_cast<const char*>(s.hunter.data()), kHunterBytes);
+}
+
 Bytes LayerUser(const Session& s) {
     Fields user;
     user.String(0x01, s.capcomId);
     user.String(0x02, s.hunterName);
-    user.Binary(0x07, Bytes(reinterpret_cast<const char*>(s.hunter.data()), kHunterBytes));
+    user.Binary(0x07, HunterStats(s));
     return user.Pack();
+}
+
+// What lists show of a hunter: weapon, in a quest or not, and rank.
+Optional UserOptional(const Session& s) {
+    const uint32_t rank = uint32_t(s.hunter[0]) << 8 | s.hunter[1];
+    return {{1, uint32_t(s.hunter[5]) << 24 | uint32_t(s.inQuest)}, {2, rank << 16}};
+}
+
+Bytes ListedUser(const Session& s) {
+    Fields user;
+    user.String(0x01, s.capcomId);
+    user.String(0x02, s.hunterName);
+    user.Binary(0x03, LayerPath(s.gateId, s.cityId));
+    return user.Pack() + PackOptional(UserOptional(s));
+}
+
+Bytes SearchedUser(const Session& s) {
+    Fields user;
+    user.String(0x01, s.capcomId);
+    user.String(0x02, s.hunterName);
+    user.Binary(0x03, HunterStats(s));
+    user.Binary(0x04, LayerPath(s.gateId, s.cityId));
+    return user.Pack() + PackOptional(UserOptional(s));
+}
+
+// Clients tell hunters apart in NtcLayerBinary by these.
+void PackIdentity(Fields& info, const Session& s) {
+    uint32_t hash = 2166136261u;
+
+    for (const char c : s.capcomId)
+        hash = (hash ^ uint8_t(c)) * 16777619u;
+
+    info.Long(0x0F, hash);
+    info.Long(0x10, hash ^ 0x5A5A5A5A);
+}
+
+Session* FindUser(const Bytes& capcomId) {
+    for (Session& s : state->sessions)
+        if (s.client && s.capcomId == capcomId)
+            return &s;
+
+    return nullptr;
+}
+
+// The hunters of the layer at `path`; `recursive`: with its cities, as a
+// search looks.
+std::vector<const Session*> LayerUsers(const Bytes& path, bool recursive) {
+    Reader in(path);
+    in.U32();
+    in.U32();
+    in.U16();
+    const uint32_t gateId = in.U16(), cityId = in.U16();
+    std::vector<const Session*> users;
+
+    const auto add = [&](const Players& players) {
+        for (const Session* s : players.slots)
+            if (s)
+                users.push_back(s);
+    };
+
+    if (gateId < 1 || gateId > kGates || cityId > kCities) {
+        add(state->world.players);
+        return users;
+    }
+
+    const Gate& gate = state->world.gates[gateId - 1];
+
+    if (!recursive) {
+        add(cityId ? gate.cities[cityId - 1].players : gate.players);
+        return users;
+    }
+
+    add(gate.players);
+
+    if (cityId)
+        add(gate.cities[cityId - 1].players);
+    else
+        for (const City& city : gate.cities)
+            add(city.players);
+
+    return users;
+}
+
+// Packs `count` of the hunters from the 1-based `first` for the next data
+// request.
+template <typename Pack>
+void KeepFound(Client& client, const std::vector<const Session*>& users, uint32_t first, uint32_t count, Pack pack) {
+    client.found.clear();
+
+    for (size_t i = first ? first - 1 : 0; i < users.size() && client.found.size() < count; ++i)
+        client.found.push_back(pack(*users[i]));
+}
+
+Bytes FoundList(const Client& client, uint32_t unknown) {
+    Bytes out;
+    U32(out, unknown);
+    U32(out, uint32_t(client.found.size()));
+
+    for (const Bytes& entry : client.found)
+        out += entry;
+
+    return out;
+}
+
+Bytes FoundHead(const Client& client, uint32_t unknown) {
+    Bytes out;
+    U32(out, unknown);
+    U32(out, uint32_t(client.found.size()));
+    return out;
+}
+
+// The list of a layer's children: a server's gates, a gate's cities.
+Bytes LayerChildren(const Session& s, uint32_t layer, uint32_t first, uint32_t count) {
+    Bytes out;
+    U32(out, first);
+    U32(out, count);
+
+    for (uint32_t i = first; i < first + count; ++i) {
+        if (layer == 0 && i >= 1 && i <= kGates)
+            out += GatePack(i, state->world.gates[i - 1]) + PackOptional({});
+        else if (layer == 1 && i >= 1 && i <= kCities)
+            out += CityPack(s.gateId, i, GateOf(s).cities[i - 1], false) + PackOptional(GateOf(s).cities[i - 1].optional);
+    }
+
+    return out;
+}
+
+Bytes Lower(Bytes text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return text;
+}
+
+// A tell as its recipient reads it: the sender goes into its message info.
+Bytes TellNotice(Reader& in, const Session& s, Bytes& recipient) {
+    recipient = in.Lp2();
+    const Items sent = ReadItems(in);
+    const Bytes message = in.Lp2();
+    Fields info;
+
+    if (const auto color = sent.find(0x01); color != sent.end())
+        info.Long(0x01, color->second.number);
+
+    info.Long(0x02, 20);
+    info.String(0x03, s.capcomId);
+    info.String(0x04, s.hunterName);
+    Bytes out;
+    Lp2(out, recipient);
+    out += info.Pack();
+    Lp2(out, message);
+    return out;
+}
+
+Bytes FriendNotice(const Bytes& to, const Bytes& capcomId, const Bytes& name, uint8_t accepted) {
+    Fields info;
+    info.Long(0x01, 1);
+    info.String(0x02, capcomId);
+    info.String(0x03, name);
+    Bytes out;
+    Lp2(out, to);
+    out += info.Pack();
+    out += char(accepted);
+    return out;
 }
 
 Bytes BinaryInfo(const Session& s, bool time) {
@@ -1131,15 +1334,8 @@ void Handle(Client& client, uint32_t id, const Bytes& data, uint32_t sequence) {
         Send(client, kAnsBinaryFoot, {}, sequence);
         break;
     case kReqUserSearchInfoMine: {
-        // Identify a hunter in NtcLayerBinary.
-        uint32_t hash = 2166136261u;
-
-        for (const char c : session->capcomId)
-            hash = (hash ^ uint8_t(c)) * 16777619u;
-
         Fields info;
-        info.Long(0x0F, hash);
-        info.Long(0x10, hash ^ 0x5A5A5A5A);
+        PackIdentity(info, *session);
         Send(client, kAnsUserSearchInfoMine, info.Pack(), sequence);
         break;
     }
@@ -1194,13 +1390,226 @@ void Handle(Client& client, uint32_t id, const Bytes& data, uint32_t sequence) {
         Send(client, kAnsLayerUserList, out, sequence);
         break;
     }
-    case kReqFriendList: {
-        Bytes out;
-        U32(out, 0);
-        U32(out, 0);
-        Send(client, kAnsFriendList, out, sequence);
+    case kReqLayerUserListHead: {
+        in.U8();
+        const Bytes path = in.Lp2();
+        const uint32_t first = in.U32(), count = in.U32();
+        KeepFound(client, LayerUsers(path, false), first, count, ListedUser);
+        Send(client, kAnsLayerUserListHead, FoundHead(client, first), sequence);
         break;
     }
+    case kReqLayerUserListData:
+        Send(client, kAnsLayerUserListData, FoundList(client, 1), sequence);
+        break;
+    case kReqLayerUserListFoot:
+        Send(client, kAnsLayerUserListFoot, {}, sequence);
+        break;
+    case kReqLayerUserSearchHead: {
+        in.U8();
+        const Bytes path = in.Lp2();
+        in.Lp2();
+        in.Lp2();
+        ReadDetailed(in);
+        const uint32_t first = in.U32(), count = in.U32();
+        KeepFound(client, LayerUsers(path, true), first, count, ListedUser);
+        Send(client, kAnsLayerUserSearchHead, FoundHead(client, 0), sequence);
+        break;
+    }
+    case kReqLayerUserSearchData:
+        Send(client, kAnsLayerUserSearchData, FoundList(client, 0), sequence);
+        break;
+    case kReqLayerUserSearchFoot:
+        Send(client, kAnsLayerUserSearchFoot, {}, sequence);
+        break;
+    case kReqUserSearchHead: {
+        const Bytes capcomId = in.Lp2(), name = Lower(in.Lp2());
+        ReadDetailed(in);
+        const uint32_t first = in.U32(), count = in.U32();
+        std::vector<const Session*> users;
+
+        for (const Session& s : state->sessions)
+            if (s.client && !s.capcomId.empty() && s.capcomId.find(capcomId) != Bytes::npos && Lower(s.hunterName).find(name) != Bytes::npos)
+                users.push_back(&s);
+
+        KeepFound(client, users, first, count, SearchedUser);
+        Send(client, kAnsUserSearchHead, FoundHead(client, 0), sequence);
+        break;
+    }
+    case kReqUserSearchData:
+        Send(client, kAnsUserSearchData, FoundList(client, 0), sequence);
+        break;
+    case kReqUserSearchFoot:
+        Send(client, kAnsUserSearchFoot, {}, sequence);
+        break;
+    case kReqUserSearchInfo: {
+        const Bytes capcomId = in.Lp2();
+        const Session* user = FindUser(capcomId);
+        Fields info;
+        info.String(0x01, capcomId);
+
+        if (!user) {
+            info.String(0x02, "OFFLINE");
+            Alert(client, kAnsUserSearchInfo, info.Pack() + PackOptional({}), sequence);
+            break;
+        }
+
+        const Bytes gate = user->gateId ? GateOf(*user).name : Bytes();
+        const Bytes city = user->cityId ? CityOf(*user).name : Bytes();
+        info.String(0x02, user->hunterName);
+        info.Binary(0x03, HunterStats(*user));
+        info.Binary(0x04, LayerPath(user->gateId, user->cityId));
+        info.Byte(0x07, 1);
+        info.String(0x08, state->world.name + "\t" + gate + "\t" + city);
+        info.Byte(0x0B, 1);
+        info.String(0x0C, "StrC");
+        info.Long(0x0D, 4);
+        info.Long(0x0E, 3);
+        PackIdentity(info, *user);
+        Send(client, kAnsUserSearchInfo, info.Pack() + PackOptional({}), sequence);
+        break;
+    }
+    case kReqLayerDetailSearchHead: {
+        in.U8();
+        const Optional search = ReadDetailed(in);
+        client.found.clear();
+
+        for (uint32_t g = 1; g <= kGates; ++g) {
+            const Gate& gate = state->world.gates[g - 1];
+
+            if (!gate.Population())
+                continue;
+
+            for (uint32_t c = 1; c <= kCities; ++c) {
+                const City& city = gate.cities[c - 1];
+
+                if (!std::all_of(search.begin(), search.end(), [&](const auto& field) { return std::find(city.optional.begin(), city.optional.end(), field) != city.optional.end(); }))
+                    continue;
+
+                Bytes entry = CityPack(g, c, city, false, uint32_t(client.found.size())) + PackOptional(city.optional);
+                U32(entry, uint32_t(city.players.Count()));
+
+                for (const Session* player : city.players.slots)
+                    if (player) {
+                        Fields user;
+                        user.String(0x01, player->capcomId);
+                        user.String(0x02, player->hunterName);
+                        entry += user.Pack() + PackOptional(UserOptional(*player));
+                    }
+
+                client.found.push_back(std::move(entry));
+            }
+        }
+
+        Bytes out = FoundHead(client, 0);
+        U32(out, 0);
+        Send(client, kAnsLayerDetailSearchHead, out, sequence);
+        break;
+    }
+    case kReqLayerDetailSearchData:
+        Send(client, kAnsLayerDetailSearchData, FoundList(client, 0), sequence);
+        break;
+    case kReqLayerDetailSearchFoot:
+        Send(client, kAnsLayerDetailSearchFoot, {}, sequence);
+        break;
+    case kReqLayerMediationLock:
+        Send(client, kAnsLayerMediationLock, Bytes(1, char(1)), sequence);
+        break;
+    case kReqLayerMediationUnlock:
+        Send(client, kAnsLayerMediationUnlock, Bytes(1, char(1)), sequence);
+        break;
+    case kReqLayerTell: {
+        Bytes recipient;
+        const Bytes notice = TellNotice(in, *session, recipient);
+        Send(client, kAnsLayerTell, {}, sequence);
+        Send(client, kNtcLayerTell, notice, sequence);
+
+        if (const Session* to = LayerPlayers(*session).Find(recipient); to && to != session && to->client)
+            Send(*to->client, kNtcLayerTell, notice, sequence);
+
+        break;
+    }
+    case kReqTell: {
+        Bytes recipient;
+        const Bytes notice = TellNotice(in, *session, recipient);
+        Send(client, kAnsTell, {}, sequence);
+
+        if (const Session* to = FindUser(recipient))
+            Send(*to->client, kNtcTell, notice, sequence);
+
+        break;
+    }
+    case kReqFriendList: {
+        const uint32_t first = in.U32(), count = in.U32();
+        const auto& friends = state->friends[session->capcomId];
+        Bytes list;
+        uint32_t listed = 0;
+
+        for (size_t i = first ? first - 1 : 0; i < friends.size() && listed < count; ++i, ++listed) {
+            Fields entry;
+            entry.Long(0x01, uint32_t(i + 1));
+            entry.String(0x02, friends[i]);
+            entry.String(0x03, state->names[friends[i]]);
+            list += entry.Pack();
+        }
+
+        Bytes out;
+        U32(out, 0);
+        U32(out, listed);
+        Send(client, kAnsFriendList, out + list, sequence);
+        break;
+    }
+    case kReqFriendAdd: {
+        Bytes recipient;
+        const Bytes notice = TellNotice(in, *session, recipient);
+
+        if (!state->names.count(recipient)) {
+            Alert(client, kAnsFriendAdd, "<LF=8><BODY><CENTER>Unknown Capcom ID.<END>", sequence);
+            break;
+        }
+
+        Send(client, kAnsFriendAdd, {}, sequence);
+
+        if (const Session* to = FindUser(recipient))
+            Send(*to->client, kNtcFriendAccept, notice, sequence);
+
+        break;
+    }
+    case kReqFriendAccept: {
+        const Bytes recipient = in.Lp2();
+        const uint8_t accepted = uint8_t(in.U8());
+        Send(client, kAnsFriendAccept, {}, sequence);
+
+        if (!accepted)
+            break;
+
+        auto& mine = state->friends[session->capcomId];
+        auto& theirs = state->friends[recipient];
+
+        if (std::find(mine.begin(), mine.end(), recipient) == mine.end()) {
+            mine.push_back(recipient);
+            theirs.push_back(session->capcomId);
+        }
+
+        if (const Session* to = FindUser(recipient))
+            Send(*to->client, kNtcFriendAdd, FriendNotice(recipient, session->capcomId, session->hunterName, accepted), sequence);
+
+        Send(client, kNtcFriendAdd, FriendNotice(session->capcomId, recipient, state->names[recipient], accepted), sequence);
+        break;
+    }
+    case kReqFriendDelete: {
+        const Bytes capcomId = in.Lp2();
+        const auto drop = [](std::vector<Bytes>& list, const Bytes& id) { list.erase(std::remove(list.begin(), list.end(), id), list.end()); };
+        drop(state->friends[session->capcomId], capcomId);
+        drop(state->friends[capcomId], session->capcomId);
+        Send(client, kAnsFriendDelete, {}, sequence);
+        break;
+    }
+    case kReqBlackAdd:
+        Send(client, kAnsBlackAdd, {}, sequence);
+        break;
+    case kReqBlackDelete:
+        Send(client, kAnsBlackDelete, {}, sequence);
+        break;
     case kReqBlackList: {
         Bytes out;
         U32(out, 0);
@@ -1222,20 +1631,24 @@ void Handle(Client& client, uint32_t id, const Bytes& data, uint32_t sequence) {
     }
     case kReqLayerChildListData: {
         const uint32_t first = in.U32(), count = in.U32();
-        Bytes out;
-        U32(out, first);
-        U32(out, count);
-
-        for (uint32_t i = first; i < first + count; ++i) {
-            if (session->layer == 0 && i >= 1 && i <= kGates)
-                out += GatePack(i, state->world.gates[i - 1]) + PackOptional({});
-            else if (session->layer == 1 && i >= 1 && i <= kCities)
-                out += CityPack(session->gateId, i, GateOf(*session).cities[i - 1], false) + PackOptional(GateOf(*session).cities[i - 1].optional);
-        }
-
-        Send(client, kAnsLayerChildListData, out, sequence);
+        Send(client, kAnsLayerChildListData, LayerChildren(*session, session->layer, first, count), sequence);
         break;
     }
+    case kReqLayerSiblingListHead: {
+        Bytes out;
+        U32(out, 0);
+        U32(out, session->layer == 1 ? kGates : kCities);
+        Send(client, kAnsLayerSiblingListHead, out, sequence);
+        break;
+    }
+    case kReqLayerSiblingListData: {
+        const uint32_t first = in.U32(), count = in.U32();
+        Send(client, kAnsLayerSiblingListData, LayerChildren(*session, session->layer ? session->layer - 1 : 0, first, count), sequence);
+        break;
+    }
+    case kReqLayerSiblingListFoot:
+        Send(client, kAnsLayerSiblingListFoot, {}, sequence);
+        break;
     case kReqLayerChildListFoot:
         Send(client, kAnsLayerChildListFoot, {}, sequence);
         break;
@@ -1923,7 +2336,6 @@ void Pump(NasClient& client) {
             const Bytes path = client.input.substr(pathAt, client.input.find(' ', pathAt) - pathAt);
             const Bytes form = client.input.substr(head + 4, length);
             const Bytes body = client.input.rfind("POST", 0) == 0 ? NasAnswer(path, form) : "ok";
-            std::fprintf(stderr, "MH3 local server: %s action %s\n", path.c_str(), FormValue(form, "action").c_str());
             client.output = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nNODE: wifiappe1\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
             client.input.clear();
         }
@@ -1947,12 +2359,31 @@ void Pump(NasClient& client) {
     }
 }
 
+// GameSpy's availability check: 0x09, four zero bytes, the game's name; the
+// answer says the backend is up.
+void PollAvailability(Datagrams& socket) {
+    uint8_t data[256];
+    Address from;
+
+    if (socket.Receive(data, sizeof(data), from) > 0 && data[0] == 0x09) {
+        static constexpr uint8_t kAvailable[]{0xFE, 0xFD, 0x09, 0, 0, 0, 0};
+        socket.Send(kAvailable, sizeof(kAvailable), from);
+    }
+}
+
+constexpr std::string_view kAnnouncement = "MH3-HOST 1";
+
 std::thread thread;
 std::atomic<bool> running{false};
 
 void Run(std::unique_ptr<Listener> opn, std::unique_ptr<Listener> lmp, std::unique_ptr<Listener> fmp, std::unique_ptr<Listener> nas) {
+#ifdef MH3_HAS_AURORA
+    aurora::pin_current_thread(aurora::ThreadRole::Worker);
+#endif
     std::list<NasClient> accounts;
     const std::pair<Listener*, uint16_t> game[]{{opn.get(), kOpnPort}, {lmp.get(), kLmpPort}, {fmp.get(), kFmpPort}};
+    const auto availability = Bind(kAvailabilityPort), negotiation = Bind(kNatNegotiationPort), announcer = Bind(0);
+    auto announced = Clock::time_point{};
 
     while (running.load(std::memory_order_relaxed)) {
         for (const auto& [listener, port] : game)
@@ -1977,8 +2408,19 @@ void Run(std::unique_ptr<Listener> opn, std::unique_ptr<Listener> lmp, std::uniq
             Pump(client);
 
         accounts.remove_if([](const NasClient& client) { return client.done; });
-        PollAvailability();
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+        if (availability)
+            PollAvailability(*availability);
+
+        if (negotiation)
+            PollNatNegotiation(*negotiation);
+
+        if (announcer && Clock::now() - announced >= std::chrono::seconds(1)) {
+            announcer->Broadcast(reinterpret_cast<const uint8_t*>(kAnnouncement.data()), kAnnouncement.size(), kAnnouncePort);
+            announced = Clock::now();
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     delete state;
@@ -2023,5 +2465,27 @@ void Stop() {
 
 bool Running() {
     return running.load();
+}
+
+uint32_t FindHost(int seconds) {
+    const auto socket = Bind(kAnnouncePort);
+
+    if (!socket)
+        return 0;
+
+    const auto deadline = Clock::now() + std::chrono::seconds(seconds);
+
+    while (Clock::now() < deadline) {
+        uint8_t data[64];
+        Address from;
+        const int count = socket->Receive(data, sizeof(data), from);
+
+        if (count > 0 && std::string_view(reinterpret_cast<const char*>(data), size_t(count)) == kAnnouncement)
+            return from.ip;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    return 0;
 }
 } // namespace LocalServer

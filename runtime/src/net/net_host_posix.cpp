@@ -517,6 +517,14 @@ bool Writable(int handle) {
     return ::poll(&entry, 1, 0) > 0;
 }
 
+namespace {
+uint32_t linkAddress = 0;
+}
+
+void UseLinkAddress(uint32_t ip) {
+    linkAddress = ip;
+}
+
 #ifdef __vita__
 Interface DefaultInterface() {
     Interface result{};
@@ -525,6 +533,14 @@ Interface DefaultInterface() {
     inet_pton(AF_INET, "10.0.1.1", &result.gateway);
     inet_pton(AF_INET, "8.8.8.8", &result.dns);
     Startup();
+
+    // Link-local, no router.
+    if (linkAddress) {
+        result.ip = result.gateway = linkAddress;
+        inet_pton(AF_INET, "255.255.0.0", &result.netmask);
+        result.broadcast = (result.ip & result.netmask) | ~result.netmask;
+        return result;
+    }
 
     const auto read = [](int code, uint32_t* address) {
         SceNetCtlInfo info{};

@@ -93,6 +93,10 @@ struct Interface {
 
 Interface DefaultInterface();
 
+// The address on a network the stack has no default route for (the Vita's ad
+// hoc network, network byte order): DefaultInterface answers with it.
+void UseLinkAddress(uint32_t ip);
+
 // A dotted IPv4 address (network byte order).
 bool ParseIpv4(const std::string& text, uint32_t* ip);
 

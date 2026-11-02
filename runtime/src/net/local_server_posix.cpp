@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The embedded server's sockets on BSD sockets (local_server.h).
+// The embedded server's sockets, BSD sockets (local_server.h).
 #include "local_server.h"
 
 #include <arpa/inet.h>
@@ -9,6 +9,11 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#ifdef __vita__
+// sceNet has no SIGPIPE.
+#define MSG_NOSIGNAL 0
+#endif
 
 namespace LocalServer {
 namespace {
@@ -68,7 +73,37 @@ sockaddr_in Any(uint16_t port) {
     return address;
 }
 
-int availability = -1;
+class UdpSocket final : public Datagrams {
+  public:
+    explicit UdpSocket(int socket) : handle(socket) {}
+
+    ~UdpSocket() override { ::close(handle); }
+
+    int Receive(uint8_t* data, size_t size, Address& from) override {
+        sockaddr_in source{};
+        socklen_t length = sizeof(source);
+        const auto count = ::recvfrom(handle, data, size, 0, reinterpret_cast<sockaddr*>(&source), &length);
+
+        if (count <= 0)
+            return 0;
+
+        from = {source.sin_addr.s_addr, source.sin_port};
+        return int(count);
+    }
+
+    void Send(const uint8_t* data, size_t size, const Address& to) override {
+        sockaddr_in target{};
+        target.sin_family = AF_INET;
+        target.sin_port = to.port;
+        target.sin_addr.s_addr = to.ip;
+        ::sendto(handle, data, size, 0, reinterpret_cast<const sockaddr*>(&target), sizeof(target));
+    }
+
+    void Broadcast(const uint8_t* data, size_t size, uint16_t port) override { Send(data, size, {htonl(INADDR_BROADCAST), htons(port)}); }
+
+  private:
+    int handle;
+};
 } // namespace
 
 std::unique_ptr<Listener> Listen(uint16_t port) {
@@ -90,26 +125,22 @@ std::unique_ptr<Listener> Listen(uint16_t port) {
     return std::make_unique<TcpListener>(handle);
 }
 
-void PollAvailability() {
-    if (availability < 0) {
-        availability = ::socket(AF_INET, SOCK_DGRAM, 0);
-        const sockaddr_in address = Any(kAvailabilityPort);
+std::unique_ptr<Datagrams> Bind(uint16_t port) {
+    const int handle = ::socket(AF_INET, SOCK_DGRAM, 0);
 
-        if (availability < 0 || ::bind(availability, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0)
-            return;
+    if (handle < 0)
+        return nullptr;
 
-        NonBlocking(availability);
+    const int on = 1;
+    ::setsockopt(handle, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
+    const sockaddr_in address = Any(port);
+
+    if (::bind(handle, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
+        ::close(handle);
+        return nullptr;
     }
 
-    uint8_t data[256];
-    sockaddr_in from{};
-    socklen_t size = sizeof(from);
-    const auto count = ::recvfrom(availability, data, sizeof(data), 0, reinterpret_cast<sockaddr*>(&from), &size);
-
-    // 0x09, four zero bytes, the game's name: the backend is available.
-    if (count > 0 && data[0] == 0x09) {
-        static constexpr uint8_t kAvailable[]{0xFE, 0xFD, 0x09, 0, 0, 0, 0};
-        ::sendto(availability, kAvailable, sizeof(kAvailable), 0, reinterpret_cast<const sockaddr*>(&from), size);
-    }
+    NonBlocking(handle);
+    return std::make_unique<UdpSocket>(handle);
 }
 } // namespace LocalServer

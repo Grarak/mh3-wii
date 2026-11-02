@@ -29,13 +29,37 @@ class Listener {
     virtual std::unique_ptr<Connection> Accept() = 0;
 };
 
-enum Port : uint16_t { kOpnPort = 8200, kLmpPort = 8201, kFmpPort = 8202, kNasPort = 18080, kAvailabilityPort = 27900 };
+enum Port : uint16_t { kOpnPort = 8200, kLmpPort = 8201, kFmpPort = 8202, kNasPort = 18080, kAnnouncePort = 12419, kAvailabilityPort = 27900, kNatNegotiationPort = 27901 };
 
-// Listening sockets, by platform: BSD sockets or the Vita's ad hoc ones.
+// Listening sockets. BSD sockets: the Vita's ad hoc network carries them too.
 std::unique_ptr<Listener> Listen(uint16_t port);
 
-// Answers GameSpy's availability check, if a datagram came.
-void PollAvailability();
+// A datagram's other end, in network byte order.
+struct Address {
+    uint32_t ip = 0;
+    uint16_t port = 0;
+};
+
+// A non-blocking datagram socket on `port` (0: any), or null.
+class Datagrams {
+  public:
+    virtual ~Datagrams() = default;
+
+    // Bytes read, 0 when none came.
+    virtual int Receive(uint8_t* data, size_t size, Address& from) = 0;
+    virtual void Send(const uint8_t* data, size_t size, const Address& to) = 0;
+    virtual void Broadcast(const uint8_t* data, size_t size, uint16_t port) = 0;
+};
+
+std::unique_ptr<Datagrams> Bind(uint16_t port);
+
+// GameSpy's NAT negotiation: pairs the two ends of a link by their cookie and
+// tells each where the other is. Called on the server's thread.
+void PollNatNegotiation(Datagrams& socket);
+
+// The first host announcing itself on the network within `seconds`: its
+// address in network byte order, or 0.
+uint32_t FindHost(int seconds);
 
 // Starts the server on its own thread. `address` is what clients connect to:
 // the host's address as they see it.

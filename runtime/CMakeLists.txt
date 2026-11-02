@@ -279,7 +279,7 @@ include(../generated/build_shards/shards.cmake)
 if(EMSCRIPTEN)
   set(MH3_NET_HOST_SOURCE src/net/net_host_none.cpp)
 else()
-  set(MH3_NET_HOST_SOURCE src/net/net_host_posix.cpp src/net/local_server.cpp src/net/local_server_posix.cpp)
+  set(MH3_NET_HOST_SOURCE src/net/net_host_posix.cpp src/net/adhoc.cpp src/net/local_server.cpp src/net/local_server_natneg.cpp src/net/local_server_posix.cpp)
 endif()
 
 if(VITA)
@@ -575,9 +575,22 @@ if(VITA)
   # Weak: without the hardware JPEG decoder the movies decode in software.
   target_link_libraries(MH3 PRIVATE SceJpeg_stub_weak)
 
+  # SceNetCtl's unnamed ad hoc exports (vita/netctl_adhoc.yml), as an import stub of their own.
+  set(mh3_adhoc_stub_dir "${CMAKE_CURRENT_BINARY_DIR}/netctl_adhoc_stub")
+  set(mh3_adhoc_stub "${mh3_adhoc_stub_dir}/libSceLibNetCtl_stub.a")
+
+  add_custom_command(OUTPUT "${mh3_adhoc_stub}"
+    COMMAND ${VITA_LIBS_GEN} "${CMAKE_CURRENT_SOURCE_DIR}/vita/netctl_adhoc.yml" "${mh3_adhoc_stub_dir}"
+    COMMAND make -s -C "${mh3_adhoc_stub_dir}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/netctl_adhoc.yml"
+    VERBATIM)
+
+  add_custom_target(netctl_adhoc_stub DEPENDS "${mh3_adhoc_stub}")
+  add_dependencies(MH3 netctl_adhoc_stub)
+
   # Online play: VitaSDK's OpenSSL 1.0.2 for the game's TLS sessions, over
   # newlib's sockets (SceNet, SceNetCtl).
-  target_link_libraries(MH3 PRIVATE ssl crypto SceNet_stub SceNetCtl_stub)
+  target_link_libraries(MH3 PRIVATE ssl crypto SceNet_stub SceNetCtl_stub SceNpManager_stub "${mh3_adhoc_stub}")
   target_compile_definitions(MH3 PRIVATE MH3_HAS_OPENSSL)
   set_target_properties(MH3 PROPERTIES LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vita/ldscript.ld")
 

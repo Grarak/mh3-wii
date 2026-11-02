@@ -20,6 +20,7 @@
 #include "language_import.h"
 #include "language_pack.h"
 #include "rom_image.h"
+#include "../src/net/adhoc.h"
 #include "../src/net/online.h"
 #include <aurora/aurora.h>
 #include <aurora/event.h>
@@ -970,8 +971,8 @@ void FindJapaneseDisc(const std::filesystem::path& directory) {
                 japaneseDisc = entries->path();
 }
 
-// Runs an import on a worker; the screen shows its steps.
-Status ImportScreen(Font& font, const std::function<Status(const LanguageImport::Progress&)>& work) {
+// Runs work on a worker; the screen shows its steps.
+Status WorkScreen(Font& font, const std::string& heading, const std::function<Status(const std::function<void(const std::string&)>&)>& work) {
     std::mutex mutex;
     std::string step = "Starting";
     Status result;
@@ -1000,7 +1001,7 @@ Status ImportScreen(Font& font, const std::function<Status(const LanguageImport:
         auto& rects = shown;
         Frame(rects);
         Rect(rects, 42, 46, 876, 48, ink);
-        font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  Importing a language", gold, 840);
+        font.Text(rects, 60, 58, "MONSTER HUNTER TRI  /  " + heading, gold, 840);
         font.Text(rects, 150, 243, label + std::string(frames++ / 20 % 4, '.'), ink, 660);
         font.Text(rects, 45, 513, "Keep the application open", light, 890);
         PresentScreen(&rects);
@@ -1153,11 +1154,12 @@ enum class Page {
     Editor,
     Cheats,
     CheatList,
-    Online
+    Online,
+    Adhoc
 };
 
 const char* PageName(Page page) {
-    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Editor", "Cheats", "Cheat list", "Online"};
+    constexpr const char* names[]{"Main", "Languages", "Quests", "Saves", "Quest list", "Custom quests", "Editor", "Cheats", "Cheat list", "Online", "Ad hoc play"};
     return names[unsigned(page)];
 }
 
@@ -1172,12 +1174,13 @@ const char* OnOff(bool on) {
 // The main menu's rows. The web build connects nowhere: it leaves out the
 // City and the online settings (the online quests, played offline, stay).
 // Its WebGPU renderer supersamples instead of multisampling.
-enum class Item { Start, Village, City, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Language, ImportLanguage, Online };
+enum class Item { Start, Village, City, Adhoc, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Language, ImportLanguage, Online };
 
 constexpr Item MainItems[]{Item::Start,
                            Item::Village,
 #ifndef __EMSCRIPTEN__
                            Item::City,
+                           Item::Adhoc,
 #endif
                            Item::Quests,
                            Item::Create,
@@ -1414,6 +1417,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
     // Where the hunter selection leads: Quests, or a start in the village or the City.
     enum class Then { Quests, Village, City } then = Then::Quests;
+    enum class AdhocRole { None, Host, Join } adhoc = AdhocRole::None;
     size_t cheatGroup = 0;
     std::vector<size_t> groupCheats;
 
@@ -1555,6 +1559,17 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
     // The Village and City shortcuts, with the chosen hunter.
     const auto startMode = [&] {
         const bool city = then == Then::City;
+#ifndef __EMSCRIPTEN__
+        if (city && adhoc != AdhocRole::None) {
+            const bool host = adhoc == AdhocRole::Host;
+            const Status joined = WorkScreen(*font, "Ad hoc play", [host](const auto& progress) { return host ? Adhoc::Host(progress) : Adhoc::Join(progress); });
+
+            if (!joined.ok()) {
+                Message(joined.message());
+                return;
+            }
+        }
+#endif
         StartVillageBoot(save.file, save.character, city);
         start(std::string(city ? "City" : "village") + ", " + saveName());
     };
@@ -1654,6 +1669,8 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 case Item::City:
                     return {"City (online)", "Straight to the City's network screen with an existing hunter: online play on " + onlineServer + "." +
                                                  (LauncherCheats::EnabledCount() ? " Online play is blocked while cheats are on." : "") + cheats};
+                case Item::Adhoc:
+                    return {"Ad hoc play", "Hunt with hunters nearby, with no server and no router: one hosts, the others join." + cheats};
                 case Item::Quests:
                     return {"Quests", "Start a quest directly with an existing hunter." + cheats};
                 case Item::Create:
@@ -1889,6 +1906,12 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             }
 
             break;
+        case Page::Adhoc:
+            title = "Ad hoc play";
+            rows = {"Host a game", "Join a game"};
+            detail = selected == 0 ? "Opens the City to hunters nearby. Start this first; the others then choose Join. Wi-Fi stays on the ad hoc network until you close the game."
+                                   : "Finds a host nearby and goes to its City.";
+            break;
         case Page::CheatList: {
             const auto cheats = LauncherCheats::List();
             title = std::string("Cheats: ") + LauncherCheats::Groups()[cheatGroup];
@@ -1970,9 +1993,20 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
                 break;
             case Page::Saves:
+                if (adhoc != AdhocRole::None) {
+                    enter(Page::Adhoc);
+                    selected = adhoc == AdhocRole::Join;
+                    break;
+                }
+
+                [[fallthrough]];
             case Page::Categories:
                 enter(Page::Main);
                 selected = MainRow(then == Then::Village ? Item::Village : then == Then::City ? Item::City : Item::Quests);
+                break;
+            case Page::Adhoc:
+                enter(Page::Main);
+                selected = MainRow(Item::Adhoc);
                 break;
             case Page::Cheats:
                 enter(Page::Main);
@@ -2213,6 +2247,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
                 if (item == Item::Village || item == Item::City || item == Item::Quests) {
                     then = item == Item::Village ? Then::Village : item == Item::City ? Then::City : Then::Quests;
+                    adhoc = AdhocRole::None;
                     saves = ProbeSaves(user);
 
                     if (saves.empty()) {
@@ -2261,12 +2296,33 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     enter(Page::Languages);
                 } else if (item == Item::Online)
                     enter(Page::Online);
+                else if (item == Item::Adhoc)
+                    enter(Page::Adhoc);
 
                 if (item == Item::Widescreen || item == Item::Upscaling)
                     return SaveSettings(base);
 
                 break;
             }
+            case Page::Adhoc:
+                then = Then::City;
+                adhoc = selected == 0 ? AdhocRole::Host : AdhocRole::Join;
+                saves = ProbeSaves(user);
+
+                if (saves.empty()) {
+                    Message("No hunter save was found. Ad hoc play needs an existing character: choose Start game and create one through the game's screens, or copy your Monster Hunter Tri save.");
+                    break;
+                }
+
+                save = saves.front();
+
+                if (saves.size() > 1) {
+                    enter(Page::Saves);
+                    break;
+                }
+
+                startMode();
+                return {};
             case Page::Saves:
                 save = saves[selected];
 
@@ -2341,7 +2397,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     break;
                 }
 
-                const Status status = ImportScreen(*font, [&](const LanguageImport::Progress& progress) {
+                const Status status = WorkScreen(*font, "Importing a language", [&](const LanguageImport::Progress& progress) {
                     if (at < fromDisc) {
                         code = "ja";
                         return LanguageImport::ImportJapanese(japaneseDisc, gameData, progress, summary);
