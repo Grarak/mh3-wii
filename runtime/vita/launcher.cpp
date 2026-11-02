@@ -20,6 +20,7 @@
 #include "language_import.h"
 #include "language_pack.h"
 #include "rom_image.h"
+#include "system_keyboard.h"
 #include "../src/net/adhoc.h"
 #include "../src/net/online.h"
 #include <aurora/aurora.h>
@@ -1174,7 +1175,7 @@ const char* OnOff(bool on) {
 // The main menu's rows. The web build connects nowhere: it leaves out the
 // City and the online settings (the online quests, played offline, stay).
 // Its WebGPU renderer supersamples instead of multisampling.
-enum class Item { Start, Village, City, Adhoc, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Language, ImportLanguage, Online };
+enum class Item { Start, Village, City, Adhoc, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Keyboard, Language, ImportLanguage, Online };
 
 constexpr Item MainItems[]{Item::Start,
                            Item::Village,
@@ -1192,6 +1193,9 @@ constexpr Item MainItems[]{Item::Start,
                            Item::Ssaa,
 #else
                            Item::Msaa,
+#endif
+#ifdef __vita__
+                           Item::Keyboard,
 #endif
                            Item::Language,
                            Item::ImportLanguage,
@@ -1321,6 +1325,8 @@ void LoadSettings(const std::filesystem::path& base) {
             SetUpscalingSetting(on);
         else if (key == "online_skip_tls")
             SetSkipTlsSetting(on);
+        else if (key == "system_keyboard")
+            SystemKeyboard::SetSetting(on);
     }
 }
 
@@ -1345,7 +1351,7 @@ Status SaveSettings(const std::filesystem::path& base) {
 #else
              << "\nmsaa=" << (MsaaSetting() == 1 ? "off" : MsaaSetting() == 2 ? "2x" : "4x")
 #endif
-             << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
+             << "\nsystem_keyboard=" << onOff(SystemKeyboard::Setting()) << "\nlanguage=" << language << "\nonline_server=" << OnlineServerSetting() << "\nonline_skip_tls=" << onOff(SkipTlsSetting()) << "\n";
         file.close();
 
         if (!file)
@@ -1426,6 +1432,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
 
     // The game's graphics startup applies them, after the hand-off.
     bool upscaling = UpscalingSetting();
+    bool systemKeyboard = SystemKeyboard::Setting();
     FrameLimit frameLimit = FrameLimitSetting();
     uint32_t msaa = MsaaSetting(), ssaa = SsaaSetting();
 
@@ -1732,6 +1739,9 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                             ssaa == 1   ? "No antialiasing. SSAA renders more pixels and filters them down: smoother edges and textures, at 2x or 4x the GPU work."
                             : ssaa == 2 ? "2x supersampling: 1.41 times the width and height, filtered down. About twice the GPU work."
                                         : "4x supersampling: twice the width and height, filtered down: the smoothest picture. About four times the GPU work."};
+                case Item::Keyboard:
+                    return {std::string("Keyboard: ") + (systemKeyboard ? "Vita" : "Game"),
+                            systemKeyboard ? "Text entry uses the Vita's keyboard, with touch and its own languages. The game keeps running behind it." : "Text entry uses the game's own keyboard."};
                 case Item::Language:
                     return {std::string("Language: ") + languages[language].name, language < GameLanguages().size() ? "The game's text, menus and keyboard." : "An imported language: its text, with the English keyboard."};
                 case Item::ImportLanguage:
@@ -2291,6 +2301,10 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     upscaling = !upscaling;
                     SetUpscalingSetting(upscaling);
                     Log("upscaling %s", upscaling ? "on" : "off");
+                } else if (item == Item::Keyboard) {
+                    systemKeyboard = !systemKeyboard;
+                    SystemKeyboard::SetSetting(systemKeyboard);
+                    Log("system keyboard %s", systemKeyboard ? "on" : "off");
                 } else if (item == Item::ImportLanguage) {
                     listTranslations();
                     enter(Page::Languages);
@@ -2299,7 +2313,7 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 else if (item == Item::Adhoc)
                     enter(Page::Adhoc);
 
-                if (item == Item::Widescreen || item == Item::Upscaling)
+                if (item == Item::Widescreen || item == Item::Upscaling || item == Item::Keyboard)
                     return SaveSettings(base);
 
                 break;

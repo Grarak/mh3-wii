@@ -11,6 +11,7 @@
 // press of PS opens) the samples still carry the buttons and sticks: the game
 // gets a neutral controller then.
 #include "controller_host.h"
+#include "system_keyboard.h"
 #include "../native/mh3_classic_map.h"
 
 #include <psp2/appmgr.h>
@@ -59,7 +60,7 @@ bool Overlaid(const SceCtrlData& ctrl) {
 
 ClassicControllerSample Sample() {
     SceCtrlData ctrl{};
-    const bool neutral = (sceCtrlPeekBufferPositive2(1, &ctrl, 1) < 0 && sceCtrlPeekBufferPositive2(0, &ctrl, 1) < 0) || Overlaid(ctrl);
+    const bool neutral = (sceCtrlPeekBufferPositive2(1, &ctrl, 1) < 0 && sceCtrlPeekBufferPositive2(0, &ctrl, 1) < 0) || Overlaid(ctrl) || SystemKeyboard::Showing();
 
     if (neutral) {
         ctrl = SceCtrlData{};

@@ -17,6 +17,8 @@ void check(int result, const char* operation);
 // Game-thread toggle. Common dialogs render into the next admitted display
 // surface after its application scene ends, using the same display sync.
 void set_common_dialog_active(bool active) noexcept;
+void request_common_dialog(bool active) noexcept;
+bool common_dialog_request_pending() noexcept;
 const SceGxmProgram* vertex_binary(uint64_t hash);
 const SceGxmProgram* fragment_binary(uint64_t hash);
 const SceGxmProgram* fragment_scalar_binary(uint64_t hash);

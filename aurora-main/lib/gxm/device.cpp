@@ -43,6 +43,7 @@ std::atomic<uint64_t> g_latencyFlips{0}, g_latencyMicros[4]{};
 std::atomic<uint32_t> g_latencyMaxMicros{0};
 std::atomic<uint64_t> g_finishMicros{0}, g_finishCalls{0};
 bool g_commonDialogActive = false;
+std::atomic<int> g_commonDialogRequest{-1}; // from another thread: 0, 1, or -1 for none
 
 struct DisplayData {
   void* address;
@@ -514,6 +515,11 @@ void Device::flip() {
   end();
   const unsigned back = m_frames.slot();
 
+  if (const int request = g_commonDialogRequest.load(std::memory_order_acquire); request >= 0) {
+    g_commonDialogActive = request != 0;
+    g_commonDialogRequest.store(-1, std::memory_order_release);
+  }
+
   if (g_commonDialogActive) {
     SceCommonDialogUpdateParam params{};
     params.renderTarget.colorSurfaceData = m_displayData[back];
@@ -536,6 +542,14 @@ void Device::flip() {
 
 void set_common_dialog_active(bool active) noexcept {
   g_commonDialogActive = active;
+}
+
+void request_common_dialog(bool active) noexcept {
+  g_commonDialogRequest.store(active ? 1 : 0, std::memory_order_release);
+}
+
+bool common_dialog_request_pending() noexcept {
+  return g_commonDialogRequest.load(std::memory_order_acquire) >= 0;
 }
 
 namespace {

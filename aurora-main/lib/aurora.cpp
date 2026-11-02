@@ -688,6 +688,22 @@ void aurora_set_common_dialog_active(bool active) {
 #endif
 }
 
+void aurora_request_common_dialog(bool active) {
+#ifdef AURORA_GXM
+  aurora::gxm::request_common_dialog(active);
+#else
+  (void)active;
+#endif
+}
+
+bool aurora_common_dialog_request_pending() {
+#ifdef AURORA_GXM
+  return aurora::gxm::common_dialog_request_pending();
+#else
+  return false;
+#endif
+}
+
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_end_frame() { aurora::end_frame(); }

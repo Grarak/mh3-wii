@@ -154,6 +154,11 @@ void aurora_shutdown();
 // the graphics owner thread between dialog initialization and termination.
 // Other backends ignore this toggle.
 void aurora_set_common_dialog_active(bool active);
+// The same from any thread, while the renderer runs: the next present applies
+// it. A dialog may end once the request is no longer pending: no present can
+// update it after that.
+void aurora_request_common_dialog(bool active);
+bool aurora_common_dialog_request_pending();
 const AuroraEvent* aurora_update();
 bool aurora_begin_frame();
 void aurora_end_frame();

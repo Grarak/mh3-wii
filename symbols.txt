@@ -3372,3 +3372,7 @@
 802908a4 SegmentCapsule
 8029015c CapsuleSphere
 8012be58 EnemyTargetGauges
+800407fc KeyboardOpen
+80040828 KeyboardBuffer
+800407d4 KeyboardUpdateHook
+8044a3c4 KeyboardInput
