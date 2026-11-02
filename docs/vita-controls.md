@@ -49,7 +49,8 @@ so both styles work as the game's help screens show them.
 The launcher's Keyboard option picks what opens where the game asks for text
 (chat, player search, messages, shout-outs): the game's own keyboard, or
 the Vita's system keyboard with touch typing and its languages. The game keeps
-running behind the Vita's keyboard, with its controls neutral.
+running behind the Vita's keyboard, with its controls neutral. Characters the
+game's font lacks show as `?`, and emoji are saved as `?`.
 
 ### Pointer
 

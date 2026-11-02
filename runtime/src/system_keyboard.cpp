@@ -10,6 +10,8 @@
 //   0x800407D4 KeyboardUpdate() -> 0 while typing, 1 done, -1 cancelled
 //
 // Kinds: 0 a long message, 1 chat (0x81 too), 2 a short name, 3 and 4 codes.
+// The limit is the text's size in bytes; the game's text box holds half of that
+// in characters, and so does the dialog.
 // KeyboardOpen and KeyboardUpdate do not touch the game's layout here, so the
 // game goes on drawing and running under the dialog.
 //
@@ -20,7 +22,9 @@
 // chat puts it at 0x806E8F08 and posts it to the tab last chosen in the game's
 // keyboard, as 0x8044A3C4 does: 0x80451A00 offline, 0x80451938 online.
 //
-// Elsewhere (Linux, the web) or with the option off, the originals run.
+// Elsewhere (Linux, the web) or with the option off, the originals run. A
+// development build takes MH3_SYSTEM_KEYBOARD=1 there too, with MH3_KEYBOARD_SCRIPT
+// in place of the dialog, so all of this but the dialog itself runs on the host.
 #include "system_keyboard.h"
 #include "abi_bridge.h"
 #include "guest_call.h"
@@ -31,6 +35,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+
+#if defined(MH3_DEVELOPMENT) && !defined(__vita__)
+#include <chrono>
+#endif
 
 #ifdef __vita__
 #include <aurora/aurora.h>
@@ -62,20 +70,24 @@ bool SystemKeyboard::Showing() {
     return g_showing.load(std::memory_order_relaxed);
 }
 
-#ifdef __vita__
+#if defined(__vita__) || defined(MH3_DEVELOPMENT)
 namespace {
 
+#ifndef __vita__
+using SceWChar16 = uint16_t;
+#endif
+
 constexpr uint32_t kWideIn = 0x806E8A08u, kWideOut = 0x806E8B08u, kChat = 0x806E8F08u, kChatTarget = 0x806E8F70u;
-constexpr uint32_t kWideBytes = 0x400, kChatBytes = 0x68;
-constexpr int32_t kLimitWord = -0x51F4, kTab = -0x405E, kTabTarget = -0x4093; // r13
-constexpr uint32_t kMaxText = 256;
+constexpr uint32_t kWideBytes = 0x400;
+constexpr int32_t kTab = -0x405E, kTabTarget = -0x4093; // r13
+constexpr uint32_t kMaxText = 256, kChatLimit = 0x3C; // as 0x80449100 sets for chat
 constexpr uint32_t kChatColour = 0xF0F0F0FFu, kPartyColour = 0xFFA461FFu, kDirectColour = 0xFFFF50FFu;
 
 enum class State { Idle, Opened, Showing, Closing };
 
 struct Keyboard {
     State state = State::Idle;
-    uint32_t kind = 0, buffer = 0, limit = 0;
+    uint32_t kind = 0, buffer = 0, limit = 0, chars = 0;
     bool accepted = false;
     uint64_t opened = 0;
     alignas(64) SceWChar16 initial[kMaxText + 1]{};
@@ -111,7 +123,7 @@ void ReadInitial(GuestCall& game, GuestFrame& frame, Keyboard& k) {
 
     game.Call<0x80455EAC>({kWideIn, frame[8], k.buffer, 0});
 
-    for (uint32_t i = 0; i < std::min(k.limit, kMaxText); ++i) {
+    for (uint32_t i = 0; i < k.chars; ++i) {
         const uint16_t c = MemoryInline::FlatRead16(kWideIn + i * 2);
 
         if (!c)
@@ -121,7 +133,52 @@ void ReadInitial(GuestCall& game, GuestFrame& frame, Keyboard& k) {
     }
 }
 
-bool Show(GuestCall& game, GuestFrame& frame, Keyboard& k) {
+uint64_t NowMicroseconds() {
+#ifdef __vita__
+    return sceKernelGetProcessTimeWide();
+#else
+    return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+#endif
+}
+
+#ifdef MH3_DEVELOPMENT
+// A run without hands: a UTF-8 text for each time the keyboard opens, split by
+// "|", the last one repeating. "-" cancels. The text is typed after two and a
+// half seconds.
+void TypeScript(Keyboard& k) {
+    static const char* next = [] {
+        const char* script = std::getenv("MH3_KEYBOARD_SCRIPT");
+        return script ? script : "-";
+    }();
+    const char* c = next;
+    k.accepted = !(c[0] == '-' && (c[1] == '|' || !c[1]));
+    uint32_t length = 0;
+
+    while (*c && *c != '|') {
+        const uint8_t lead = uint8_t(*c++);
+        const uint32_t extra = lead >= 0xF0 ? 3 : lead >= 0xE0 ? 2 : lead >= 0xC0 ? 1 : 0;
+        uint32_t code = extra == 3 ? lead & 7 : extra == 2 ? lead & 15 : extra == 1 ? lead & 31 : lead;
+
+        for (uint32_t i = 0; i < extra && *c; ++i)
+            code = code << 6 | (uint8_t(*c++) & 63);
+
+        if (code >= 0x10000 && length + 1 < k.chars) {
+            k.text[length++] = SceWChar16(0xD800 + ((code - 0x10000) >> 10));
+            k.text[length++] = SceWChar16(0xDC00 + ((code - 0x10000) & 0x3FF));
+        } else if (code < 0x10000 && length < k.chars) {
+            k.text[length++] = SceWChar16(code);
+        }
+    }
+
+    k.text[length] = 0;
+
+    if (*c == '|')
+        next = c + 1;
+}
+#endif
+
+bool OpenDialog(Keyboard& k) {
+#ifdef __vita__
     static bool configured = false;
 
     if (!configured) {
@@ -131,17 +188,13 @@ bool Show(GuestCall& game, GuestFrame& frame, Keyboard& k) {
         configured = true;
     }
 
-    ReadInitial(game, frame, k);
-    std::fill(std::begin(k.text), std::end(k.text), SceWChar16(0));
-    k.limit = std::clamp<uint32_t>(k.limit, 1, kMaxText);
-
     SceImeDialogParam param{};
     sceImeDialogParamInit(&param);
     const uint32_t kind = k.kind & 0x7F;
     param.type = kind >= 3 ? SCE_IME_TYPE_BASIC_LATIN : SCE_IME_TYPE_DEFAULT;
     param.dialogMode = SCE_IME_DIALOG_DIALOG_MODE_WITH_CANCEL;
     param.title = k.title;
-    param.maxTextLength = k.limit;
+    param.maxTextLength = k.chars;
     param.initialText = k.initial;
     param.inputTextBuffer = k.text;
 
@@ -151,9 +204,66 @@ bool Show(GuestCall& game, GuestFrame& frame, Keyboard& k) {
     }
 
     aurora_request_common_dialog(true);
+#else
+    (void)k;
+#endif
+    return true;
+}
+
+bool Show(GuestCall& game, GuestFrame& frame, Keyboard& k) {
+    k.limit = std::clamp<uint32_t>(k.limit, 1, kMaxText);
+    k.chars = std::max<uint32_t>(k.limit / 2, 1);
+    ReadInitial(game, frame, k);
+    std::fill(std::begin(k.text), std::end(k.text), SceWChar16(0));
+
+    if (!OpenDialog(k))
+        return false;
+
     g_showing.store(true, std::memory_order_relaxed);
-    k.opened = sceKernelGetProcessTimeWide();
+    k.opened = NowMicroseconds();
     std::fprintf(stderr, "MH3 keyboard: kind %u, limit %u\n", unsigned(k.kind), unsigned(k.limit));
+    return true;
+}
+
+// The dialog is done: k.accepted, and k.text if it was.
+bool DialogFinished(Keyboard& k) {
+#ifdef __vita__
+#ifdef MH3_DEVELOPMENT
+    static const bool scripted = std::getenv("MH3_KEYBOARD_SCRIPT") != nullptr;
+
+    if (scripted && NowMicroseconds() - k.opened > 2500000 && sceImeDialogGetStatus() == SCE_COMMON_DIALOG_STATUS_RUNNING)
+        sceImeDialogAbort();
+#endif
+
+    if (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED)
+        return false;
+
+    SceImeDialogResult result{};
+    sceImeDialogGetResult(&result);
+    k.accepted = result.button == SCE_IME_DIALOG_BUTTON_ENTER;
+#ifdef MH3_DEVELOPMENT
+    if (scripted)
+        TypeScript(k);
+#endif
+    aurora_request_common_dialog(false);
+    return true;
+#else
+    if (NowMicroseconds() - k.opened <= 2500000)
+        return false;
+
+    TypeScript(k);
+    return true;
+#endif
+}
+
+// The present has let the dialog go.
+bool DialogClosed() {
+#ifdef __vita__
+    if (aurora_common_dialog_request_pending())
+        return false;
+
+    sceImeDialogTerm();
+#endif
     return true;
 }
 
@@ -174,13 +284,20 @@ void PostChat(GuestCall& game, uint32_t r13) {
         game.Call<0x80451938>({1, kChat, kPartyColour, 0});
 }
 
-// The text to the game, what 0x8044A3C4 does on OK.
+// The text to the game, what 0x8044A3C4 does on OK. A character outside the
+// BMP becomes "?", as the font draws it: the game's text is UTF-8 of at most
+// three bytes a character, 0x8005BEA4 sizes a longer one as 0, and the copy
+// into a shout-out never gets past it.
 void Deliver(GuestCall& game, GuestFrame& frame, const Keyboard& k, uint32_t r13) {
     uint32_t length = 0;
 
-    while (length < kMaxText && k.text[length]) {
-        MemoryInline::FlatWrite16(kWideOut + length * 2, k.text[length]);
-        ++length;
+    for (uint32_t i = 0; i < kMaxText && k.text[i]; ++i) {
+        const uint16_t c = k.text[i];
+
+        if (c >= 0xDC00 && c < 0xE000)
+            continue;
+
+        MemoryInline::FlatWrite16(kWideOut + length++ * 2, c >= 0xD800 && c < 0xDC00 ? u'?' : c);
     }
 
     MemoryInline::FlatWrite16(kWideOut + length * 2, 0);
@@ -190,8 +307,12 @@ void Deliver(GuestCall& game, GuestFrame& frame, const Keyboard& k, uint32_t r13
             MemoryInline::FlatWrite8(k.buffer + i, 0);
     }
 
-    if (!length)
+    if (!length) {
+        if (!k.buffer)
+            game.Call<0x800DBC94>({2}); // sysSE_req: nothing to post
+
         return;
+    }
 
     game.Call<0x8044A2D8>({kWideOut});
     const uint32_t to = k.buffer ? k.buffer : kChat;
@@ -218,11 +339,8 @@ int32_t Update(CpuContext* ctx) {
         return -1;
 
     case State::Opened:
-        if (!k.buffer) {
-            // Chat keeps the limit of the game's last keyboard: at most its buffer.
-            const uint32_t limit = Memory::Read32(r13 + kLimitWord);
-            k.limit = limit > 0 && limit < kChatBytes ? limit : kChatBytes - 1;
-        }
+        if (!k.buffer)
+            k.limit = kChatLimit;
 
         if (!Show(game, frame, k)) {
             k.state = State::Idle;
@@ -232,43 +350,17 @@ int32_t Update(CpuContext* ctx) {
         k.state = State::Showing;
         return 0;
 
-    case State::Showing: {
-#ifdef MH3_DEVELOPMENT
-        // A run without hands: the text typed after two and a half seconds,
-        // "-" cancels.
-        static const char* const script = std::getenv("MH3_KEYBOARD_SCRIPT");
-
-        if (script && sceKernelGetProcessTimeWide() - k.opened > 2500000 && sceImeDialogGetStatus() == SCE_COMMON_DIALOG_STATUS_RUNNING)
-            sceImeDialogAbort();
-#endif
-
-        if (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED)
+    case State::Showing:
+        if (!DialogFinished(k))
             return 0;
 
-        SceImeDialogResult result{};
-        sceImeDialogGetResult(&result);
-        k.accepted = result.button == SCE_IME_DIALOG_BUTTON_ENTER;
-#ifdef MH3_DEVELOPMENT
-        if (script && script[0] != '-') {
-            uint32_t i = 0;
-
-            for (; script[i] && i < k.limit; ++i)
-                k.text[i] = SceWChar16(uint8_t(script[i]));
-
-            k.text[i] = 0;
-            k.accepted = true;
-        }
-#endif
-        aurora_request_common_dialog(false);
         k.state = State::Closing;
         return 0;
-    }
 
     case State::Closing:
-        if (aurora_common_dialog_request_pending())
+        if (!DialogClosed())
             return 0;
 
-        sceImeDialogTerm();
         g_showing.store(false, std::memory_order_relaxed);
         k.state = State::Idle;
         std::fprintf(stderr, "MH3 keyboard: %s\n", k.accepted ? "accepted" : "cancelled");

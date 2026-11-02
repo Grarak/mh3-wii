@@ -3376,3 +3376,5 @@
 80040828 KeyboardBuffer
 800407d4 KeyboardUpdateHook
 8044a3c4 KeyboardInput
+8005bea4 Utf8CharSize
+8036c2e8 ShoutoutEditStep
