@@ -18,6 +18,7 @@ void RotMatrixZ(uint32_t angle, uint32_t m); // 0x800503C8
 void RotMatrixZXY(uint32_t angles, uint32_t m); // 0x800509F4 cpSetRotMatrixZXY
 void RotMatrixXYZ(uint32_t angles, uint32_t m); // 0x80050914 cpSetRotMatrix
 void MultVecSR(uint32_t out, uint32_t m, uint32_t v); // 0x80501C48 MTX34MultVecSR
+void RotVecYChecked(CpuContext* ctx);         // 0x800510C8 rotVecY's body
 
 // FastReciprocal (0x80061110): fres refined by one Newton step, in paired
 // arithmetic.

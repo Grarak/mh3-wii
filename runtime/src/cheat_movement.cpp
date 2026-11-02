@@ -16,6 +16,7 @@
 #include "cheats.h"
 
 #include "abi_bridge.h"
+#include "nw4r_math.h"
 #include "port_check.h"
 #include "ppc_runtime.h"
 
@@ -412,11 +413,9 @@ REGISTER_NATIVE_FUNCTION_AS(0x80271374, MH3_CheatSkillCheck, "CheatSkillCheck");
 
 // rotVecY (0x800510C8, vec, angle) and rotVecXYZ (0x80051224, vec, angles):
 // the vector turned in place.
-extern "C" void func_800510C8(CpuContext* ctx);
-
 extern "C" void MH3_CheatRotVecY(CpuContext* ctx) {
     EvadeDistance(ctx->lr, ctx->gpr[3]);
-    func_800510C8(ctx);
+    Nw4rMath::RotVecYChecked(ctx);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x800510C8, MH3_CheatRotVecY, "CheatRotVecY");

@@ -1020,6 +1020,8 @@ REGISTER_NATIVE_FUNCTION_AS(0x80051560, MH3_MtxMultVecWrapper, "MtxMultVecWrappe
 //              argument, returns m
 //   0x80051454 VecScaleInPlace(v, f1): v = v * f1 (0x80051488, ps_muls0, the
 //              float lanes), returns v
+//   0x800513DC VecAdd(out, a, b): out = a + b (0x80051430, the float lanes),
+//              returns out
 // Each body leaves r3 as it came in, which is what they return, and names
 // only the registers it reads, so callers call it directly, without the
 // wrappers' frames. The leaves stay translated: their translations take their
@@ -1028,6 +1030,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80051560, MH3_MtxMultVecWrapper, "MtxMultVecWrappe
 extern "C" void func_80053340(CpuContext* ctx);
 extern "C" void func_80050538(CpuContext* ctx);
 extern "C" void func_80051454(CpuContext* ctx);
+extern "C" void func_800513DC(CpuContext* ctx);
 namespace {
 void Identity(uint32_t m) {
     // Big-endian pairs: {1, 0}, {0, 0}, {0, 1}, {0, 0}, {0, 0}, {1, 0}.
@@ -1059,6 +1062,17 @@ void ScaleInPlacePort(CpuContext* p) {
     ScaleInPlace(p->gpr[3], float(p->fpr[1].d));
 }
 
+void Add(uint32_t out, uint32_t a, uint32_t b) {
+    const float x = LoadFloat(a) + LoadFloat(b), y = LoadFloat(a + 4) + LoadFloat(b + 4), z = LoadFloat(a + 8) + LoadFloat(b + 8);
+    StoreFloat(out, x);
+    StoreFloat(out + 4, y);
+    StoreFloat(out + 8, z);
+}
+
+void AddPort(CpuContext* p) {
+    Add(p->gpr[3], p->gpr[4], p->gpr[5]);
+}
+
 void CopyWrapperChecked(uint32_t r1, uint32_t dst, uint32_t src) {
     MH3_MTX_CHECK("MtxCopyWrapper", func_80053340, CopyWrapperPort, dst, 0x30, c->gpr[1] = r1, c->gpr[3] = dst, c->gpr[4] = src);
     Copy(src, dst);
@@ -1072,6 +1086,11 @@ void IdentityWrapperChecked(uint32_t r1, uint32_t m) {
 void ScaleInPlaceChecked(uint32_t r1, uint32_t v, double s) {
     MH3_MTX_CHECK("VecScaleInPlace", func_80051454, ScaleInPlacePort, v, 12, c->gpr[1] = r1, c->gpr[3] = v, c->fpr[1].d = s);
     ScaleInPlace(v, float(s));
+}
+
+void AddChecked(uint32_t r1, uint32_t out, uint32_t a, uint32_t b) {
+    MH3_MTX_CHECK("VecAdd", func_800513DC, AddPort, out, 12, c->gpr[1] = r1, c->gpr[3] = out, c->gpr[4] = a, c->gpr[5] = b);
+    Add(out, a, b);
 }
 } // namespace
 
@@ -1087,6 +1106,10 @@ extern "C" void MH3_VecScaleInPlace(CpuContext* ctx) {
     ScaleInPlaceChecked(ctx->gpr[1], ctx->gpr[3], ctx->fpr[1].d);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x80051454, MH3_VecScaleInPlace, "VecScaleInPlace");
+extern "C" void MH3_VecAdd(CpuContext* ctx) {
+    AddChecked(ctx->gpr[1], ctx->gpr[3], ctx->gpr[4], ctx->gpr[5]);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x800513DC, MH3_VecAdd, "VecAdd");
 
 // 0x804C6D90 C_MTXLightPerspective(m, fovY, aspect, scaleS, scaleT, transS,
 // transT) (Revolution SDK, Ghidra decompilation): a projected texture's

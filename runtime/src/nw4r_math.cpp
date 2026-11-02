@@ -193,6 +193,41 @@ float Nw4rMath::CosU16(uint32_t angle) {
     return ::CosU16(angle);
 }
 
+// 0x8005101C rotVecX(v, angle), 0x800510C8 rotVecY, 0x80051178 rotVecZ: v
+// turned in place. The two lanes in the plane of the turn, Sign -1 for Y,
+// whose sine has the opposite sign.
+template <uint32_t First, uint32_t Second, int Sign>
+static void RotVecPort(CpuContext* ctx) {
+    const uint32_t v = ctx->gpr[3], angle = ctx->gpr[4] & 0xFFFF;
+    const float a = MemoryInline::FlatReadFloat32(v + First), b = MemoryInline::FlatReadFloat32(v + Second);
+    const float sine = ::SinU16(angle), cosine = ::CosU16(angle);
+    const float signedSine = Sign < 0 ? -sine : sine;
+    const float aCos = cosine * a, bSin = signedSine * b;
+    const float aSin = signedSine * a, bCos = cosine * b;
+    MemoryInline::FlatWriteFloat32(v + First, aCos - bSin);
+    MemoryInline::FlatWriteFloat32(v + Second, aSin + bCos);
+}
+
+extern "C" void func_8005101C(CpuContext* ctx);
+extern "C" void func_800510C8(CpuContext* ctx);
+extern "C" void func_80051178(CpuContext* ctx);
+
+extern "C" void MH3_RotVecX(CpuContext* ctx) {
+    PortCheck::Call(ctx, "RotVecX", func_8005101C, RotVecPort<4, 8, 1>);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8005101C, MH3_RotVecX, "RotVecX");
+
+extern "C" void MH3_RotVecZ(CpuContext* ctx) {
+    PortCheck::Call(ctx, "RotVecZ", func_80051178, RotVecPort<0, 4, 1>);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x80051178, MH3_RotVecZ, "RotVecZ");
+
+// The registration is cheat_movement.cpp's, which moves the evade distances
+// first.
+void Nw4rMath::RotVecYChecked(CpuContext* ctx) {
+    PortCheck::Call(ctx, "RotVecY", func_800510C8, RotVecPort<0, 8, -1>);
+}
+
 float Nw4rMath::FSqrt(double x) {
     return ::FSqrt(x);
 }

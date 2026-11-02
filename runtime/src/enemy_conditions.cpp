@@ -8,6 +8,13 @@
 //              in u8 +0xA, 6 the part's damage level (0x8011EA40) >= b, 7
 //              u8 +0x761 & a; `want` 1 needs it true, 0 false, others
 //              ignore it
+//   0x8012F9C4 EnemyNodePart(em, id): the part (u8 +4) of the monster data's
+//              list (+0x8C, 8-byte entries {s32 id (-1 ends), u8 part}) entry
+//              for `id`, -1 for none
+//   0x8012FC10 EnemyShowNode(em, id): the MHchar node shown when the monster,
+//              or the node's part (its area, u8 +0x48E of the part at
+//              em + 0x84 * part), is in the hunter's area and its conditions
+//              pass
 //   0x80126098 EnemyData(em): the species' data, EnemyActionTable of its kind
 //              (+3) and variant (+0xA)
 //   0x8012D090 EnemyDying(em): 1 in mode 11, or mode 12 by 0x8012D270
@@ -88,6 +95,39 @@ void PartEnabledPort(CpuContext* ctx) {
     ctx->gpr[3] = result;
 }
 
+int32_t NodePart(GuestCall& game, uint32_t em, uint32_t id) {
+    const uint32_t list = Read32(game.Call<0x80126098>({em}) + 0x8C); // EnemyData
+
+    for (uint32_t entry = list; entry && Read32(entry) != 0xFFFFFFFFu; entry += 8)
+        if (Read32(entry) == id)
+            return MemoryInline::FlatRead8(entry + 4);
+
+    return -1;
+}
+
+void NodePartPort(CpuContext* ctx) {
+    int32_t part;
+
+    {
+        GuestFrame frame(ctx, 0x10);
+        GuestCall game{ctx};
+        part = NodePart(game, frame.Arg(3), frame.Arg(4));
+    }
+
+    ctx->gpr[3] = uint32_t(part);
+}
+
+void ShowNodePort(CpuContext* ctx) {
+    GuestFrame frame(ctx, 0x20);
+    GuestCall game{ctx};
+    const uint32_t em = frame.Arg(3), id = frame.Arg(4);
+    const int32_t part = NodePart(game, em, id);
+    const uint32_t area = game.Call<0x802AFCE8>() & 0xFF;
+    const uint32_t where = part == -1 ? MemoryInline::FlatRead8(em + 0x1E1) : MemoryInline::FlatRead8(em + 0x84 * uint32_t(part) + 0x48E);
+    const uint32_t shown = area == where ? game.Call<0x8012FA28>({em, id}) : 0;
+    game.Call<0x800E3154>({em + 0x24, id, shown}); // MHchar::setVisibility
+}
+
 uint32_t ActionTable(uint32_t group, uint32_t variant) {
     uint32_t index = 0;
 
@@ -123,6 +163,18 @@ extern "C" void MH3_EnemyPartEnabled(CpuContext* ctx) {
     PortCheck::Call(ctx, "EnemyPartEnabled", func_8012FA28, PartEnabledPort);
 }
 REGISTER_NATIVE_FUNCTION_AS(0x8012FA28, MH3_EnemyPartEnabled, "EnemyPartEnabled");
+
+extern "C" void func_8012F9C4(CpuContext* ctx);
+extern "C" void MH3_EnemyNodePart(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EnemyNodePart", func_8012F9C4, NodePartPort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012F9C4, MH3_EnemyNodePart, "EnemyNodePart");
+
+extern "C" void func_8012FC10(CpuContext* ctx);
+extern "C" void MH3_EnemyShowNode(CpuContext* ctx) {
+    PortCheck::Call(ctx, "EnemyShowNode", func_8012FC10, ShowNodePort);
+}
+REGISTER_NATIVE_FUNCTION_AS(0x8012FC10, MH3_EnemyShowNode, "EnemyShowNode");
 
 extern "C" void func_80140C64(CpuContext* ctx);
 static uint32_t ActionTableChecked([[maybe_unused]] uint32_t r1, uint32_t r3, uint32_t r4) {
