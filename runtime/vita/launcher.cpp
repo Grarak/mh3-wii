@@ -2361,6 +2361,8 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 listLanguages();
                 applyLanguage();
                 Message("Imported: " + summary);
+                enter(Page::Main);
+                selected = MainRow(Item::Language);
                 return SaveSettings(base);
             }
             case Page::Online:

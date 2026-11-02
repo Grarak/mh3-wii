@@ -4,6 +4,7 @@
 #include "fatal.h"
 #include "fs_status.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
@@ -195,8 +196,10 @@ std::vector<uint8_t> Header(const Contents& c, uint64_t filesAt) {
 
 } // namespace
 
+// MH3_LANGUAGE_DIR puts it elsewhere (a devkit's host0:).
 std::filesystem::path Directory(const std::filesystem::path& gameData) {
-    return gameData / "languages";
+    const char* directory = std::getenv("MH3_LANGUAGE_DIR");
+    return directory && *directory ? std::filesystem::path(directory) : gameData / "languages";
 }
 
 std::vector<Listing> Installed(const std::filesystem::path& gameData) {
