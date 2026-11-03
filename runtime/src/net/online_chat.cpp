@@ -14,6 +14,12 @@
 // lacks, and text past the limits is cut between characters. Unmodified games
 // showed all of this without trouble on the EU and US discs, so this keeps our
 // own memory safe and the text to what they were made for.
+//
+// The chat window shows 38 columns of text, a narrow glyph taking one and any
+// other two (0x8005B83C). The game's keyboard only writes narrow ones; a system
+// keyboard can write Japanese, which a language pack draws at full width, so 20
+// such characters ran past the window's edge. A character the European font
+// lacks counts as two.
 #include "abi_bridge.h"
 #include "guest_call.h"
 #include "memory.h"
@@ -25,7 +31,10 @@ extern "C" void func_80451A00(CpuContext* ctx);
 
 namespace {
 
-constexpr uint32_t kBytes = 60, kCharacters = 30, kFrame = 0x60, kText = 0x10;
+constexpr uint32_t kBytes = 60, kCharacters = 30, kColumns = 38, kFrame = 0x60, kText = 0x10;
+
+// The European font's {u16 code, u16 narrow} pairs.
+constexpr uint32_t kGlyphTable = 0x80580818, kGlyphs = 228;
 
 bool Continues(uint32_t at) {
     return (MemoryInline::FlatRead8(at) & 0xC0) == 0x80;
@@ -47,8 +56,23 @@ uint32_t CharSize(uint32_t text) {
     return 0;
 }
 
+// The columns of the character at `text`, `size` bytes long.
+uint32_t Columns(uint32_t text, uint32_t size) {
+    if (size == 1)
+        return 1;
+
+    const uint32_t lead = MemoryInline::FlatRead8(text), second = MemoryInline::FlatRead8(text + 1) & 0x3F;
+    const uint32_t code = size == 2 ? (lead & 0x1F) << 6 | second : (lead & 0x0F) << 12 | second << 6 | (MemoryInline::FlatRead8(text + 2) & 0x3F);
+
+    for (uint32_t i = 0; i < kGlyphs; ++i)
+        if (MemoryInline::FlatRead16(kGlyphTable + i * 4) == code)
+            return MemoryInline::FlatRead16(kGlyphTable + i * 4 + 2) == 1 ? 1 : 2;
+
+    return 2;
+}
+
 bool Safe(uint32_t text) {
-    uint32_t length = 0;
+    uint32_t length = 0, columns = 0;
 
     for (uint32_t characters = 0;; ++characters) {
         if (!MemoryInline::FlatRead8(text + length))
@@ -59,19 +83,26 @@ bool Safe(uint32_t text) {
         if (!size || length + size > kBytes || characters == kCharacters)
             return false;
 
+        columns += Columns(text + length, size);
+
+        if (columns > kColumns)
+            return false;
+
         length += size;
     }
 }
 
 void CopySafe(uint32_t text, uint32_t to) {
-    uint32_t length = 0;
+    uint32_t length = 0, columns = 0;
 
     for (uint32_t characters = 0; characters < kCharacters; ++characters) {
         const uint8_t lead = MemoryInline::FlatRead8(text);
-        const uint32_t size = CharSize(text);
+        const uint32_t size = CharSize(text), width = size ? Columns(text, size) : 1;
 
-        if (!lead || length + (size ? size : 1) > kBytes)
+        if (!lead || length + (size ? size : 1) > kBytes || columns + width > kColumns)
             break;
+
+        columns += width;
 
         if (!size) {
             MemoryInline::FlatWrite8(to + length++, '?');
