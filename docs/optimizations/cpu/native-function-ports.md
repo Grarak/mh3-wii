@@ -46,7 +46,7 @@ REGISTER_NATIVE_FUNCTION_AS(0x80048890, MH3_ClearDrawBuckets, "ClearDrawBuckets"
   [Cortex-A9 floating point](../recompilation/cortex-a9-floating-point.md) is such a case);
   many are bit-exact, such as the NEON matrix rows of PSMTXConcat on arm32.
 
-`runtime/src` holds about 1,650 registrations in 156 files. Groups and
+`runtime/src` holds about 2,800 registrations in 196 files. Groups and
 where they are described:
 
 | Group | Examples | Notes |
@@ -56,7 +56,8 @@ where they are described:
 | NW4R effects | Effect::Calc 0x800A4C20, ParticleManager::Calc 0x800AC35C, the draw strategies | [particle batching](../rendering/particle-batching.md) |
 | Sound engine, MIX, SEQ/SYN | 109 entry points | [native audio](../system/native-audio.md) |
 | Everything that used GX | scene queue, UI, HUD, effects, scene feedback | [GX replacement](../rendering/gx-replacement.md) |
-| Collision and land queries | ground candidate lists, the land sweep, hit spheres | [compact native data](compact-native-data.md) |
+| Collision and land queries | ground candidate lists, the land sweep and its capsule edges, hit spheres | [compact native data](compact-native-data.md) |
+| Monsters | the step (EnemyUpdate, MonsterStep), reactions, setup and targets; the bones' CalcWorld callback; the target gauges | `runtime/src/enemy_*.cpp`, `monster_bones.cpp` |
 | Step-length dependent logic | shells, enemy turning, player actions, timers | [variable step](../simulation/variable-step.md) |
 | Wii Remote pointer | the game's copy of KPAD (0x800450AC..0x800468A0), the pointer and cursor (0x80043C10..0x80044DDC), pointing at monsters for the log (0x802DB354) | `runtime/src/pad_pointer.cpp`, `log_pointer.cpp`, [controller input](../system/controller-input.md) |
 | Cheats | wrappers that change arguments or results | `runtime/src/cheats.cpp`, `cheat_*.cpp` |
@@ -75,6 +76,11 @@ host compiler keep values in registers and use NEON. Measured examples:
 - Root motion evaluating only the root node in the native AnmObjChrRes
   ports: animation-curve evaluation fell from 4.0-4.3% to 2.6% of the Vita
   game thread.
+- The Royal Ludroth fight in the Flooded Forest's area 3, where the game
+  thread is the Vita's limit: the monsters' CalcWorld callback (the hottest
+  translated code there), the vector helpers, the land sweep's capsule edges
+  and the target gauges took logic from 11.7-11.9 to 11.3-11.4 ms a frame
+  (65 to 66-67 fps), translated code from 26.3 to 23.2% of the game thread.
 - The HUD (about 2 ms a frame of the Alatreon fight on the Vita), the debug
   font's text measures (37.7% of the game thread on the online notice
   screen before the port) and the creature groups' passes (4.4% of the game
@@ -136,4 +142,7 @@ offsets they use. The order that worked here:
 2. Port leaves first (math, accessors), then their callers; a port that calls
    back into translated code still pays for the guest call boundary.
 3. Keep ports precise (no `ctx` to helpers) where they are called often.
+   A native that calls `func_X` directly runs the translation even when X
+   has a port: call the port (the chr blend's PSVECNormalize stayed in the
+   profiles that way).
 4. Compare every port with `PortCheck` at a fixed step before using it.

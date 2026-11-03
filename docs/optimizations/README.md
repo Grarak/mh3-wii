@@ -52,7 +52,7 @@ on track when the Pi 5 reaches 4-5 times the speed wanted on the Vita
 
 | Page | Replaces | Why |
 | --- | --- | --- |
-| [Native function ports](cpu/native-function-ports.md) | translated bodies of hot or step-dependent functions (about 1,650) | the translated code's register and memory model costs time; some behaviour has to change |
+| [Native function ports](cpu/native-function-ports.md) | translated bodies of hot or step-dependent functions (about 2,800) | the translated code's register and memory model costs time; some behaviour has to change |
 | [Flat guest memory](cpu/flat-guest-memory.md) | a software MMU lookup on every load and store | every access paid for it; allows a second guest thread |
 | [Compact native data](cpu/compact-native-data.md) | walking guest collision data per query | ground queries 1.3 → 0.12 ms a frame (Vita) |
 | [Barriers on ARM32](cpu/memory-barriers.md) | acquire loads and guarded statics on per-call paths | translated code's `dmb`s 7,431 → 2,988; the A9 waits at each |
