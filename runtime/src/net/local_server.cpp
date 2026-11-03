@@ -697,6 +697,27 @@ Bytes TellNotice(Reader& in, const Session& s, Bytes& recipient) {
     return out;
 }
 
+// A chat line as the others read it: the sender goes into its message info,
+// with the colour given or else the sender's (sendNtcLayerChat,
+// sendNtcCircleChat).
+Bytes ChatNotice(Reader& in, const Session& s, std::optional<uint32_t> color) {
+    const Items sent = ReadItems(in);
+    const Bytes message = in.Lp2();
+    Fields info;
+
+    if (const auto given = sent.find(0x01); color || given != sent.end())
+        info.Long(0x01, color ? *color : given->second.number);
+
+    if (const auto time = sent.find(0x02); time != sent.end())
+        info.Long(0x02, time->second.number);
+
+    info.String(0x03, s.capcomId);
+    info.String(0x04, s.hunterName);
+    Bytes out = info.Pack();
+    Lp2(out, message);
+    return out;
+}
+
 Bytes FriendNotice(const Bytes& to, const Bytes& capcomId, const Bytes& name, uint8_t accepted) {
     Fields info;
     info.Long(0x01, 1);
@@ -1538,6 +1559,19 @@ void Handle(Client& client, uint32_t id, const Bytes& data, uint32_t sequence) {
 
         break;
     }
+    case kNtcLayerChat: {
+        // Each layer's colour (LAYER_CHAT_COLORS): the server's, then gates and cities.
+        constexpr uint32_t kLayerColors[]{0xBB3385FF, 0xFFFFFFFF, 0xFFFFFFFF};
+        Bytes out(1, char(in.U8()));
+        out += ChatNotice(in, *session, kLayerColors[std::min<uint32_t>(session->layer, 2)]);
+        Broadcast(LayerPlayers(*session), kNtcLayerChat, out, sequence, session);
+        break;
+    }
+    case kNtcCircleChat:
+        if (session->circleId >= 0)
+            Broadcast(CityOf(*session).circles[size_t(session->circleId)].players, kNtcCircleChat, ChatNotice(in, *session, std::nullopt), sequence, session);
+
+        break;
     case kReqFriendList: {
         const uint32_t first = in.U32(), count = in.U32();
         const auto& friends = state->friends[session->capcomId];
