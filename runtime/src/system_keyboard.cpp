@@ -45,6 +45,10 @@
 #include <psp2/common_dialog.h>
 #include <psp2/ime_dialog.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
+
+// In the SceCommonDialog stub, not in the headers.
+extern "C" SceUID sceCommonDialogGetWorkerThreadId();
 #endif
 
 extern "C" void func_800407D4(CpuContext* ctx);
@@ -177,6 +181,35 @@ void TypeScript(Keyboard& k) {
 }
 #endif
 
+#ifdef __vita__
+// The dialog's worker draws the keyboard. Left where the system put it, the
+// draw thread's and the guest worker's jobs ran 400-550 ms while the keyboard
+// was up (cores 1 and 3), and the game fell to 13 fps on the devkit. It gets
+// the render thread's core instead, below our threads' priority, so it runs
+// in what the render thread leaves; `opened` false reports its time at close.
+void PlaceDialogWorker(bool opened) {
+    constexpr int kDefaultPriority = 0x10000100; // SCE_KERNEL_DEFAULT_PRIORITY_USER
+    const SceUID worker = sceCommonDialogGetWorkerThreadId();
+    SceKernelThreadInfo info{};
+    info.size = sizeof(info);
+
+    if (worker < 0 || sceKernelGetThreadInfo(worker, &info) < 0) {
+        std::fprintf(stderr, "MH3 keyboard: no dialog worker (0x%08x)\n", unsigned(worker));
+        return;
+    }
+
+    if (!opened) {
+        std::fprintf(stderr, "MH3 keyboard: dialog worker ran %llu ms in all\n", (unsigned long long)(info.runClocks / 1000));
+        return;
+    }
+
+    const int core = sceKernelChangeThreadCpuAffinityMask(worker, SCE_KERNEL_CPU_MASK_USER_0);
+    const int priority = sceKernelChangeThreadPriority(worker, kDefaultPriority + 16);
+    std::fprintf(stderr, "MH3 keyboard: dialog worker %s, priority 0x%x, cores 0x%x, ran %llu ms: to core 0 (0x%08x), priority 0x%x (0x%08x)\n", info.name, unsigned(info.currentPriority),
+                 unsigned(info.currentCpuAffinityMask), (unsigned long long)(info.runClocks / 1000), unsigned(core), unsigned(kDefaultPriority + 16), unsigned(priority));
+}
+#endif
+
 bool OpenDialog(Keyboard& k) {
 #ifdef __vita__
     static bool configured = false;
@@ -203,6 +236,7 @@ bool OpenDialog(Keyboard& k) {
         return false;
     }
 
+    PlaceDialogWorker(true);
     aurora_request_common_dialog(true);
 #else
     (void)k;
@@ -262,6 +296,7 @@ bool DialogClosed() {
     if (aurora_common_dialog_request_pending())
         return false;
 
+    PlaceDialogWorker(false);
     sceImeDialogTerm();
 #endif
     return true;
