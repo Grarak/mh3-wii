@@ -311,8 +311,8 @@ list(REMOVE_ITEM mh3_game_sources
   # Diagnostics behind options, and the hosts' debug port.
   src/function_trace.cpp src/guest_entry_trace.cpp src/guest_call_trace.cpp src/collision_check.cpp
   src/efb_copy_trace.cpp src/write_watch.cpp src/debug_port.cpp
-  # Other programs and libraries, and unused code.
-  src/launcher_tests.cpp src/controller_sdl_tests.cpp src/rom_decoder.cpp native/mh3_owned_scene.c)
+  # Other programs and libraries.
+  src/launcher_tests.cpp src/controller_sdl_tests.cpp src/rom_decoder.cpp)
 
 add_executable(MH3 ${mh3_game_sources} ${MH3_GUEST_MEMORY_SOURCE} ${MH3_NET_HOST_SOURCE}
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp ../generated/rso_overlays/net_data.cpp ../generated/rso_overlays/map_town_online.cpp ../generated/rso_overlays/map_town_quest.cpp
