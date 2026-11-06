@@ -532,6 +532,7 @@ Interface DefaultInterface() {
     inet_pton(AF_INET, "255.255.255.0", &result.netmask);
     inet_pton(AF_INET, "10.0.1.1", &result.gateway);
     inet_pton(AF_INET, "8.8.8.8", &result.dns);
+    inet_pton(AF_INET, "8.8.4.4", &result.secondaryDns);
     Startup();
 
     // Link-local, no router.
@@ -545,14 +546,16 @@ Interface DefaultInterface() {
     const auto read = [](int code, uint32_t* address) {
         SceNetCtlInfo info{};
 
-        if (sceNetCtlInetGetInfo(code, &info) == 0)
-            inet_pton(AF_INET, info.ip_address, address);
+        // An unset server reads as 0.0.0.0: the default stays.
+        if (uint32_t read = 0; sceNetCtlInetGetInfo(code, &info) == 0 && inet_pton(AF_INET, info.ip_address, &read) == 1 && read)
+            *address = read;
     };
 
     read(SCE_NETCTL_INFO_GET_IP_ADDRESS, &result.ip);
     read(SCE_NETCTL_INFO_GET_NETMASK, &result.netmask);
     read(SCE_NETCTL_INFO_GET_DEFAULT_ROUTE, &result.gateway);
     read(SCE_NETCTL_INFO_GET_PRIMARY_DNS, &result.dns);
+    read(SCE_NETCTL_INFO_GET_SECONDARY_DNS, &result.secondaryDns);
     result.broadcast = (result.ip & result.netmask) | ~result.netmask;
     return result;
 }
@@ -564,13 +567,13 @@ Interface DefaultInterface() {
     inet_pton(AF_INET, "10.0.1.255", &result.broadcast);
     inet_pton(AF_INET, "10.0.1.1", &result.gateway);
     inet_pton(AF_INET, "8.8.8.8", &result.dns);
+    inet_pton(AF_INET, "8.8.4.4", &result.secondaryDns);
 
+    // The first two IPv4 name servers.
     if (res_init() == 0)
-        for (int i = 0; i < _res.nscount; ++i)
-            if (_res.nsaddr_list[i].sin_family == AF_INET) {
-                result.dns = _res.nsaddr_list[i].sin_addr.s_addr;
-                break;
-            }
+        for (int i = 0, found = 0; i < _res.nscount && found < 2; ++i)
+            if (_res.nsaddr_list[i].sin_family == AF_INET)
+                (found++ ? result.secondaryDns : result.dns) = _res.nsaddr_list[i].sin_addr.s_addr;
 
     // The address the host would use to reach the Internet; no packet is sent.
     const int probe = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -623,8 +626,9 @@ bool ParseIpv4(const std::string& text, uint32_t* ip) {
 
 namespace {
 // One DNS A query over UDP to SERVER (network order), for when the system's
-// resolver fails: the Vita devkit's answered every name with ECONNREFUSED
-// (getaddrinfo -5) while its network worked.
+// resolver fails, as the Vita devkit's answered every name with ECONNREFUSED
+// (getaddrinfo -5) while its network worked. The network settings' two
+// servers are asked, then public ones.
 bool QueryDns(const std::string& name, uint32_t server, std::vector<uint32_t>& addresses) {
     uint8_t packet[512] = {0x4d, 0x33, 0x01, 0x00, 0x00, 0x01}; // id, recursion desired, one question
     size_t size = 12;
@@ -742,14 +746,15 @@ Lookup::Lookup(std::string name) : state_(std::make_shared<State>()) {
         } else {
             // The game shows only that the host was not found (-305).
             const int error = errno;
-            uint32_t servers[] = {DefaultInterface().dns, 0, 0};
-            inet_pton(AF_INET, "1.1.1.1", &servers[1]);
-            inet_pton(AF_INET, "8.8.8.8", &servers[2]);
+            const Interface net = DefaultInterface();
+            uint32_t servers[] = {net.dns, net.secondaryDns, 0, 0};
+            inet_pton(AF_INET, "1.1.1.1", &servers[2]);
+            inet_pton(AF_INET, "8.8.8.8", &servers[3]);
             char text[INET_ADDRSTRLEN] = "";
 
-            for (const uint32_t server : servers)
-                if (server && QueryDns(state->name, server, addresses)) {
-                    inet_ntop(AF_INET, &server, text, sizeof(text));
+            for (size_t i = 0; i < std::size(servers); ++i)
+                if (servers[i] && std::find(servers, servers + i, servers[i]) == servers + i && QueryDns(state->name, servers[i], addresses)) {
+                    inet_ntop(AF_INET, &servers[i], text, sizeof(text));
                     break;
                 }
 

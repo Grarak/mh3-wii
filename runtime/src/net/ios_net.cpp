@@ -656,7 +656,7 @@ int32_t GetInterfaceOption(const std::vector<Vector>& in, const std::vector<Vect
     switch (option) {
     case 0xB003: // DNS servers
         Memory::Write32(value, Swap32(net.dns));
-        Memory::Write32(value + 4, 0x08080404);
+        Memory::Write32(value + 4, Swap32(net.secondaryDns));
         break;
     case 0x1003: // error
         Memory::Write32(value, 0);

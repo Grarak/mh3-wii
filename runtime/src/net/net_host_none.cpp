@@ -79,8 +79,8 @@ bool Writable(int) {
 }
 
 Interface DefaultInterface() {
-    // 10.0.1.30/24, gateway 10.0.1.1, DNS 8.8.8.8 (network byte order).
-    return {0x1E01000A, 0x00FFFFFF, 0xFF01000A, 0x0101000A, 0x08080808};
+    // 10.0.1.30/24, gateway 10.0.1.1, DNS 8.8.8.8 and 8.8.4.4 (network byte order).
+    return {0x1E01000A, 0x00FFFFFF, 0xFF01000A, 0x0101000A, 0x08080808, 0x04040808};
 }
 
 bool ParseIpv4(const std::string&, uint32_t*) {

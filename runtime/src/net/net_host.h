@@ -88,7 +88,7 @@ bool Writable(int handle);
 // The host's IPv4 address, netmask and broadcast address on its default
 // route (network byte order), or a private fallback.
 struct Interface {
-    uint32_t ip, netmask, broadcast, gateway, dns;
+    uint32_t ip, netmask, broadcast, gateway, dns, secondaryDns;
 };
 
 Interface DefaultInterface();
