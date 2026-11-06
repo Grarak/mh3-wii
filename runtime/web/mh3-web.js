@@ -564,7 +564,7 @@ async function setup() {
         await file.stream().pipeTo(writable);
       }
 
-      status('Language files added: see Import a language in the launcher');
+      status('Language files added: the launcher imports them when it starts');
     } catch (error) {
       status(`Language files not added: ${error.message}`);
     }
@@ -581,7 +581,7 @@ async function setup() {
       link.click();
       URL.revokeObjectURL(link.href);
     } catch {
-      status('No template yet: write it with Import a language in the launcher');
+      status('No template yet: write it with Write a translation template in the launcher');
     }
   });
 

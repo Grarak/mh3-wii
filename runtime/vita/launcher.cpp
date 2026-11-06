@@ -961,7 +961,7 @@ void Draw(Font& font, const std::string& title, const std::vector<std::string>& 
 
 std::filesystem::path japaneseDisc;
 
-// The Japanese disc may lie among the translations too.
+// The Japanese disc may lie in the languages folder too.
 void FindJapaneseDisc(const std::filesystem::path& directory) {
     std::error_code error;
     std::filesystem::directory_iterator entries(directory, error);
@@ -1012,6 +1012,124 @@ Status WorkScreen(Font& font, const std::string& heading, const std::function<St
 
     worker.join();
     return result;
+}
+
+std::filesystem::file_time_type Modified(const std::filesystem::path& file) {
+    std::error_code error;
+    const auto time = std::filesystem::last_write_time(file, error);
+    return error ? std::filesystem::file_time_type::min() : time;
+}
+
+// The languages the launcher finds, imported when their pack is missing or
+// older than a file it comes from: the Japanese disc and every translation
+// file in the languages folder, the template too, so a new or edited file is
+// in the Language row at the next start. Of files with one code the newest
+// counts, and the template yields to any other. The first language new here
+// becomes the game's when `choose`, Japanese before translations, but not
+// the template, which is English until it is translated. Gives what it did, for a message; empty when nothing was due.
+std::string ImportLanguages(Font& font, const std::filesystem::path& gameData, bool choose) {
+    struct Found {
+        std::filesystem::path file, font;
+        std::string code;
+    };
+
+    std::vector<Found> found;
+    std::string report;
+    const auto note = [&](const std::string& line) { report += (report.empty() ? "" : "\n") + line; };
+
+    if (!japaneseDisc.empty())
+        found.push_back({japaneseDisc, {}, "ja"});
+
+    const auto directory = LanguagePack::Directory(gameData);
+    std::vector<std::filesystem::path> files;
+    std::error_code error;
+    std::filesystem::directory_iterator entries(directory, error);
+
+    for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
+        if (entries->path().extension() == ".json")
+            files.push_back(entries->path());
+
+    std::sort(files.begin(), files.end());
+
+    for (const auto& file : files) {
+        std::ifstream in(file, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(in)), {});
+        LanguageImport::Translation translation;
+
+        if (const Status parsed = LanguageImport::ParseTranslation(text, translation); !parsed.ok()) {
+            note(file.filename().string() + ": " + parsed.message());
+            continue;
+        }
+
+        Found next{file, translation.font.empty() ? std::filesystem::path() : directory / std::filesystem::path(translation.font).filename(), translation.code};
+        const auto same = std::find_if(found.begin(), found.end(), [&](const Found& f) { return f.code == next.code; });
+        const auto newer = [&] {
+            if (same->file.filename() == "template.json" || next.file.filename() == "template.json")
+                return same->file.filename() == "template.json";
+
+            return Modified(next.file) > Modified(same->file);
+        };
+
+        if (same == found.end())
+            found.push_back(next);
+        else if (newer())
+            *same = next;
+    }
+
+    std::vector<Found> due;
+    std::vector<bool> fresh;
+
+    for (const auto& f : found) {
+        const auto pack = LanguagePack::PackPath(gameData, f.code);
+        std::error_code missing;
+        const bool exists = std::filesystem::exists(pack, missing);
+
+        if (exists && Modified(f.file) <= Modified(pack) && (f.font.empty() || Modified(f.font) <= Modified(pack)))
+            continue;
+
+        due.push_back(f);
+        fresh.push_back(!exists);
+    }
+
+    if (due.empty())
+        return report;
+
+    std::vector<Status> results(due.size());
+    std::vector<std::string> summaries(due.size());
+    ReloadGameData();
+
+    // Each file's own result goes into the report.
+    (void)WorkScreen(font, "Importing languages", [&](const LanguageImport::Progress& progress) {
+        for (size_t i = 0; i < due.size(); ++i) {
+            const std::string name = due[i].file.filename().string();
+            const auto step = [&](const std::string& s) { progress(name + ": " + s); };
+
+            if (due[i].file == japaneseDisc)
+                results[i] = LanguageImport::ImportJapanese(due[i].file, gameData, step, summaries[i]);
+            else {
+                std::string code;
+                step("Reading the translation");
+                results[i] = LanguageImport::ImportTranslation(due[i].file, gameData, code, summaries[i]);
+            }
+        }
+
+        return Status{};
+    });
+
+    bool picked = false;
+
+    for (size_t i = 0; i < due.size(); ++i) {
+        const std::string name = due[i].file.filename().string();
+        Log("language %s from %s: %s", due[i].code.c_str(), name.c_str(), results[i].ok() ? summaries[i].c_str() : results[i].message().c_str());
+        note(results[i].ok() ? "Imported " + name + ": " + summaries[i] : name + ": " + results[i].message());
+
+        if (results[i].ok() && choose && fresh[i] && !picked && due[i].file.filename() != "template.json") {
+            LanguagePack::Select(due[i].code);
+            picked = true;
+        }
+    }
+
+    return report;
 }
 
 // The disc image stays in base; its metadata and the converted-asset cache live
@@ -1147,7 +1265,6 @@ void StartGame(Font& font, const std::string& what) {
 
 enum class Page {
     Main,
-    Languages,
     Categories,
     Saves,
     Quests,
@@ -1160,7 +1277,7 @@ enum class Page {
 };
 
 const char* PageName(Page page) {
-    constexpr const char* names[]{"Main", "Languages", "Quests", "Saves", "Quest list", "Custom quests", "Editor", "Cheats", "Cheat list", "Online", "Ad hoc play"};
+    constexpr const char* names[]{"Main", "Quests", "Saves", "Quest list", "Custom quests", "Editor", "Cheats", "Cheat list", "Online", "Ad hoc play"};
     return names[unsigned(page)];
 }
 
@@ -1175,7 +1292,7 @@ const char* OnOff(bool on) {
 // The main menu's rows. The web build connects nowhere: it leaves out the
 // City and the online settings (the online quests, played offline, stay).
 // Its WebGPU renderer supersamples instead of multisampling.
-enum class Item { Start, Village, City, Adhoc, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Keyboard, Language, ImportLanguage, Online };
+enum class Item { Start, Village, City, Adhoc, Quests, Create, Cheats, Widescreen, Upscaling, FrameLimit, Msaa, Ssaa, Keyboard, Language, Template, Online };
 
 constexpr Item MainItems[]{Item::Start,
                            Item::Village,
@@ -1198,7 +1315,7 @@ constexpr Item MainItems[]{Item::Start,
                            Item::Keyboard,
 #endif
                            Item::Language,
-                           Item::ImportLanguage,
+                           Item::Template,
 #ifndef __EMSCRIPTEN__
                            Item::Online
 #endif
@@ -1473,23 +1590,17 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
         LanguagePack::Select(imported ? languages[language].code : std::string());
     };
 
+    // The languages found since the last start; a new one becomes the game's.
+    const std::string chosen = LanguagePack::Selected();
+
+    if (const std::string imported = ImportLanguages(*font, gameData, true); !imported.empty())
+        Message(imported);
+
     listLanguages();
     applyLanguage();
 
-    // What the language page offers: the Japanese disc, translation files in
-    // the languages folder, and the template.
-    std::vector<std::filesystem::path> translations;
-    const auto listTranslations = [&] {
-        translations.clear();
-        std::error_code error;
-        std::filesystem::directory_iterator entries(LanguagePack::Directory(gameData), error);
-
-        for (; !error && entries != std::filesystem::directory_iterator(); entries.increment(error))
-            if (entries->path().extension() == ".json" && entries->path().filename() != "template.json")
-                translations.push_back(entries->path());
-
-        std::sort(translations.begin(), translations.end());
-    };
+    if (LanguagePack::Selected() != chosen)
+        MH3_RETURN_IF_ERROR(SaveSettings(base));
 
     SaveSlot save{};
     std::vector<SaveSlot> saves;
@@ -1743,9 +1854,14 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     return {std::string("Keyboard: ") + (systemKeyboard ? "Vita" : "Game"),
                             systemKeyboard ? "Text entry uses the Vita's keyboard, with touch and its own languages. The game keeps running behind it." : "Text entry uses the game's own keyboard."};
                 case Item::Language:
-                    return {std::string("Language: ") + languages[language].name, language < GameLanguages().size() ? "The game's text, menus and keyboard." : "An imported language: its text, with the English keyboard."};
-                case Item::ImportLanguage:
-                    return {"Import a language", "Add the Japanese game's language from its disc, or a translation file."};
+                    return {std::string("Language: ") + languages[language].name,
+                            std::string(language < GameLanguages().size() ? "The game's text, menus and keyboard." : "An imported language: its text, with the English keyboard.") +
+                                " The launcher adds Japanese from a Japanese disc image (RMHJ08) in " + base.string() + " and translations from " +
+                                LanguagePack::Directory(gameData).string() + " when it starts."};
+                case Item::Template:
+                    return {"Write a translation template",
+                            "Writes template.json with the game's English text to " + LanguagePack::Directory(gameData).string() +
+                                ". It is a language at once; translate it, keeping the file or renaming it, and the next start brings it up to date."};
                 case Item::Online:
                     return {"Online settings: " + onlineServer + (skipTls ? " (no TLS)" : ""), "The server the game's City mode connects to."};
                 }
@@ -1760,30 +1876,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             detail = describe(item).second;
             values = item == Item::FrameLimit || item == Item::Msaa || item == Item::Ssaa || item == Item::Language;
             footer = "X Select   D-pad Move";
-            break;
-        }
-        case Page::Languages: {
-            title = "Import a language";
-
-            if (!japaneseDisc.empty())
-                rows.push_back("Japanese");
-
-            for (const auto& file : translations)
-                rows.push_back(file.filename().string());
-
-            rows.push_back("Write a translation template");
-            const size_t fromDisc = japaneseDisc.empty() ? 0 : 1, at = std::min(selected, rows.size() - 1);
-
-            if (at < fromDisc)
-                detail = "Text, font and textures from " + japaneseDisc.filename().string() + ". The disc is not needed afterwards.";
-            else if (at < fromDisc + translations.size())
-                detail = "Add this translation. Texts it lacks stay English.";
-            else
-                detail = "Writes template.json with the game's English text to " + LanguagePack::Directory(gameData).string() + ". Translate it and rename it: it appears here.";
-
-            if (japaneseDisc.empty())
-                detail += " Japanese needs the Japanese disc image (RMHJ08) in " + LanguagePack::Directory(gameData).string() + ".";
-
             break;
         }
         case Page::Categories: {
@@ -2029,10 +2121,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
             case Page::Online:
                 enter(Page::Main);
                 selected = MainRow(Item::Online);
-                break;
-            case Page::Languages:
-                enter(Page::Main);
-                selected = MainRow(Item::ImportLanguage);
                 break;
             case Page::Main:
                 break;
@@ -2305,9 +2393,23 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                     systemKeyboard = !systemKeyboard;
                     SystemKeyboard::SetSetting(systemKeyboard);
                     Log("system keyboard %s", systemKeyboard ? "on" : "off");
-                } else if (item == Item::ImportLanguage) {
-                    listTranslations();
-                    enter(Page::Languages);
+                } else if (item == Item::Template) {
+                    // Never over a translation in the making.
+                    const auto directory = LanguagePack::Directory(gameData), file = directory / "template.json";
+                    bool written = false;
+                    MH3_RETURN_IF_ERROR(FsStatus::Exists(file, written));
+
+                    if (written) {
+                        Message("template.json is already in " + directory.string() + ". Rename or delete it to write a new one.");
+                        break;
+                    }
+
+                    MH3_RETURN_IF_ERROR(FsStatus::CreateDirectories(directory));
+                    ReloadGameData();
+                    MH3_RETURN_IF_ERROR(LanguageImport::ExportTemplate(file, gameData));
+                    const std::string imported = ImportLanguages(*font, gameData, false);
+                    listLanguages();
+                    Message("Wrote template.json to " + directory.string() + ".\n" + imported);
                 } else if (item == Item::Online)
                     enter(Page::Online);
                 else if (item == Item::Adhoc)
@@ -2398,42 +2500,6 @@ Status Menu(std::unique_ptr<Font>& font, bool& started) {
                 const std::string value = LauncherCheats::ValueLabel(cheat);
                 Log("cheat %s %s%s", LauncherCheats::List()[cheat].name, LauncherCheats::Enabled(cheat) ? "on" : "off", value.empty() ? "" : (" (" + value + ")").c_str());
                 break;
-            }
-            case Page::Languages: {
-                const size_t fromDisc = japaneseDisc.empty() ? 0 : 1, at = selected;
-                std::string summary, code;
-                ReloadGameData();
-
-                if (at == fromDisc + translations.size()) {
-                    MH3_RETURN_IF_ERROR(FsStatus::CreateDirectories(LanguagePack::Directory(gameData)));
-                    const Status status = LanguageImport::ExportTemplate(LanguagePack::Directory(gameData) / "template.json", gameData);
-                    Message(status.ok() ? "Wrote template.json to " + LanguagePack::Directory(gameData).string() + "." : status.message());
-                    break;
-                }
-
-                const Status status = WorkScreen(*font, "Importing a language", [&](const LanguageImport::Progress& progress) {
-                    if (at < fromDisc) {
-                        code = "ja";
-                        return LanguageImport::ImportJapanese(japaneseDisc, gameData, progress, summary);
-                    }
-
-                    progress("Reading the translation");
-                    return LanguageImport::ImportTranslation(translations[at - fromDisc], gameData, code, summary);
-                });
-
-                if (!status.ok()) {
-                    Message(status.message());
-                    break;
-                }
-
-                // It becomes the language.
-                LanguagePack::Select(code);
-                listLanguages();
-                applyLanguage();
-                Message("Imported: " + summary);
-                enter(Page::Main);
-                selected = MainRow(Item::Language);
-                return SaveSettings(base);
             }
             case Page::Online:
                 if (selected == 1) {

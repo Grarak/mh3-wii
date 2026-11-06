@@ -536,9 +536,6 @@ Status Build(const std::filesystem::path& gameData, const std::string& code, con
             if (!keys.contains(key))
                 return Status::Error("The game has no text " + key);
 
-    if (!translated && pack.replacements.empty())
-        return Status::Error("The translation changes no text");
-
     // The glyphs the European font does not have.
     const std::span<const uint8_t> dol = executable.data;
     const size_t table = executable.Offset(kEuropeanGlyphTable);

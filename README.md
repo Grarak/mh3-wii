@@ -198,10 +198,10 @@ right buttons attack, Q held with a click scrolls the item bar, Space evades:
 
 ## Languages
 
-The European disc has English, French, German, Italian and Spanish. The launcher's **Import a language** adds more; on Linux, `MH3 --import-language FILE` does, and `MH3_LANGUAGE=CODE` plays one.
+The European disc has English, French, German, Italian and Spanish. The launcher adds more languages when it starts and picks them in its **Language** row; on Linux, `MH3 --import-language FILE` adds one, and `MH3_LANGUAGE=CODE` plays one.
 
-- **Japanese** comes from your own Japanese disc (RMHJ08): put its image in `languages/` in the game data folder (`ux0:data/mh3-wii/disc/languages` on the Vita). Its text, font and textures are copied into the language, so you can delete the image afterwards. You still play from the European disc. The name entry keyboard stays Latin.
-- **Translations** are JSON files in the same folder. **Write a translation template** (or `MH3 --export-language FILE`) writes `template.json` with all the English text. Give your copy a `code`, a `name` and translated `strings`:
+- **Japanese** comes from your own Japanese disc (RMHJ08): put its image beside the European one (`ux0:data/mh3-wii` on the Vita) or in `languages/` in the game data folder (`ux0:data/mh3-wii/disc/languages`). The launcher imports it and makes it the language. Its text, font and textures are copied into the language, so you can delete the image afterwards. You still play from the European disc. The name entry keyboard stays Latin.
+- **Translations** are JSON files in `languages/`. The launcher imports each new or changed one when it starts. **Write a translation template** (or `MH3 --export-language FILE`) writes `template.json` with all the English text, which is a language at once (`My language`). Translate it in place or in a copy with its own `code`, `name` and translated `strings`:
 
 ```json
 {
