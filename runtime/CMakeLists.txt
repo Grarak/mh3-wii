@@ -290,67 +290,43 @@ else()
   set(MH3_GUEST_MEMORY_SOURCE src/guest_flat_memory.cpp)
 endif()
 
-add_executable(MH3
-  src/main.cpp src/memory.cpp ${MH3_GUEST_MEMORY_SOURCE} src/os_boot.cpp src/os_sleep.cpp src/os_alarm.cpp src/os_devices.cpp src/abi_bridge.cpp
-  src/ppc_helpers.cpp src/fpu_helpers.cpp src/executable_guard.cpp src/rso_services.cpp src/wpad_services.cpp src/controller_host.cpp native/mh3_classic_map.c src/controller_tests.cpp src/village_boot.cpp src/audio_interface.cpp
-  src/audio_tests.cpp src/audio_dma.cpp
-  src/audio/native_audio_api.cpp src/audio/native_audio_frame.cpp src/audio/native_audio_mixer.cpp src/audio/native_audio_tests.cpp src/audio/sdk_mix.cpp src/audio/sdk_synseq.cpp src/audio/sound_engine.cpp src/audio/sound_stream.cpp
-  src/device_tests.cpp src/efb_host.cpp src/ios.cpp src/usb_hid_services.cpp src/disc_image.cpp src/language_pack.cpp src/language_game.cpp src/language_import.cpp src/video_interface.cpp src/gx_registers.cpp src/gx_stream.cpp src/gx_services.cpp src/vi_services.cpp src/glare_filter.cpp src/frame_pacer.cpp src/fps_timers.cpp src/game_frame.cpp src/frame_draw.cpp src/hud_draw.cpp src/hud_icons.cpp src/mhchar_motion.cpp src/game_step.cpp src/effect_step.cpp src/guest_worker.cpp src/guest_threads.cpp src/net/online_patches.cpp src/net/online_close.cpp src/net/gamespy_common.cpp src/net/gamespy_gt2.cpp src/net/gamespy_natneg.cpp src/net/online_name.cpp src/net/online_chat.cpp src/net/wii_so.cpp src/net/wii_ncd.cpp src/net/wii_nwc24.cpp src/net/wii_dwc.cpp src/net/wii_ssl.cpp src/net/wii_nhttp.cpp src/net/wii_vf.cpp src/net/game_net_packet.cpp src/net/game_net_connection.cpp src/net/game_net_socket.cpp src/net/game_net_session.cpp src/net/game_net_manager.cpp src/net/game_net_hot.cpp src/net/net_ctrl.cpp src/net/ios_net.cpp ${MH3_NET_HOST_SOURCE} src/effect_calc.cpp src/effect_objects.cpp src/effect_draw_order.cpp src/particle_manager_calc.cpp src/map_sound.cpp src/player_timers.cpp src/port_check.cpp src/pulse.cpp src/rumble_timers.cpp src/pad_input.cpp src/pad_pointer.cpp src/log_pointer.cpp src/camera_input.cpp src/camera_controls.cpp src/item_bar.cpp src/field_camera.cpp src/player_aim.cpp src/step_counter.cpp src/swing_effect.cpp src/stamina.cpp src/player_turn.cpp src/field_jump.cpp src/quest_placement.cpp src/quest_flags.cpp src/quest_spawns.cpp src/quest_setup.cpp src/quest_step.cpp src/quest_result.cpp src/enemy_death.cpp src/summon_calls.cpp src/monster_heaps.cpp src/save_data.cpp src/game_boot.cpp src/game_tasks.cpp src/field_frame.cpp src/draw_buckets.cpp src/player_health.cpp src/cheats.cpp src/cheat_data.cpp src/cheat_items.cpp src/cheat_monsters.cpp src/cheat_quest.cpp src/cheat_hunter.cpp src/cheat_movement.cpp src/tick_sites.cpp src/camera_script.cpp src/movie_draw.cpp src/reset_fade.cpp src/loading_screen.cpp src/load_progress.cpp src/quest_clock.cpp src/ambient_hover.cpp src/fish_effects.cpp src/group_shuttle.cpp src/hit_timers.cpp src/enemy_glide.cpp src/creature_fade.cpp src/ambient_flutter.cpp src/yure_chain.cpp src/audio_reverb.cpp src/anm_chr_keys.cpp src/anm_chr_blend.cpp src/anm_obj_chr_res.cpp src/effect_texture.cpp src/effect_billboard.cpp src/effect_particle.cpp src/msl_math.cpp src/texture_scroll.cpp src/ran_suu.cpp src/reward_equip.cpp src/ceadeus_intro.cpp src/demo_pose.cpp src/event_demo.cpp src/alatreon_actions.cpp src/screen_fade.cpp src/enemy_timers.cpp src/shell_motion.cpp src/enemy_turn.cpp src/enemy_parts.cpp src/enemy_step.cpp src/mhchar_material.cpp src/enemy_reactions.cpp src/enemy_setup.cpp src/enemy_targets.cpp src/enemy_handlers.cpp src/effect_fade_models.cpp src/npc_turn.cpp src/field_actor.cpp src/object_ages.cpp src/village_player_actions.cpp src/field_player_actions.cpp src/weapon_actions.cpp src/g3d_res.cpp src/g3d_calc_world.cpp src/scene_world.cpp src/mtx.cpp src/ef_anim_curve.cpp src/nw4r_accessors.cpp src/g3d_anm_result.cpp src/nw4r_math.cpp src/scn_mdl_tasks.cpp src/gather_spots.cpp src/mhchar_move.cpp src/field_lists.cpp src/res_anm_keys.cpp src/drawshape.cpp src/particle_mtx.cpp src/particle_initialize.cpp src/hunter_parts.cpp src/player_skill.cpp src/sound_shells.cpp src/enemy_hit_shapes.cpp src/enemy_conditions.cpp src/small_monsters.cpp src/ef_mtx_scale.cpp src/ef_resource.cpp src/msl_string.cpp src/debug_font.cpp src/prim_buffers.cpp src/monster_intros.cpp src/monster_roars.cpp src/monster_attacks.cpp src/monster_control.cpp src/enemy_actions.cpp src/monster_waits.cpp src/g3d_destroy.cpp
-  src/dol_sections.cpp
+# The game: every source in src/ (with audio/ and net/) and native/, but
+# for the ones only some builds take, which the blocks below add, and those
+# of other programs.
+file(GLOB mh3_game_sources CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+  src/*.cpp src/audio/*.cpp src/net/*.cpp native/*.c)
+list(FILTER mh3_game_sources EXCLUDE REGEX "^native/test_")
+
+set(mh3_graphics_sources src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
+  src/native_material.cpp src/model_gpu.cpp src/model_cull.cpp native/mh3_model_cull.c src/model_assets.cpp
+  src/native_frame_statistics.cpp src/character_material.cpp src/native_shader_source.cpp native/mh3_shade.c
+  src/native_frame_packet.cpp src/launcher_screen.cpp)
+
+list(REMOVE_ITEM mh3_game_sources
+  # Per platform: guest memory, the host network stack, audio output and
+  # Aurora's renderer.
+  src/guest_flat_memory.cpp src/net/net_host_none.cpp src/net/net_host_posix.cpp src/net/adhoc.cpp
+  src/net/local_server.cpp src/net/local_server_natneg.cpp src/net/local_server_posix.cpp src/audio_output.cpp
+  ${mh3_graphics_sources}
+  # Diagnostics behind options, and the hosts' debug port.
+  src/function_trace.cpp src/guest_entry_trace.cpp src/guest_call_trace.cpp src/collision_check.cpp
+  src/efb_copy_trace.cpp src/write_watch.cpp src/debug_port.cpp
+  # Other programs and libraries, and unused code.
+  src/launcher_tests.cpp src/controller_sdl_tests.cpp src/rom_decoder.cpp native/mh3_owned_scene.c)
+
+add_executable(MH3 ${mh3_game_sources} ${MH3_GUEST_MEMORY_SOURCE} ${MH3_NET_HOST_SOURCE}
   ../generated/rso_overlays/map_village.cpp ../generated/rso_overlays/quest_field.cpp ../generated/rso_overlays/enemy_field.cpp ../generated/rso_overlays/map01_field.cpp ../generated/rso_overlays/map00_field.cpp ../generated/rso_overlays/map02_field.cpp ../generated/rso_overlays/map03_field.cpp ../generated/rso_overlays/map04_field.cpp ../generated/rso_overlays/map05_field.cpp ../generated/rso_overlays/map06_field.cpp ../generated/rso_overlays/map07_field.cpp ../generated/rso_overlays/map08_field.cpp ../generated/rso_overlays/map09_field.cpp ../generated/rso_overlays/map10_field.cpp ../generated/rso_overlays/map11_field.cpp ../generated/rso_overlays/net_data.cpp ../generated/rso_overlays/map_town_online.cpp ../generated/rso_overlays/map_town_quest.cpp
   ${MKW_BASE_COMMON_SHARDS} ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS}
   ${MKW_BASE_REGISTRATION_SOURCES})
-target_sources(MH3 PRIVATE src/gx_panic.cpp src/gx_panic_tests.cpp src/model_resources.cpp src/model_submission_trace.cpp
-  native/mh3_model_resources.c native/mh3_model_runtime.c native/mh3_model_draw.c)
-target_sources(MH3 PRIVATE src/ground_hit.cpp src/land_sweep.cpp src/creature_groups.cpp src/scene_changes.cpp src/monster_bones.cpp)
-target_sources(MH3 PRIVATE src/system_keyboard.cpp)
-set_source_files_properties(src/ground_hit.cpp src/monster_bones.cpp
+
+# Clang's precise float pragma is unsupported for the Vita target: these keep
+# their operation order and range/finite checks (the CPU fog/light producer
+# among them) through their options.
+set_source_files_properties(src/ground_hit.cpp src/monster_bones.cpp native/mh3_model_draw_dispatch.c
+  native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c native/mh3_model_material_prep.c
+  native/mh3_model_view.c native/mh3_material_state.c native/mh3_scene_queue.c native/mh3_system_ui.c
   PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
-target_sources(MH3 PRIVATE src/model_draw_dispatch.cpp native/mh3_model_draw_dispatch.c)
-set_source_files_properties(native/mh3_model_draw_dispatch.c
-  PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
-target_sources(MH3 PRIVATE native/mh3_model_matrices.c)
-target_sources(MH3 PRIVATE src/model_catalog.cpp native/mh3_model_catalog.c
-  native/mh3_model_submission.c native/mh3_mesh_pack.c native/mh3_material_pack.c)
-target_sources(MH3 PRIVATE src/model_material.cpp native/mh3_model_material_updates.c
-  native/mh3_model_gpu_inputs.c src/model_material_prep.cpp native/mh3_model_material_prep.c)
-target_sources(MH3 PRIVATE src/model_scope.cpp src/model_render_prep.cpp native/mh3_model_scope.c
-  native/mh3_model_prepare_cache.c)
-set_source_files_properties(native/mh3_model_material_updates.c native/mh3_model_gpu_inputs.c
-  native/mh3_model_material_prep.c
-  PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
-target_sources(MH3 PRIVATE src/native_resource_lifetime.cpp native/mh3_resource_lifetime.c)
-target_sources(MH3 PRIVATE src/field_resources.cpp native/mh3_field_resources.c)
-target_sources(MH3 PRIVATE src/model_pose.cpp native/mh3_model_pose.c)
-target_sources(MH3 PRIVATE src/model_view.cpp native/mh3_model_view.c)
-set_source_files_properties(native/mh3_model_view.c
-  PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
-target_sources(MH3 PRIVATE src/native_startup_textures.cpp native/mh3_startup_textures.c)
-target_sources(MH3 PRIVATE src/native_system_fatal.cpp native/mh3_system_fatal.c)
-target_sources(MH3 PRIVATE src/native_ui_cursor.cpp native/mh3_ui_cursor.c)
-target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_sources.c)
-target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
-target_sources(MH3 PRIVATE src/native_frame.cpp)
-target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
-target_sources(MH3 PRIVATE src/native_display_utilities.cpp)
-target_sources(MH3 PRIVATE src/lens_flare.cpp)
-target_sources(MH3 PRIVATE src/native_thp.cpp native/mh3_thp_video.c)
-target_sources(MH3 PRIVATE native/mh3_draw_state.c)
-target_sources(MH3 PRIVATE src/model_state.cpp src/model_scene_state.cpp native/mh3_model_state.c
-  src/model_texture_matrices.cpp native/mh3_texture_matrices.c native/mh3_material_state.c
-  native/mh3_material_group_publication.c
-  src/native_ui.cpp native/mh3_ui.c
-  src/native_system_ui.cpp native/mh3_system_ui.c
-  src/native_effect_draw.cpp native/mh3_effect_draw.c native/mh3_particle_draw_state.c
-  src/native_scene_feedback.cpp native/mh3_scene_feedback.c
-  native/mh3_demo_menu.c
-  src/native_scene_queue.cpp native/mh3_scene_queue.c src/scene_cull.cpp native/mh3_scene_cull.c
-  src/launcher_support.cpp)
-# Clang's precise float pragma is unsupported for the Vita target. Keep the
-# CPU fog/light producer's range/finite checks and operation order intact.
-set_source_files_properties(native/mh3_material_state.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
-set_source_files_properties(native/mh3_scene_queue.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
-set_source_files_properties(native/mh3_system_ui.c PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+
 target_include_directories(MH3 PRIVATE include ..)
 
 # glibc's backtrace_symbols only names functions in the dynamic symbol table,
@@ -415,10 +391,8 @@ add_test(NAME mh3_audio_self_test COMMAND MH3 --audio-self-test)
 add_test(NAME mh3_vita_printf_formats COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/check-vita-printf.py")
 
 if(TARGET aurora::core)
-  target_sources(MH3 PRIVATE src/graphics_host.cpp src/native_render_state.cpp src/native_texture_state.cpp
-    src/native_material.cpp src/model_gpu.cpp src/model_cull.cpp native/mh3_model_cull.c src/model_assets.cpp src/native_frame_statistics.cpp
-    src/character_material.cpp src/native_shader_source.cpp native/mh3_shade.c src/native_frame_packet.cpp
-    src/launcher_screen.cpp)
+  target_sources(MH3 PRIVATE ${mh3_graphics_sources})
+
   if(VITA)
     target_sources(MH3 PRIVATE vita/audio_output.cpp)
   else()
@@ -524,7 +498,7 @@ if(VITA)
 
   include("${VITASDK}/share/vita.cmake" REQUIRED)
   target_sources(MH3 PRIVATE vita/platform.cpp vita/launcher.cpp vita/launcher_font.cpp
-    vita/vita_controller.cpp vita/nand_recover.cpp vita/thp_jpeg.cpp src/launcher_disc.cpp src/launcher_textures.cpp)
+    vita/vita_controller.cpp vita/nand_recover.cpp vita/thp_jpeg.cpp)
   # pthread-embedded fixes: leaking mutex semaphores, polling waits, new
   # threads off the game thread's core.
   target_sources(MH3 PRIVATE vita/pthread_embedded.c)
@@ -611,14 +585,11 @@ if(VITA)
   )
 endif()
 
-# Game data preparation: the native model stage on every platform; on Linux,
-# --rom runs the same disc, texture and model stages as the Vita launcher.
-target_sources(MH3 PRIVATE src/launcher_models.cpp src/rom_image.cpp src/asset_cache.cpp src/button_glyphs.cpp
-  native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_skin.c native/mh3_prepare_writer.c)
+# Game data preparation, the same stages as the Vita launcher's on Linux
+# (--rom).
 set_source_files_properties(src/launcher_models.cpp src/asset_cache.cpp src/disc_image.cpp src/graphics_host.cpp PROPERTIES
   INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
 if(NOT VITA)
-  target_sources(MH3 PRIVATE src/launcher_disc.cpp src/launcher_textures.cpp)
   set_source_files_properties(src/launcher_disc.cpp src/launcher_textures.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${MH3_AURORA_ROOT}/lib")
   # MH3 --launcher: the Vita launcher's menus on a development host, and on
@@ -663,17 +634,10 @@ if(MH3_WRITE_WATCH)
   target_compile_definitions(MH3 PRIVATE MH3_WRITE_WATCH=1)
 endif()
 
-target_sources(MH3 PRIVATE src/quest_catalog.cpp) # --list, --quest, launcher
-
 # MH3_DEBUG_PORT: development builds on the hosts.
 if(MH3_DEVELOPMENT AND NOT VITA)
   target_sources(MH3 PRIVATE src/debug_port.cpp)
 endif()
-
-# MH3_ONLINE_AUTO, the online autopilot. In every build: its ports (traced
-# wrappers of the online screens and the quest session) are native in the
-# generated dispatch tables, which all configurations share.
-target_sources(MH3 PRIVATE src/net/online_auto.cpp)
 
 # MH3_DEVELOPMENT applies to the runtime's own sources only, so toggling it
 # does not rebuild the generated shards.
