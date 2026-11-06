@@ -87,15 +87,6 @@ Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path
             return {};
     }
 
-    bool published = false, layout = false;
-    MH3_RETURN_IF_ERROR(FsStatus::Exists(output, published));
-
-    if (published)
-        MH3_RETURN_IF_ERROR(FsStatus::Exists(output / "disc-layout.txt", layout));
-
-    if (published && !layout)
-        return Status::Error("Processing output contains unrelated files: " + output.string());
-
     progress("Reading the disc image", 0, 1);
     std::unique_ptr<RomImage> opened;
     MH3_RETURN_IF_ERROR(RomImage::Open(image, opened));
@@ -103,8 +94,10 @@ Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path
     const auto staging = std::filesystem::path(output.string() + ".processing");
     bool stale = false;
 
-    // Only this launcher's named staging directory is disposable; no input,
-    // saves or existing published game directory is ever removed.
+    // The staging directory is this launcher's own, and so is the output:
+    // what it holds besides the converted assets and the languages (an
+    // earlier preparation, one cut short, a languages folder made by hand
+    // before the first start) gives way to the new one.
     MH3_RETURN_IF_ERROR(FsStatus::Exists(staging, stale));
 
     if (stale)
@@ -158,6 +151,7 @@ Status ProcessDisc(const std::filesystem::path& iso, const std::filesystem::path
     if (!DiscReady(staging))
         return Status::Error("Prepared disc validation failed");
 
+    bool published = false;
     MH3_RETURN_IF_ERROR(FsStatus::Exists(output, published));
 
     if (published) {

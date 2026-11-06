@@ -244,6 +244,15 @@ void DiscTests(const std::filesystem::path& root) {
         Check(processed.ReadFile("05/quest00_eng.bin") == quest, "processed partition exact bytes");
     }
 
+    // An output that was never prepared, its languages folder made by hand:
+    // prepared over, the languages kept.
+    std::filesystem::create_directories(root / "by-hand/languages");
+    Save(root / "by-hand/languages/mine.json", std::vector<uint8_t>{'{', '}'});
+    Save(root / "by-hand/stray.bin", std::vector<uint8_t>{1});
+    CheckStatus(VitaLauncher::ProcessDisc(root / "game.iso", root / "by-hand", [](const auto&, uint64_t, uint64_t) {}));
+    Check(VitaLauncher::DiscReady(root / "by-hand") && std::filesystem::exists(root / "by-hand/languages/mine.json") && !std::filesystem::exists(root / "by-hand/stray.bin"),
+          "an unprepared output is prepared over, keeping its languages");
+
     std::filesystem::resize_file(root / "game.iso", iso.size() + 0x8000);
     Check(!VitaLauncher::DiscReady(root / "processed"), "a changed disc image must not be ready");
     std::filesystem::resize_file(root / "game.iso", iso.size());
