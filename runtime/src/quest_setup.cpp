@@ -71,7 +71,7 @@ constexpr uint32_t kLists = 0x805F7E60, kMapKeys = 0x805F8058, kMapIds = 0x805F8
 constexpr uint32_t kFreeRoam = 0x805F5740;
 constexpr uint32_t kModeByHunted = 0x80795B30; // r13 - 0x57B0
 constexpr uint32_t kIntruderKinds = 0x80795B24; // r13 - 0x57BC
-constexpr uint32_t kCallPicker = 0x806CE894;    // the Qurupeco's call: (chances, extra slot) -> 1
+constexpr uint32_t kCallPicker = 0x806CE894;    // the Qurupeco's call: (chances, extra slot, quest work) -> 1
 constexpr uint32_t kNpcWork = 0x80796EEC;      // r13 - 0x43F4
 constexpr uint32_t kFrameRate = 0x8065B4D0;
 constexpr uint32_t kSixty = 0x8079E938; // r2 - 0x1628
@@ -358,7 +358,7 @@ void QuestSetup(GuestCall& game) {
 
     if (game.Call<QurupecoAlone>() == 1) {
         const uint32_t work = Work();
-        const uint32_t picked = game(FlatRead32(kCallPicker), {FlatRead32(work + QuestWork::kEntry) + 0x32C, work + QuestWork::kExtraSlot});
+        const uint32_t picked = game(FlatRead32(kCallPicker), {FlatRead32(work + QuestWork::kEntry) + 0x32C, work + QuestWork::kExtraSlot, work});
 
         if ((picked & 0xFF) == 1) {
             FlatWrite8(Work() + QuestWork::kExtraLoaded, 1);
