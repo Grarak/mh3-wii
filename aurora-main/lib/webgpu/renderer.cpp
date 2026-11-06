@@ -73,7 +73,7 @@ void trace_write(const char* what, size_t bytes) {
   }();
 
   if (enabled && bytes >= (256u << 10))
-    std::fprintf(stderr, "Aurora WebGPU write: %s %zu KiB\n", what, bytes >> 10);
+    std::fprintf(stderr, "Aurora WebGPU write: %s %lu KiB\n", what, static_cast<unsigned long>(bytes >> 10));
 }
 
 // An entry point's failure stops the program. Without exceptions (release

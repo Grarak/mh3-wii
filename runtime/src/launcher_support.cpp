@@ -976,7 +976,7 @@ Status PatchQuest(QuestCatalog::Set set, uint16_t id, std::string_view patches) 
 
     for (const auto& bytes : patch) {
         std::copy(bytes.bytes.begin(), bytes.bytes.end(), edited.begin() + at + bytes.offset);
-        std::fprintf(stderr, "MH3 quest %u: +0x%zX =", unsigned(id), bytes.offset);
+        std::fprintf(stderr, "MH3 quest %u: +0x%lX =", unsigned(id), static_cast<unsigned long>(bytes.offset));
 
         for (const uint8_t byte : bytes.bytes)
             std::fprintf(stderr, " %02X", byte);
