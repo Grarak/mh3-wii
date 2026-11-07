@@ -1412,7 +1412,8 @@ void Notice(CpuContext* cpu, std::span<const char* const> lines, uint32_t top) {
         const size_t length = std::strlen(lines[i]);
         std::memcpy(Memory::GetPointer(frame[0x10], uint32_t(length + 1)), lines[i], length + 1);
         call(0x8005b714, {22, 22});
-        call(0x8005b780, {uint32_t(int32_t((width - float(length * 11)) * .5f)), uint32_t(top + i * 30)});
+        const uint32_t columns = call(0x8005b83c, {frame[0x10]});
+        call(0x8005b780, {uint32_t(int32_t((width - float(columns * 11)) * .5f)), uint32_t(top + i * 30)});
         call(0x8005b7ec, {i == 0 && lines.size() > 1 ? 0xf0a060ffu : 0xc0c0c0ffu});
         call(0x8005ba04, {frame[0x10]});
         call(0x8005c174);
@@ -1605,13 +1606,12 @@ extern "C" void MH3_HUDDraw(CpuContext* cpu) {
             text = Memory::Read32(strings + (type == 1 || type == 4 ? 0 : type == 3 ? 12 : 8));
         }
 
-        size_t length = 0;
-
-        while (Memory::Read8(text + length))
-            ++length;
-
+        // Centred by the font's columns (FontTextColumns), 11 pixels each at
+        // this size: the original counted bytes, as many for ASCII, but a
+        // language pack's full-width character is 3 bytes in 2 columns.
         call(0x8005b714, {22, 22});
-        call(0x8005b780, {uint32_t(int32_t((width - float(length * 11)) * .5f)), 229});
+        const uint32_t columns = call(0x8005b83c, {text});
+        call(0x8005b780, {uint32_t(int32_t((width - float(columns * 11)) * .5f)), 229});
         call(0x8005b7ec, {0xc0c0c0ff});
         call(0x8005ba04, {text});
         call(0x8005c174);
