@@ -576,10 +576,13 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
 
         uint32_t r = 3, f = 1;
         bool floats = false;
+        ctx->cr &= ~0x02000000u;
 
         while (in >> arg) {
             if (arg == "f") {
+                // A variadic callee saves f1-f8 only with CR bit 6 set.
                 floats = true;
+                ctx->cr |= 0x02000000u;
                 continue;
             }
 
