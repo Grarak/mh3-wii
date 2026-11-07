@@ -27,6 +27,7 @@
 #include "native_graphics.h"
 #include "native_owner.h"
 #include "port_check.h"
+#include "stall_watch.h"
 #include "village_boot.h"
 #include <initializer_list>
 #include <stdexcept>
@@ -299,6 +300,7 @@ struct FrameSplit {
         static const TraceFlag traceIo("io");
         mh3_io_trace_frame(traceIo, LoadProgress::Showing());
 #endif
+        StallWatchFrame();
         static const bool enabled = [] {
             const char* value = std::getenv("MH3_STATS");
             return !value || std::strcmp(value, "0") != 0;
