@@ -4,6 +4,7 @@
 #include "load_progress.h"
 #include "launcher_convert.h"
 #include "language_import.h"
+#include "language_pack.h"
 #include "launcher_texture_inventory.h"
 #include "gfx/native_texture_decode.hpp"
 #include "gfx/texture_convert.hpp"
@@ -338,6 +339,39 @@ void CheckTranslationFiles() {
     }
 }
 
+// Packs of an older format with replacement files are imported again; their
+// other contents and the current format's packs stay.
+void LanguagePackTests(const std::filesystem::path& root) {
+    LanguagePack::Contents contents;
+    contents.code = "ja";
+    contents.name = "Japanese";
+    contents.replacements.push_back({"04/arena_eng.brres", std::vector<uint8_t>(64, 1)});
+    CheckStatus(LanguagePack::Write(root, contents));
+    contents.code = "xx";
+    contents.replacements.clear();
+    CheckStatus(LanguagePack::Write(root, contents));
+    const auto withFiles = LanguagePack::PackPath(root, "ja"), without = LanguagePack::PackPath(root, "xx");
+    Check(!LanguagePack::Outdated(withFiles) && !LanguagePack::Outdated(without), "current packs are not outdated");
+
+    const auto format = [](const std::filesystem::path& path, char digit) {
+        std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+        file.seekp(7);
+        file.put(digit);
+    };
+
+    for (const char older : {'1', '2'}) {
+        format(withFiles, older);
+        format(without, older);
+        LanguagePack::Pack read;
+        Check(LanguagePack::Read(withFiles, read, true).ok() && read.files.size() == 1, "an older pack still loads");
+        Check(LanguagePack::Outdated(withFiles) && !LanguagePack::Outdated(without), "an older pack with replacement files is outdated");
+    }
+
+    format(withFiles, '9');
+    LanguagePack::Pack read;
+    Check(!LanguagePack::Read(withFiles, read, false).ok() && !LanguagePack::Outdated(withFiles), "a newer format is not read");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--translation-files") {
@@ -574,6 +608,7 @@ int main(int argc, char** argv) {
         SaveTests(root / "user");
         QuestTests();
         DiscTests(root);
+        LanguagePackTests(root / "languages");
         std::filesystem::remove_all(root);
         std::cout << "MH3 launcher save, quest overlay and ISO processing tests passed\n";
         return 0;

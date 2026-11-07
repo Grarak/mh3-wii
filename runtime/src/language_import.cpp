@@ -580,8 +580,10 @@ std::vector<DictionaryNode> BuildDictionary(const std::vector<std::string>& name
 // valid"). Only for files of textures and palettes alone: the root section
 // grows by the new dictionary nodes, everything after it moves back (each
 // resource's offset to the file's start changes, none of its own), and the
-// copies go to the end with their names.
-void AddMissingResources(std::span<const uint8_t> original, Bytes& file) {
+// copies go after the last name, in place of the end's padding, with their
+// names. Nothing changes when the result would pass `limit`: the game loads
+// such a file into a block of a fixed size and fails on a larger one.
+void AddMissingResources(std::span<const uint8_t> original, Bytes& file, uint32_t limit) {
     const auto valid = [](std::span<const uint8_t> data) {
         return Word(data, 0) == 0x62726573 && Half(data, 4) == 0xFEFF && Word(data, 8) == data.size() && Word(data, Half(data, 12)) == 0x726F6F74;
     };
@@ -638,9 +640,22 @@ void AddMissingResources(std::span<const uint8_t> original, Bytes& file) {
     // The new nodes, on 32 bytes so the images stay aligned.
     const size_t shift = (size_t(added) * 16 + 31) & ~size_t(31);
     const auto moved = [&](size_t at) { return at + shift; };
+    size_t used = file.size();
+
+    while (used > rootEnd && !file[used - 1])
+        --used;
+
+    // The last name's terminator; never into a resource.
+    used = std::min(file.size(), (used + 1 + 3) & ~size_t(3));
+
+    for (const auto& group : built)
+        for (const auto& e : group.entries)
+            used = std::max(used, std::min(file.size(), e.dataAt + Word(file, e.dataAt + 4)));
+
     Bytes out(file.begin(), file.begin() + rootEnd);
     out.resize(rootEnd + shift, 0);
-    out.insert(out.end(), file.begin() + rootEnd, file.end());
+    out.insert(out.end(), file.begin() + rootEnd, file.begin() + used);
+    std::map<std::string, size_t> copiedNames;
 
     for (auto& group : built) {
         for (auto& e : group.entries) {
@@ -650,15 +665,22 @@ void AddMissingResources(std::span<const uint8_t> original, Bytes& file) {
         }
 
         for (const auto& e : group.added) {
+            // One name for a texture and its palette, before the first.
+            auto name = copiedNames.find(e.name);
+
+            if (name == copiedNames.end()) {
+                Align(out, 4);
+                out.resize(out.size() + 4);
+                PutWord(out, out.size() - 4, uint32_t(e.name.size()));
+                name = copiedNames.emplace(e.name, out.size()).first;
+                out.insert(out.end(), e.name.begin(), e.name.end());
+                out.push_back(0);
+            }
+
+            const size_t nameAt = name->second;
             Align(out, 32);
             const size_t at = out.size(), bytes = Word(original, e.dataAt + 4);
             out.insert(out.end(), original.begin() + e.dataAt, original.begin() + e.dataAt + bytes);
-            Align(out, 4);
-            out.resize(out.size() + 4);
-            PutWord(out, out.size() - 4, uint32_t(e.name.size()));
-            const size_t nameAt = out.size();
-            out.insert(out.end(), e.name.begin(), e.name.end());
-            out.push_back(0);
             PutWord(out, at + 12, uint32_t(-int64_t(at)));
             PutWord(out, at + 20, uint32_t(nameAt - at));
             group.entries.push_back({e.name, nameAt, at});
@@ -718,8 +740,11 @@ void AddMissingResources(std::span<const uint8_t> original, Bytes& file) {
     for (const auto& group : built)
         write(group.entries);
 
-    // The disc's BRRES files end on 128 bytes.
-    Align(out, 128);
+    Align(out, 32);
+
+    if (out.size() > limit)
+        return;
+
     PutWord(out, root + 4, uint32_t(rootBytes + shift));
     PutWord(out, 8, uint32_t(out.size()));
     PutHalf(out, 14, uint16_t(Half(out, 14) + added));
@@ -736,9 +761,15 @@ Status Build(const std::filesystem::path& gameData, const std::string& code, con
     std::vector<Item> items;
     MH3_RETURN_IF_ERROR(Catalogue(disc, executable, items));
 
+    // A merged file may grow past the European one, but not past the block
+    // the game loads it into: the arena menu's record at 0x80795F78 {bytes,
+    // path} holds 0x54E800 for 04/arena.brres (its 5563776-byte _eng file).
+    // Other files keep the European size.
+    const uint32_t arenaLimit = Word(executable.data, executable.Offset(0x80795F78));
+
     for (auto& f : replacements)
-        if (f.name.ends_with(".brres") && disc.FileSizeOrZero(f.name))
-            AddMissingResources(disc.ReadFile(f.name), f.bytes);
+        if (const uint32_t bytes = disc.FileSizeOrZero(f.name); bytes && f.name.ends_with(".brres"))
+            AddMissingResources(disc.ReadFile(f.name), f.bytes, f.name == "04/arena_eng.brres" ? std::max(arenaLimit, bytes) : bytes);
 
     Contents pack;
     pack.code = code;
