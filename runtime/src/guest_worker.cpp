@@ -52,6 +52,15 @@ void GuestThread::Loop() {
         sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
     }
 
+    // Above the default priority of the threads sharing its core (on core 3
+    // the DVD reader, which decrypts an ISO's sectors, the texture pack
+    // preloader and the model loaders), below the audio output's (default -
+    // 16): the game and draw threads spin while they wait for this thread's
+    // job, so one of those holding the core would stall the frame with every
+    // core busy.
+    constexpr int DefaultPriority = 0x10000100; // SCE_KERNEL_DEFAULT_PRIORITY_USER
+    sceKernelChangeThreadPriority(sceKernelGetThreadId(), DefaultPriority - 8);
+
     SceKernelThreadInfo info{};
     info.size = sizeof(info);
 
