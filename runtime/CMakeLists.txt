@@ -523,6 +523,14 @@ if(VITA)
   target_sources(MH3 PRIVATE vita/fast_clock.c)
   target_link_options(MH3 PRIVATE "-Wl,--wrap=gettimeofday" "-Wl,--wrap=clock_gettime")
 
+  # Development: MH3_TRACE=io, the memory card IO outside loading screens.
+  if(MH3_DEVELOPMENT)
+    target_sources(MH3 PRIVATE vita/io_trace.c)
+    target_link_options(MH3 PRIVATE "-Wl,--wrap=sceIoOpen" "-Wl,--wrap=sceIoClose" "-Wl,--wrap=sceIoRead"
+      "-Wl,--wrap=sceIoPread" "-Wl,--wrap=sceIoWrite" "-Wl,--wrap=sceIoPwrite" "-Wl,--wrap=sceIoRemove"
+      "-Wl,--wrap=sceIoRename" "-Wl,--wrap=sceIoGetstat" "-Wl,--wrap=sceIoMkdir")
+  endif()
+
   # newlib's isfinite/isnan/isinf as builtins under clang (not __fpclassifyf calls).
   target_compile_options(MH3 PRIVATE "$<$<COMPILE_LANGUAGE:C>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/vita/newlib_math_builtins.h>")
   option(MH3_VITA_FAST_TLS "Use initialized VitaSDK TLS lookup fast paths" ON)

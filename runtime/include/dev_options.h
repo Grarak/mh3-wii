@@ -159,7 +159,7 @@ inline const DevOptions& ProfileOptions() {
     return options;
 }
 
-// MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads]:
+// MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads][,io]:
 // the input as the game read it once per tick of game time (frame_pacer.cpp),
 // each monster's work and position once a second (field_camera.cpp), the
 // actions monsters start (monster_control.cpp), every third tick of game
@@ -168,8 +168,9 @@ inline const DevOptions& ProfileOptions() {
 // object update callback and kind the first time it runs (field_lists.cpp),
 // the network devices' requests, sockets, lookups and TLS sessions
 // (ios_net.cpp), every guest thread switch (guest_threads.cpp) and how far
-// the game's random streams moved per tick (game_step.cpp).
-inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads", "demo", "movie", "rand"});
+// the game's random streams moved per tick (game_step.cpp) and the Vita's
+// memory card IO outside loading screens (vita/io_trace.c).
+inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads", "demo", "movie", "rand", "io"});
 
 inline const DevOptions& TraceOptions() {
     static const DevOptions options("MH3_TRACE", kTraceItems);

@@ -21,6 +21,7 @@
 #include "game_tasks.h"
 #include "guest_call.h"
 #include "guest_worker.h"
+#include "load_progress.h"
 #include "memory.h"
 #include "native_frame_packet.h"
 #include "native_graphics.h"
@@ -62,6 +63,9 @@ extern uintptr_t mh3GameStackProbe;                           // model_catalog.c
 void MH3TakeCatalogDrawWaits(uint64_t waits[2], uint64_t ns[2]); // model_catalog.cpp
 extern "C" uint64_t MH3TakeEffectParticlesDrawn();                // native_effect_draw.cpp
 extern "C" void MH3TakeEffectQuadCounts(uint32_t out[5]);         // native_effect_draw.cpp
+#ifdef __vita__
+extern "C" void mh3_io_trace_frame(int enabled, int loading_screen); // vita/io_trace.c
+#endif
 #endif
 
 namespace {
@@ -291,6 +295,10 @@ struct FrameSplit {
     void End() {
         Lap(other);
         ++frames;
+#ifdef __vita__
+        static const TraceFlag traceIo("io");
+        mh3_io_trace_frame(traceIo, LoadProgress::Showing());
+#endif
         static const bool enabled = [] {
             const char* value = std::getenv("MH3_STATS");
             return !value || std::strcmp(value, "0") != 0;
