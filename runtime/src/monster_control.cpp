@@ -24,6 +24,8 @@
 //                         (enemy_parts.cpp)
 //   face DEGREES          set its yaw
 //   goto X Y Z            place it
+//   area N|here           move it into the game's area N (here: the
+//                         hunter's), as its record's area at setup
 //   hunter save|back      remember the local hunter's place, put it back
 //   hunter X Y Z          place the local hunter
 //   hunter act KIND ACTION  start the local hunter's action (FieldNextAction;
@@ -66,6 +68,7 @@ enum : uint32_t {
     kState = 0x005,     // u8[3]: the action's routine state
     kPosition = 0x188,  // VEC3
     kYaw = 0x1C0,       // s32: 65536 a turn
+    kArea = 0x1E1,      // u8: the area it is in (the game's numbering)
     kMode = 0x1E5,      // u8: the action's mode
     kSub = 0x1E6,       // u8: the action within the mode
 };
@@ -171,8 +174,8 @@ void List() {
 
     for (uint32_t i = 0, n = Cheats::MoveWorkCount(Cheats::Kind::Monster); i < n; ++i)
         if (const uint32_t m = Monster(i))
-            std::fprintf(stderr, "MH3 monster control: [%u] work %08x kind %u variant %u action %u.%u state %u.%u.%u at %.1f %.1f %.1f yaw %.1f\n", i, m, Memory::Read8(m + kKind),
-                         Memory::Read8(m + kVariant), Memory::Read8(m + kMode), Memory::Read8(m + kSub), Memory::Read8(m + kState), Memory::Read8(m + kState + 1),
+            std::fprintf(stderr, "MH3 monster control: [%u] work %08x kind %u variant %u area %u action %u.%u state %u.%u.%u at %.1f %.1f %.1f yaw %.1f\n", i, m,
+                         Memory::Read8(m + kKind), Memory::Read8(m + kVariant), Memory::Read8(m + kArea), Memory::Read8(m + kMode), Memory::Read8(m + kSub), Memory::Read8(m + kState), Memory::Read8(m + kState + 1),
                          Memory::Read8(m + kState + 2), F(m + kPosition), F(m + kPosition + 4), F(m + kPosition + 8),
                          double(int32_t(Memory::Read32(m + kYaw))) * 360.0 / 65536.0);
 }
@@ -237,6 +240,14 @@ void Run(GuestCall& game, Control& c, const std::string& line) {
     } else if (word == "goto" && in >> x >> y >> z) {
         if (need())
             game.Call<SetPosition>({work}, {double(x), double(y), double(z)});
+    } else if (word == "area" && in >> arg) {
+        if (need()) {
+            const uint8_t area = arg == "here" ? Memory::Read8(kAreaNo) : uint8_t(std::stoul(arg));
+
+            // EnemySetUp's first action copies the area to these two too.
+            for (const uint32_t field : {uint32_t(kArea), 0x48Eu, 0x512u})
+                Memory::Write8(work + field, area);
+        }
     } else if (word == "hunter" && in >> arg) {
         const uint32_t plw = Cheats::LocalPlayer();
 

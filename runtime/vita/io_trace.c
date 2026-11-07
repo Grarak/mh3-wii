@@ -2,7 +2,10 @@
  * (-Wl,--wrap of the sceIo calls newlib, the disc image, the asset cache and
  * the packs use). MH3_TRACE=io makes the game thread print, once a second,
  * the IO of that second outside loading screens (operations, bytes, time
- * spent in them, the threads), and every operation over 20 ms at once. */
+ * spent in them, the threads), and every operation over 20 ms at once; the
+ * writes to stdout and stderr count as "tty" (in the totals only). On the
+ * devkit those go over DECI and block once it backs up, about 30 ms a write:
+ * the game thread's own prints then slow its frames. */
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
@@ -104,7 +107,8 @@ static void Note(int kind, const char *path, uint64_t bytes, uint64_t start, con
             }
     }
 
-    if (us > 20000) {
+    // A slow write to the TTY is not listed: its line would be one more.
+    if (us > 20000 && !(kind == Write && path[0] == 't')) {
         if (slow_count < Slow)
             snprintf(slow[slow_count++].line, sizeof slow[0].line, "%s %s %llu bytes %.1f ms thread 0x%x%s", what, path, (unsigned long long)bytes, us / 1000.0,
                      (unsigned)thread, in_loading ? " (loading screen)" : "");
@@ -201,8 +205,10 @@ SceSSize __wrap_sceIoWrite(SceUID fd, const void *buf, SceSize nbyte)
     const uint64_t start = sceKernelGetProcessTimeWide();
     const SceSSize result = __real_sceIoWrite(fd, buf, nbyte);
 
-    if (path[0])
-        Note(Write, path, result > 0 ? (uint64_t)result : 0, start, "write");
+    // Descriptors not opened through the wrapper are stdout and stderr: on
+    // the devkit a TTY over DECI, whose writes can block.
+    if (path[0] || __atomic_load_n(&on, __ATOMIC_RELAXED))
+        Note(Write, path[0] ? path : "tty (stdout/stderr)", result > 0 ? (uint64_t)result : 0, start, "write");
 
     return result;
 }
