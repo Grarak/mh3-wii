@@ -470,6 +470,262 @@ Status TrueTypeFont(const Bytes& file, Rasterise& out) {
     return {};
 }
 
+uint16_t Half(std::span<const uint8_t> data, size_t at) {
+    return at + 2 > data.size() ? 0 : uint16_t(data[at] << 8 | data[at + 1]);
+}
+
+void PutHalf(Bytes& data, size_t at, uint16_t value) {
+    data[at] = uint8_t(value >> 8);
+    data[at + 1] = uint8_t(value);
+}
+
+void PutWord(Bytes& data, size_t at, uint32_t value) {
+    for (unsigned i = 0; i < 4; ++i)
+        data[at + i] = uint8_t(value >> (24 - 8 * i));
+}
+
+void Align(Bytes& data, size_t alignment) {
+    data.resize((data.size() + alignment - 1) / alignment * alignment, 0);
+}
+
+// A BRRES dictionary's entry: its name and data, as file offsets.
+struct DictionaryEntry {
+    std::string name;
+    size_t nameAt, dataAt;
+};
+
+// The dictionary at `at` (+4 count, then 16-byte nodes from +8, the root
+// first: +8 the name's and +0xC the data's offset from the dictionary).
+bool ReadDictionary(std::span<const uint8_t> data, size_t at, std::vector<DictionaryEntry>& entries) {
+    const uint32_t count = Word(data, at + 4);
+    entries.clear();
+
+    if (at + 8 + (uint64_t(count) + 1) * 16 > data.size())
+        return false;
+
+    for (uint32_t i = 1; i <= count; ++i) {
+        const size_t node = at + 8 + size_t(i) * 16;
+        const int64_t nameAt = int64_t(at) + int32_t(Word(data, node + 8)), dataAt = int64_t(at) + int32_t(Word(data, node + 12));
+
+        if (nameAt <= 0 || dataAt <= 0 || uint64_t(nameAt) >= data.size() || uint64_t(dataAt) >= data.size())
+            return false;
+
+        entries.push_back({TextAt(data, size_t(nameAt)), size_t(nameAt), size_t(dataAt)});
+    }
+
+    return true;
+}
+
+// The name bit a dictionary node tests (ResDic::Get, 0x800922B4): bit
+// `bit & 7` of byte `bit >> 3`, 0 past the name's end.
+bool NameBit(const std::string& name, uint32_t bit) {
+    const size_t byte = bit >> 3;
+    return byte < name.size() && (uint8_t(name[byte]) >> (bit & 7) & 1);
+}
+
+struct DictionaryNode {
+    uint16_t bit, left, right;
+};
+
+// The Patricia trie of `names`, inserted in order after the root (bit
+// 0xFFFF): each name's node tests the highest bit where it differs from the
+// name its search ends at. Rebuilds the game's dictionaries bit for bit.
+std::vector<DictionaryNode> BuildDictionary(const std::vector<std::string>& names) {
+    std::vector<DictionaryNode> nodes{{0xFFFF, 0, 0}};
+    const std::string none;
+
+    for (uint16_t index = 1; index <= names.size(); ++index) {
+        const std::string& name = names[index - 1];
+        uint16_t parent = 0, at = nodes[0].left;
+
+        while (nodes[parent].bit > nodes[at].bit) {
+            parent = at;
+            at = NameBit(name, nodes[at].bit) ? nodes[at].right : nodes[at].left;
+        }
+
+        const std::string& other = at ? names[at - 1] : none;
+        uint32_t bit = 0;
+
+        for (size_t i = std::max(name.size(), other.size()); i-- > 0;) {
+            const uint8_t a = i < name.size() ? uint8_t(name[i]) : 0, b = i < other.size() ? uint8_t(other[i]) : 0;
+
+            if (a != b) {
+                bit = uint32_t(i) << 3 | uint32_t(31 - __builtin_clz(unsigned(a ^ b)));
+                break;
+            }
+        }
+
+        parent = 0;
+        at = nodes[0].left;
+        bool right = false;
+
+        while (nodes[parent].bit > nodes[at].bit && nodes[at].bit > bit) {
+            parent = at;
+            right = NameBit(name, nodes[at].bit);
+            at = right ? nodes[at].right : nodes[at].left;
+        }
+
+        const bool set = NameBit(name, bit);
+        nodes.push_back({uint16_t(bit), set ? at : index, set ? index : at});
+        (right ? nodes[parent].right : nodes[parent].left) = index;
+    }
+
+    return nodes;
+}
+
+// Gives a replacement BRRES the textures and palettes of the original it
+// lacks: the European game looks them up by name and stops on a missing one.
+// The Japanese arena file has no icon01 (texture and palette), which the
+// European arena menu loads (0x8043C804: "g3d_restex_ac.h: Object not
+// valid"). Only for files of textures and palettes alone: the root section
+// grows by the new dictionary nodes, everything after it moves back (each
+// resource's offset to the file's start changes, none of its own), and the
+// copies go to the end with their names.
+void AddMissingResources(std::span<const uint8_t> original, Bytes& file) {
+    const auto valid = [](std::span<const uint8_t> data) {
+        return Word(data, 0) == 0x62726573 && Half(data, 4) == 0xFEFF && Word(data, 8) == data.size() && Word(data, Half(data, 12)) == 0x726F6F74;
+    };
+
+    if (!valid(original) || !valid(file))
+        return;
+
+    const auto texture = [](std::span<const uint8_t> data, size_t at) {
+        // TEX0 and PLT0 of versions 1 and 3: one section offset, then the
+        // name's at +0x14.
+        const uint32_t magic = Word(data, at), bytes = Word(data, at + 4), version = Word(data, at + 8);
+        return (magic == 0x54455830 || magic == 0x504C5430) && (version == 1 || version == 3) && bytes >= 0x18 && at + bytes <= data.size();
+    };
+
+    const size_t root = Half(file, 12), rootBytes = Word(file, root + 4), rootEnd = root + rootBytes;
+    std::vector<DictionaryEntry> originalGroups, groups;
+
+    if (rootEnd > file.size() || !ReadDictionary(original, size_t(Half(original, 12)) + 8, originalGroups) || !ReadDictionary(file, root + 8, groups))
+        return;
+
+    struct Group {
+        std::vector<DictionaryEntry> entries, added;
+    };
+
+    std::vector<Group> built(groups.size());
+    uint32_t added = 0;
+
+    for (size_t g = 0; g < groups.size(); ++g) {
+        auto& group = built[g];
+
+        if (groups[g].nameAt < rootEnd || !ReadDictionary(file, groups[g].dataAt, group.entries))
+            return;
+
+        for (const auto& e : group.entries)
+            if (e.nameAt < rootEnd || e.dataAt < rootEnd || !texture(file, e.dataAt))
+                return;
+
+        const auto source = std::find_if(originalGroups.begin(), originalGroups.end(), [&](const DictionaryEntry& e) { return e.name == groups[g].name; });
+        std::vector<DictionaryEntry> from;
+
+        if (source == originalGroups.end() || !ReadDictionary(original, source->dataAt, from))
+            continue;
+
+        for (const auto& e : from)
+            if (texture(original, e.dataAt) && std::none_of(group.entries.begin(), group.entries.end(), [&](const DictionaryEntry& h) { return h.name == e.name; }))
+                group.added.push_back(e);
+
+        added += uint32_t(group.added.size());
+    }
+
+    if (!added)
+        return;
+
+    // The new nodes, on 32 bytes so the images stay aligned.
+    const size_t shift = (size_t(added) * 16 + 31) & ~size_t(31);
+    const auto moved = [&](size_t at) { return at + shift; };
+    Bytes out(file.begin(), file.begin() + rootEnd);
+    out.resize(rootEnd + shift, 0);
+    out.insert(out.end(), file.begin() + rootEnd, file.end());
+
+    for (auto& group : built) {
+        for (auto& e : group.entries) {
+            e.nameAt = moved(e.nameAt);
+            e.dataAt = moved(e.dataAt);
+            PutWord(out, e.dataAt + 12, uint32_t(-int64_t(e.dataAt)));
+        }
+
+        for (const auto& e : group.added) {
+            Align(out, 32);
+            const size_t at = out.size(), bytes = Word(original, e.dataAt + 4);
+            out.insert(out.end(), original.begin() + e.dataAt, original.begin() + e.dataAt + bytes);
+            Align(out, 4);
+            out.resize(out.size() + 4);
+            PutWord(out, out.size() - 4, uint32_t(e.name.size()));
+            const size_t nameAt = out.size();
+            out.insert(out.end(), e.name.begin(), e.name.end());
+            out.push_back(0);
+            PutWord(out, at + 12, uint32_t(-int64_t(at)));
+            PutWord(out, at + 20, uint32_t(nameAt - at));
+            group.entries.push_back({e.name, nameAt, at});
+        }
+    }
+
+    // The dictionaries again in the root section: the groups', then each
+    // group's.
+    size_t at = root + 8;
+
+    const auto write = [&](const std::vector<DictionaryEntry>& entries) {
+        std::vector<std::string> names;
+
+        for (const auto& e : entries)
+            names.push_back(e.name);
+
+        const auto nodes = BuildDictionary(names);
+        const size_t dictionary = at;
+        PutWord(out, dictionary, uint32_t(8 + nodes.size() * 16));
+        PutWord(out, dictionary + 4, uint32_t(entries.size()));
+
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            const size_t node = dictionary + 8 + i * 16;
+            PutHalf(out, node, nodes[i].bit);
+            PutHalf(out, node + 4, nodes[i].left);
+            PutHalf(out, node + 6, nodes[i].right);
+
+            if (i) {
+                PutWord(out, node + 8, uint32_t(entries[i - 1].nameAt - dictionary));
+                PutWord(out, node + 12, uint32_t(entries[i - 1].dataAt - dictionary));
+            }
+        }
+
+        at += 8 + nodes.size() * 16;
+    };
+
+    size_t needed = 8 + (groups.size() + 1) * 16;
+
+    for (const auto& group : built)
+        needed += 8 + (group.entries.size() + 1) * 16;
+
+    if (8 + needed > rootBytes + shift)
+        return;
+
+    std::fill(out.begin() + root + 8, out.begin() + rootEnd + shift, 0);
+    std::vector<DictionaryEntry> top = groups;
+    size_t next = root + 8 + 8 + (groups.size() + 1) * 16;
+
+    for (size_t g = 0; g < groups.size(); ++g) {
+        top[g].nameAt = moved(groups[g].nameAt);
+        top[g].dataAt = next;
+        next += 8 + (built[g].entries.size() + 1) * 16;
+    }
+
+    write(top);
+
+    for (const auto& group : built)
+        write(group.entries);
+
+    // The disc's BRRES files end on 128 bytes.
+    Align(out, 128);
+    PutWord(out, root + 4, uint32_t(rootBytes + shift));
+    PutWord(out, 8, uint32_t(out.size()));
+    PutHalf(out, 14, uint16_t(Half(out, 14) + added));
+    file = std::move(out);
+}
+
 // Makes the pack of a translation.
 Status Build(const std::filesystem::path& gameData, const std::string& code, const std::string& name, const std::map<std::string, std::string>& strings, Rasterise rasterise, std::vector<Replacement> replacements,
              std::string& summary, bool strict) {
@@ -479,6 +735,11 @@ Status Build(const std::filesystem::path& gameData, const std::string& code, con
     MH3_RETURN_IF_ERROR(ReadExecutable(gameData, executable));
     std::vector<Item> items;
     MH3_RETURN_IF_ERROR(Catalogue(disc, executable, items));
+
+    for (auto& f : replacements)
+        if (f.name.ends_with(".brres") && disc.FileSizeOrZero(f.name))
+            AddMissingResources(disc.ReadFile(f.name), f.bytes);
+
     Contents pack;
     pack.code = code;
     pack.name = name;

@@ -10,7 +10,9 @@
 
 namespace LanguagePack {
 namespace {
-constexpr char kMagic[8]{'M', 'H', '3', 'L', 'A', 'N', 'G', '1'};
+// 2: a replaced BRRES has the European resources the Japanese one lacks.
+// Packs of 1 still load; the launcher imports them again (Outdated).
+constexpr char kMagic[8]{'M', 'H', '3', 'L', 'A', 'N', 'G', '2'}, kOldMagic[8]{'M', 'H', '3', 'L', 'A', 'N', 'G', '1'};
 
 // Past the end of the disc's partition; FST offsets are words, and stay
 // positive.
@@ -91,6 +93,19 @@ std::filesystem::path PackPath(const std::filesystem::path& gameData, const std:
     return Directory(gameData) / (code + ".mh3lang");
 }
 
+bool Outdated(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    char magic[8]{};
+    file.read(magic, 8);
+
+    if (!file || std::memcmp(magic, kOldMagic, 8))
+        return false;
+
+    file.close();
+    Pack pack;
+    return Read(path, pack, false).ok() && !pack.files.empty();
+}
+
 // Only the names and file table unless `whole`.
 Status Read(const std::filesystem::path& path, Pack& out, bool whole) {
     std::ifstream file(path, std::ios::binary);
@@ -99,7 +114,7 @@ Status Read(const std::filesystem::path& path, Pack& out, bool whole) {
     file.read(magic, 8);
     file.read(reinterpret_cast<char*>(&size), 4);
 
-    if (!file || std::memcmp(magic, kMagic, 8) || size > 64u << 20)
+    if (!file || (std::memcmp(magic, kMagic, 8) && std::memcmp(magic, kOldMagic, 8)) || size > 64u << 20)
         return Status::Error("Not a language pack: " + path.string());
 
     std::vector<uint8_t> header(whole ? size : std::min<uint32_t>(size, 4096));

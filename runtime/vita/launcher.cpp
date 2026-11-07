@@ -1020,8 +1020,9 @@ std::filesystem::file_time_type Modified(const std::filesystem::path& file) {
     return error ? std::filesystem::file_time_type::min() : time;
 }
 
-// The languages the launcher finds, imported when their pack is missing or
-// older than a file it comes from: the Japanese disc and every translation
+// The languages the launcher finds, imported when their pack is missing,
+// older than a file it comes from or made by an older import whose
+// replacement files differ (LanguagePack::Outdated): the Japanese disc and every translation
 // file in the languages folder, the template too, so a new or edited file is
 // in the Language row at the next start. Of files with one code the newest
 // counts, and the template yields to any other. The first language new here
@@ -1084,7 +1085,7 @@ std::string ImportLanguages(Font& font, const std::filesystem::path& gameData, b
         std::error_code missing;
         const bool exists = std::filesystem::exists(pack, missing);
 
-        if (exists && Modified(f.file) <= Modified(pack) && (f.font.empty() || Modified(f.font) <= Modified(pack)))
+        if (exists && !LanguagePack::Outdated(pack) && Modified(f.file) <= Modified(pack) && (f.font.empty() || Modified(f.font) <= Modified(pack)))
             continue;
 
         due.push_back(f);

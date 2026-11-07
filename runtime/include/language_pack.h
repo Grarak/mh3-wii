@@ -144,6 +144,10 @@ struct Pack {
 
 std::filesystem::path PackPath(const std::filesystem::path& gameData, const std::string& code);
 Status Read(const std::filesystem::path& path, Pack& out, bool whole);
+
+// A pack an older import made with replacement files that this one makes
+// differently: import its source again.
+bool Outdated(const std::filesystem::path& path);
 uint64_t VirtualOffset(const std::string& code, size_t index);
 
 // Disc files with text, by the numbers of Reference::file and Field::file.
