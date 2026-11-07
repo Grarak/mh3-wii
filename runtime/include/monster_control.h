@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 struct CpuContext;
 
@@ -12,6 +13,10 @@ namespace MonsterControl {
 // Game thread, once a logic step before the tasks run: reads new commands
 // (MH3_MONSTER_CONTROL's file) and runs the repeats due.
 void Step(CpuContext* ctx);
+
+// Game thread: queues one command after those read so far, as a line of the
+// file (the debug port's `monster`).
+void Queue(const std::string& line);
 
 // Whether `work`'s step is held (the `freeze` command).
 bool Frozen(uint32_t work);

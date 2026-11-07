@@ -41,6 +41,9 @@
 //   online [state|circles|post QUEST [MEMBERS]|join N|accept [QUEST]|ready|unready|depart|auto SPEC]
 //                             the online screens' state, or a quest circle
 //                             command (online_auto.cpp)
+//   monster COMMAND           queue a monster control command (kind K, area
+//                             here, goto X Y Z, list...: monster_control.cpp),
+//                             which prints its result to the game's log
 // Development builds on the hosts only (CMakeLists.txt adds this file to
 // those).
 #include "debug_port.h"
@@ -53,6 +56,7 @@
 #include "gx_host.h"
 #include "launcher_cheats.h"
 #include "memory.h"
+#include "monster_control.h"
 #include "movie_draw.h"
 #include "net/online_auto.h"
 #include "ppc_runtime.h"
@@ -309,7 +313,7 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
     uint32_t address = 0, value = 0;
 
     if (word == "help")
-        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef find wait steps press hunter point mouse shot call hide cheat trace movie online";
+        return "ok help state peek peekh peekb peekf peeks poke pokeh pokeb pokef find wait steps press hunter point mouse shot call hide cheat trace movie online monster";
 
     if (word == "state")
         return State(s);
@@ -603,6 +607,17 @@ std::string Run(CpuContext* ctx, Session& s, const Line& line) {
         in >> names;
         HideNativeMaterials(names.c_str());
         return "ok";
+    }
+
+    if (word == "monster") {
+        std::string rest;
+        std::getline(in >> std::ws, rest);
+
+        if (rest.empty())
+            return "error: monster COMMAND";
+
+        MonsterControl::Queue(rest);
+        return "ok queued";
     }
 
     if (word == "cheat") {

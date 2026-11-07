@@ -6,7 +6,8 @@
 // NoteAction here. MH3_TRACE=actions prints each action start, and once per
 // kind its handlers. MH3_MONSTER_CONTROL=FILE reads commands from FILE,
 // one a line, each run once in order as it appears (append lines while the
-// game runs; it is read about every third of a second):
+// game runs; it is read about every third of a second), or from the debug
+// port's `monster` command:
 //
 //   target N              the monster work index the commands act on (0)
 //   kind K                target the first monster of kind K (+3)
@@ -118,6 +119,7 @@ struct Control {
     bool repeat = false;
     uint8_t mode = 0, sub = 0;
     uint32_t every = 0, left = 0;
+    bool port = false; // the debug port queued a command
 };
 
 Control& State() {
@@ -322,12 +324,12 @@ void Step([[maybe_unused]] CpuContext* ctx) {
 #ifdef MH3_DEVELOPMENT
     Control& c = State();
 
-    if (c.path.empty())
+    if (c.path.empty() && !c.port)
         return;
 
     GuestCall game{ctx};
 
-    if (c.poll++ % 10 == 0)
+    if (!c.path.empty() && c.poll++ % 10 == 0)
         Read(c);
 
     const uint32_t ticks = GameStep::Ticks();
@@ -361,6 +363,14 @@ void Step([[maybe_unused]] CpuContext* ctx) {
         Start(game, work, c.mode, c.sub);
         c.left = c.every;
     }
+#endif
+}
+
+void Queue([[maybe_unused]] const std::string& line) {
+#ifdef MH3_DEVELOPMENT
+    Control& c = State();
+    c.queue.push_back(line);
+    c.port = true;
 #endif
 }
 
