@@ -594,6 +594,42 @@ public class FlagElisionCodeGenTests
     }
 
     [Fact]
+    public void CarryUpdateReadAcrossALoopBackEdgeIsKept()
+    {
+        // __div2u's shape: addic clears the carry before a bdnz loop whose first
+        // adde shifts it in; the loop's last carry write reaches that adde only
+        // around the back edge.
+        var function = new IrFunction("carry_loop", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrCall("xer", "PPC_UpdateCarryAdd", new[]
+                {
+                    IrValue.Register("r7"), IrValue.Imm(0), IrValue.Imm(0)
+                }),
+                new IrJump("loop")
+            }),
+            new IrBasicBlock("loop", new IrInstruction[]
+            {
+                new IrCall("r4_ca", "PPC_GetCarry", Array.Empty<IrValue>()),
+                new IrBinary("r4", IrValue.Register("r4"), IrValue.Register("r4_ca"), "add"),
+                new IrCall("xer", "PPC_UpdateCarryAdd", new[]
+                {
+                    IrValue.Register("r10"), IrValue.Imm(1), IrValue.Imm(0)
+                }),
+                new IrBinary("ctr", IrValue.Register("ctr"), IrValue.Imm(-1), "add"),
+                new IrBranch("bdnz", "loop", "exit", "ctr")
+            }),
+            new IrBasicBlock("exit", new IrInstruction[]
+            {
+                new IrReturn(null)
+            })
+        });
+
+        Assert.Equal(2, CountOccurrences(Emit(function), "const uint64_t ppcCarryWide"));
+    }
+
+    [Fact]
     public void CarryUpdateWhoseOnlyReaderIsTheReturnBoundaryIsRemoved()
     {
         // XER is volatile across a call: no caller reads the carry a callee left.

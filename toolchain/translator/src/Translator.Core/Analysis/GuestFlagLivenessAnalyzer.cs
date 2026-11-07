@@ -162,6 +162,14 @@ public static class GuestFlagLivenessAnalyzer
             return CallClobbered;
         }
 
+        // A phi only renames: an xer phi at a loop header writes no flag, and
+        // killing the carry there dropped every carry update a loop reads across
+        // its back edge (__div2u's adde chain).
+        if (instruction is IrPhi)
+        {
+            return GuestFlagState.None;
+        }
+
         // A definition of the whole XER register replaces the carry bit. That
         // covers mtxer/mtspr as well as the carry read/modify/write helpers,
         // whose IR destination is xer.
