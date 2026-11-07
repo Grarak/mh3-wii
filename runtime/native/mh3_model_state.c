@@ -648,16 +648,12 @@ mh3_res_status mh3_camera_project(mh3_native_camera *c, const mh3_vec3 *point, m
     z = view.v[2] * c->projection[10] + c->projection[11];
     w = c->projection_type == 0 ? -view.v[2] : 1.0f;
 
-    if (w == 0.0f)
-        return MH3_RES_INVALID;
-
+    // A point in the camera's plane (w 0) projects to infinities, as GXProject
+    // gives them, and the callers' screen bounds reject them: the village's
+    // NPC check (NpcOnScreen 0x801FDAC4) met an NPC exactly level with it.
     result.v[0] = c->viewport[0] + c->viewport[2] * 0.5f + (x / w) * c->viewport[2] * 0.5f;
     result.v[1] = c->viewport[1] + c->viewport[3] * 0.5f - (y / w) * c->viewport[3] * 0.5f;
     result.v[2] = c->viewport[5] + (z / w) * (c->viewport[5] - c->viewport[4]);
-
-    if (!finite_values(result.v, 3))
-        return MH3_RES_INVALID;
-
     *out = result;
     return MH3_RES_OK;
 }
