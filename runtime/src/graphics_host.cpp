@@ -221,6 +221,25 @@ void ShutdownGraphics() {
 }
 } // namespace
 
+// Opens a texture pack, reading its payloads into memory; MH3_TRACE=textures
+// prints each with its size and time, and who opened it (the preloader while
+// the game loads, or the render thread at a texture's first use).
+static void OpenTexturePack(const std::string& pack, [[maybe_unused]] const char* who) {
+#ifdef MH3_DEVELOPMENT
+    static const TraceFlag on("textures");
+    const double start = ReportSeconds();
+#endif
+    aurora::gl::open_native_texture_pack(pack.c_str());
+#ifdef MH3_DEVELOPMENT
+    if (on) {
+        std::error_code error;
+        const auto bytes = std::filesystem::file_size(pack, error);
+        std::fprintf(stderr, "MH3 texture pack at %.3f s by the %s: %s, %.1f KiB, %.2f ms\n", start, who, pack.c_str(), error ? -1.0 : bytes / 1024.0,
+                     (ReportSeconds() - start) * 1e3);
+    }
+#endif
+}
+
 // Opens the texture packs the asset cache hands on while the game loads, one
 // at a time, reading each pack's payloads into memory (aurora's native
 // texture set): at a texture's first use the render thread then copies from
@@ -263,7 +282,7 @@ class PackPreloader {
                 packs.pop_front();
             }
 
-            aurora::gl::open_native_texture_pack(pack.c_str());
+            OpenTexturePack(pack, "preloader");
         }
     }
 
@@ -290,6 +309,22 @@ void OpenNativeAssets() {
     aurora::set_native_texture_patch([](const aurora::NativeTextureSource& source, uint8_t* rgba) {
         ButtonGlyphs::PatchSource(source.format, source.width, source.height, source.bytes, rgba);
     });
+#ifdef MH3_DEVELOPMENT
+    // MH3_TRACE=textures: each texture the render thread makes at its first
+    // bind (an offline asset copied in, or a source converted on the CPU) and
+    // each one the cache drops, with the time in it, to line up with the long
+    // packet reports.
+    aurora::set_native_texture_observer([](const aurora::NativeTextureEvent& e) {
+        static const TraceFlag on("textures");
+
+        if (!on)
+            return;
+
+        static constexpr const char* kinds[] = {"offline", "converted", "evicted"};
+        std::fprintf(stderr, "MH3 texture %s at %.3f s: asset %u %ux%u levels %u format %u, %.1f KiB, resident %.2f MiB, %.2f ms\n", kinds[unsigned(e.kind)], ReportSeconds(), e.asset,
+                     e.width, e.height, e.levels, e.format, e.bytes / 1024.0, e.resident / 1048576.0, e.ms);
+    });
+#endif
 
     if (std::filesystem::exists(nativePack))
         aurora::gl::open_native_texture_pack(nativePack.string().c_str());
@@ -307,7 +342,7 @@ void OpenNativeAssets() {
                 std::abort();
             }
 
-            aurora::gl::open_native_texture_pack(pack.c_str());
+            OpenTexturePack(pack, "render thread at first use");
         });
     }
 

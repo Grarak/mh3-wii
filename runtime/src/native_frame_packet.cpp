@@ -1030,14 +1030,15 @@ void Execute(const Packet& p, bool draw, [[maybe_unused]] uint64_t gpuWaitNs = 0
     RunTasks(afterTasks, p.sequence, &after);
     const uint64_t end = RenderMonotonicNs();
 
-    // A packet over 40 ms (with its GPU slot wait) stalls the game thread
-    // behind it: where its time went, and who queued its slowest task
-    // (symbolize the address against the build's ELF).
-    if (const uint64_t total = end - start + gpuWaitNs; total >= 40'000'000)
+    // A packet over 40 ms (MH3_PROFILE=long=MS; with its GPU slot wait)
+    // stalls the game thread behind it: where its time went, and who queued
+    // its slowest task (symbolize the address against the build's ELF).
+    if (const uint64_t total = end - start + gpuWaitNs; total >= LongReportNs())
         std::fprintf(stderr,
-                     "MH3 long packet %llu: %.1f ms: GPU slot wait %.1f, before tasks %.1f (%u, slowest %.1f from %p), draw %.1f, after tasks %.1f (%u, slowest %.1f from %p)\n",
-                     static_cast<unsigned long long>(p.sequence), total / 1e6, gpuWaitNs / 1e6, (drawStart - start) / 1e6, before.count, before.slowestNs / 1e6, before.slowest,
-                     (afterStart - drawStart) / 1e6, (end - afterStart) / 1e6, after.count, after.slowestNs / 1e6, after.slowest);
+                     "MH3 long packet %llu at %.3f s: %.1f ms: GPU slot wait %.1f, before tasks %.1f (%u, slowest %.1f from %p), draw %.1f, after tasks %.1f (%u, slowest %.1f "
+                     "from %p)\n",
+                     static_cast<unsigned long long>(p.sequence), ReportSeconds(), total / 1e6, gpuWaitNs / 1e6, (drawStart - start) / 1e6, before.count, before.slowestNs / 1e6,
+                     before.slowest, (afterStart - drawStart) / 1e6, (end - afterStart) / 1e6, after.count, after.slowestNs / 1e6, after.slowest);
 #else
     RunTasks(afterTasks, p.sequence);
 #endif

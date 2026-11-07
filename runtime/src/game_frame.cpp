@@ -262,12 +262,14 @@ struct FrameSplit {
         handoffStartUs = handoffTotalUs;
     }
 
-    // A game frame over 40 ms (a stall the per-second averages hide): its own
-    // logic, draw and other time and the split families that took the most.
+    // A game frame over 40 ms (MH3_PROFILE=long=MS; a stall the per-second
+    // averages hide): its own logic, draw and other time and the split
+    // families that took the most, with the clock time and game time (the
+    // ticks MH3_TRACE=actions prints) to line it up with the other reports.
     void ReportLong() const {
         const double wall = Ms(mark - start);
 
-        if (wall < 40)
+        if (wall * 1e6 < double(LongReportNs()))
             return;
 
         static constexpr const char* names[MH3_SPLIT_FAMILIES] = {"traverse", "model", "effect", "node callback", "font", "fade", "hud", "movie", "material prep", "shape prep",
@@ -280,8 +282,9 @@ struct FrameSplit {
 
         std::partial_sort(order, order + 4, order + MH3_SPLIT_FAMILIES,
                           [this](unsigned a, unsigned b) { return splitFamilies[a] - familiesStart[a] > splitFamilies[b] - familiesStart[b]; });
-        std::printf("MH3 long frame %u: %.1f ms (logic %.1f draw %.1f other %.1f; pacing wait %.1f, draw thread handoff %.1f); most: %s %.1f, %s %.1f, %s %.1f, %s %.1f ms\n",
-                    mh3SplitFrame, wall, logic - logicStart, draw - drawStart, other - otherStart, (NativePacingWaitTotalNs() - pacingStartNs) / 1e6,
+        std::printf("MH3 long frame %u at %.3f s, game time %.2f: %.1f ms (logic %.1f draw %.1f other %.1f; pacing wait %.1f, draw thread handoff %.1f); most: %s %.1f, %s %.1f, "
+                    "%s %.1f, %s %.1f ms\n",
+                    mh3SplitFrame, ReportSeconds(), GameStep::Elapsed(), wall, logic - logicStart, draw - drawStart, other - otherStart, (NativePacingWaitTotalNs() - pacingStartNs) / 1e6,
                     (handoffTotalUs - handoffStartUs) / 1e3, names[order[0]], splitFamilies[order[0]] - familiesStart[order[0]], names[order[1]],
                     splitFamilies[order[1]] - familiesStart[order[1]], names[order[2]], splitFamilies[order[2]] - familiesStart[order[2]], names[order[3]],
                     splitFamilies[order[3]] - familiesStart[order[3]]);

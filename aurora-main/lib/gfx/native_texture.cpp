@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -23,6 +24,7 @@
 namespace aurora {
 namespace {
 NativeTexturePatch s_patch = nullptr;
+NativeTextureObserver s_observer = nullptr;
 
 // Budget resident texture storage separately from display/depth/offscreen
 // targets. GLES texel estimates exclude driver bookkeeping; GXM charges the
@@ -64,6 +66,11 @@ std::array<NativeTexturePortableSampling, 8> portableSampling{};
 size_t residentBytes = 0;
 uint64_t serial = 0;
 
+void Observe(NativeTextureEvent::Kind kind, const Key& key, size_t bytes, double ms = 0) {
+  if (s_observer)
+    s_observer({kind, key.asset, key.width, key.height, key.levels, key.format, bytes, residentBytes, ms});
+}
+
 // Counts the cache's erases: a memo's entry is still cached while the stamp
 // it was made at is current.
 uint64_t cacheStamp = 1;
@@ -94,6 +101,7 @@ void make_room(size_t bytes) {
       AURORA_THROW(std::runtime_error("Bound native textures exceed resident cache budget"));
 
     residentBytes -= victim->second.bytes;
+    Observe(NativeTextureEvent::Kind::Evicted, victim->first, victim->second.bytes);
     cache.erase(victim);
     ++cacheStamp;
   }
@@ -111,6 +119,7 @@ void make_room(size_t bytes) {
     if (victim == cache.end())
       break; // the allocation reports what is resident
     residentBytes -= victim->second.bytes;
+    Observe(NativeTextureEvent::Kind::Evicted, victim->first, victim->second.bytes);
     cache.erase(victim);
     ++cacheStamp;
   }
@@ -300,6 +309,8 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
 
 void set_native_texture_patch(NativeTexturePatch patch) { s_patch = patch; }
 
+void set_native_texture_observer(NativeTextureObserver observer) { s_observer = observer; }
+
 namespace {
 bool SameSource(const NativeTextureSource& a, const NativeTextureSource& b) {
   return a.bytes.data() == b.bytes.data() && a.bytes.size() == b.bytes.size() && a.palette.data() == b.palette.data() && a.palette.size() == b.palette.size() &&
@@ -465,12 +476,14 @@ void bind(uint32_t unit, const NativeTextureSource& source, const NativeTextureS
   for (auto it = cache.begin(); it != cache.end();) {
     if (!offline && it->first.bytes == key.bytes && (it->first.generation != source.generation || it->first.asset != key.asset) && it->second.texture.use_count() == 1) {
       residentBytes -= it->second.bytes;
+      Observe(NativeTextureEvent::Kind::Evicted, it->first, it->second.bytes);
       it = cache.erase(it);
       ++cacheStamp;
     } else
       ++it;
   }
 
+  const auto start = s_observer ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   gl::TexturePtr texture;
   size_t allocated = rgba_allocation(source);
 
@@ -532,6 +545,10 @@ void bind(uint32_t unit, const NativeTextureSource& source, const NativeTextureS
   const auto [entry, inserted] = cache.try_emplace(key, Entry{texture, allocated, ++serial, source.owner, source.owner_bytes});
   residentBytes += allocated;
   remember(entry->second, publish(texture));
+
+  if (s_observer)
+    Observe(offline ? NativeTextureEvent::Kind::Offline : NativeTextureEvent::Kind::Converted, key, allocated,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 }
 } // namespace
 

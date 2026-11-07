@@ -12,6 +12,8 @@
 #include <stdexcept>
 #include <thread>
 #ifdef MH3_DEVELOPMENT
+#include "dev_options.h"
+
 #include <mutex>
 #include <vector>
 #endif
@@ -91,10 +93,11 @@ void GuestThread::Loop() {
         job_(&cpu, data_);
         const uint64_t elapsed = NowNs() - start;
 #ifdef MH3_DEVELOPMENT
-        // One job over 40 ms stalls whoever waits for it (the draw thread's
-        // scene walk, the worker's effect calculation): name the thread.
-        if (elapsed >= 40'000'000)
-            std::fprintf(stderr, "MH3 long %s job: %.1f ms\n", name_, elapsed / 1e6);
+        // One job over 40 ms (MH3_PROFILE=long=MS) stalls whoever waits for it
+        // (the draw thread's scene walk, the worker's effect calculation):
+        // name the thread.
+        if (elapsed >= LongReportNs())
+            std::fprintf(stderr, "MH3 long %s job at %.3f s: %.1f ms\n", name_, ReportSeconds(), elapsed / 1e6);
 #endif
         jobTime_.fetch_add(elapsed, std::memory_order_relaxed);
         jobCount_.fetch_add(1, std::memory_order_relaxed);

@@ -53,6 +53,20 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
 // (not offline packs or movie frames): may change its RGBA8 levels in place.
 using NativeTexturePatch = void (*)(const NativeTextureSource& source, uint8_t* rgba);
 void set_native_texture_patch(NativeTexturePatch patch);
+
+// A texture the cache made on a bind (an offline pack asset read into its
+// storage, or a source converted to RGBA8), or one it dropped: its asset (0
+// for a converted source without one), shape, resident bytes, the cache's
+// resident total after it and, for a load, the graphics owner's time in it.
+struct NativeTextureEvent {
+  enum class Kind : uint8_t { Offline, Converted, Evicted } kind;
+  uint32_t asset, width, height, levels, format;
+  size_t bytes, resident;
+  double ms;
+};
+
+using NativeTextureObserver = void (*)(const NativeTextureEvent& event);
+void set_native_texture_observer(NativeTextureObserver observer);
 void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampler);
 
 // Bias left for the shader after native sampler bias. Read on the graphics

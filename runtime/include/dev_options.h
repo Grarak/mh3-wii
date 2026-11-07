@@ -11,6 +11,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -149,17 +150,31 @@ inline const DevOptions& CaptureOptions() {
     return options;
 }
 
-// MH3_PROFILE=[split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,census]:
+// MH3_PROFILE=[split][,render][,sync][,skip=KIND[+KIND...]][,fill][,disc][,census][,long=MS]:
 // the per-draw split timers (game_frame.cpp), the render thread's sampled split,
 // serial frames and dropped draw kinds (native_frame_packet.cpp), material
 // geometry screen area (native_material.cpp), the disc image's read speed
-// (disc_image.cpp) and the census of the model draws (native_material.cpp).
+// (disc_image.cpp), the census of the model draws (native_material.cpp) and
+// how long a game frame, render packet or guest worker job must take to be
+// reported as long (LongReportNs).
 inline const DevOptions& ProfileOptions() {
-    static const DevOptions options("MH3_PROFILE", {"split", "render", "sync", "skip", "fill", "disc", "census"});
+    static const DevOptions options("MH3_PROFILE", {"split", "render", "sync", "skip", "fill", "disc", "census", "long"});
     return options;
 }
 
-// MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads][,io][,stall]:
+// The long frame, packet and job reports' limit: MH3_PROFILE=long=MS, 40 ms
+// by default.
+inline uint64_t LongReportNs() {
+    static const uint64_t ns = ProfileOptions().Number("long", 40) * 1'000'000;
+    return ns;
+}
+
+// The time the long reports print, the same clock on each thread.
+inline double ReportSeconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// MH3_TRACE=[input][,monsters][,actions][,particles][,loading][,effect-objects][,net][,threads][,io][,stall][,textures]:
 // the input as the game read it once per tick of game time (frame_pacer.cpp),
 // each monster's work and position once a second (field_camera.cpp), the
 // actions monsters start (monster_control.cpp), every third tick of game
@@ -170,9 +185,10 @@ inline const DevOptions& ProfileOptions() {
 // (ios_net.cpp), every guest thread switch (guest_threads.cpp) and how far
 // the game's random streams moved per tick (game_step.cpp), the Vita's
 // memory card IO outside loading screens (vita/io_trace.c) and the hunter and
-// monsters standing frozen while the game runs on (stall_watch.cpp).
+// monsters standing frozen while the game runs on (stall_watch.cpp) and the
+// textures the render thread makes and drops (graphics_host.cpp).
 inline constexpr auto kTraceItems = std::to_array<std::string_view>({"input", "monsters", "actions", "particles", "loading", "effect-objects", "net", "threads", "demo", "movie", "rand", "io",
-                                                                     "stall"});
+                                                                     "stall", "textures"});
 
 inline const DevOptions& TraceOptions() {
     static const DevOptions options("MH3_TRACE", kTraceItems);
