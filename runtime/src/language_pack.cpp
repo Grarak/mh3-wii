@@ -11,9 +11,10 @@
 namespace LanguagePack {
 namespace {
 // MH3LANG and the format: 2 gave a replaced BRRES the European resources the
-// Japanese one lacks, 3 keeps it within the block the game loads it into.
+// Japanese one lacks, 3 keeps it within the block the game loads it into, 4
+// gives the Japanese texts the arguments the European game formats.
 // Older packs still load; the launcher imports them again (Outdated).
-constexpr char kMagic[8]{'M', 'H', '3', 'L', 'A', 'N', 'G', '3'};
+constexpr char kMagic[8]{'M', 'H', '3', 'L', 'A', 'N', 'G', '4'};
 
 // The format of a pack's magic, 0 for none.
 unsigned Format(const char (&magic)[8]) {

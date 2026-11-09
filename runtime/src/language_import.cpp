@@ -973,6 +973,30 @@ constexpr std::pair<const char*, const char*> kReplacedFiles[]{
 constexpr uint32_t kOverlayCount = 5, kScrambled = 8, kPlayer1 = 16, kPlayer2 = 32;
 constexpr const char* kOverlayNames[kOverlayCount]{"rel/com_data.rso", "rel/lobby_data.rso", "rel/quest_data.rso", "rel/demo_data.rso", "rel/net_data.rso"};
 
+// Texts the Japanese game puts after a name or a number it draws itself,
+// where the European game formats one text: "%s obtained." has the partner
+// "を入手しました". Each gets the European text's argument.
+enum class Argument { kNameBefore, kNumberBefore, kNumberAfter, kNone, kAfterPrevious };
+
+struct ArgumentRun {
+    uint32_t file, entry, word, count;
+    Argument argument;
+};
+
+constexpr ArgumentRun kArguments[]{
+    // obtained, caught; at maximum .. has broken; stolen .. can't carry more;
+    // handed over; is extremely hot.
+    {kData00, 4, 1215, 1, Argument::kNameBefore}, {kData00, 4, 1217, 1, Argument::kNameBefore}, {kData00, 4, 1224, 6, Argument::kNameBefore}, {kData00, 4, 1234, 4, Argument::kNameBefore},
+    {kData00, 4, 1246, 1, Argument::kNameBefore}, {kData00, 4, 1253, 1, Argument::kNameBefore},
+    // "%dP" of the Wii Remote that lost its connection.
+    {kData00, 4, 1254, 1, Argument::kNumberBefore},
+    // The combo jar: "left: %d" and " Quests" for the Japanese "left" and
+    // "%d quests". The trade ship: "%d.5d Left" for a "half" after the
+    // previous text, "%d days left".
+    {kData10, 1, 41, 1, Argument::kNumberAfter},  {kData10, 1, 42, 1, Argument::kNone},        {kData10, 1, 435, 1, Argument::kAfterPrevious},
+    {kData11, 1, 41, 1, Argument::kNumberAfter},  {kData11, 1, 42, 1, Argument::kNone},        {kData11, 1, 435, 1, Argument::kAfterPrevious},
+};
+
 // The Japanese game's text for the European keys.
 Status JapaneseStrings(const JapaneseDisc& disc, std::map<std::string, std::string>& strings) {
     std::vector<Overlay> overlays;
@@ -1041,6 +1065,49 @@ Status JapaneseStrings(const JapaneseDisc& disc, std::map<std::string, std::stri
                 strings[Key(file, e, f)] = FromShiftJis(raw);
             }
     }
+
+    for (const auto& run : kArguments)
+        for (uint32_t k = 0; k < run.count; ++k) {
+            const auto found = strings.find(Key(run.file, run.entry, run.word + k));
+
+            if (found == strings.end())
+                continue;
+
+            std::string& text = found->second;
+            const bool has = text.find('%') != std::string::npos;
+
+            switch (run.argument) {
+            case Argument::kNameBefore:
+                if (!has)
+                    text = "%s" + text;
+
+                break;
+
+            case Argument::kNumberBefore:
+                if (!has)
+                    text = "%d" + text;
+
+                break;
+
+            case Argument::kNumberAfter:
+                if (!has)
+                    text += "%d";
+
+                break;
+
+            case Argument::kNone:
+                if (text.starts_with("%d"))
+                    text.erase(0, 2);
+
+                break;
+
+            case Argument::kAfterPrevious:
+                if (const auto previous = strings.find(Key(run.file, run.entry, run.word + k - 1)); !has && previous != strings.end())
+                    text = previous->second + text;
+
+                break;
+            }
+        }
 
     return {};
 }
