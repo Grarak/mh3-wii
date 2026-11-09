@@ -154,8 +154,12 @@ void NpcDanceLoad(GuestCall& game, uint32_t sp, uint32_t kamen, uint32_t dance1,
     FlatWrite8(npc + 0x97AD, uint8_t(dance2));
     const uint32_t flag = sp + 8, path = sp + 24;
 
-    // 0x800F0474, inlined: the slot's three load states cleared.
-    const auto clear = [](uint32_t slot) {
+    // 0x800F0474, inlined: the slot's three load states cleared. The
+    // request block the load hands back to LoadDone holds the load kind,
+    // then the slot twice: the callback marks that slot's file loaded.
+    const auto clear = [&](uint32_t slot) {
+        FlatWrite32(flag + 4, slot);
+        FlatWrite32(flag + 8, slot);
         const uint32_t at = FlatRead32(kNpcWork);
         FlatWrite8(at + 0x9774 + slot, 0);
         FlatWrite8(at + 0x96B3 + slot, 0);
