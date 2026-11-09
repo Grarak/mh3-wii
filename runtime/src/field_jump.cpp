@@ -76,6 +76,7 @@ namespace {
 
 constexpr uint32_t kQuestId = 0x8065B238;   // u32: the departing quest
 constexpr uint32_t kDeparture = 0x8065B534; // u16 quest id, +8 u8 Cha-Cha, +9 u8, +11 u8 offline field
+constexpr uint32_t kCharacter = 0x80796D40; // r13 - 0x45A0: the character's save data
 enum : uint32_t {
     VillageSetting = 0x8021F29C, // () -> u8, recorded at departure +9
     FreeRoamQuest = 0x802FB8A4,  // () -> the season's free-roam quest id, 0 if none
@@ -154,6 +155,8 @@ struct Jump {
     uint64_t placedAt = 0; // game frame the hunter was first seen placed, 0: not yet
     bool loading = false;  // the quest's loading screen seen
     bool entered = false;  // the field entry reported
+    int chaCha = -1;       // --cha-cha: his mask, -1: as the save has him
+    uint8_t chaChaDances[2] = {};
 };
 
 Jump& State() {
@@ -193,6 +196,15 @@ static void VillageTaskPort(CpuContext* ctx) {
             // Cha-Cha as the quest counter takes him when it accepts a quest
             // (0x8033C5D4): the character's +0x3E03 (bit 7 along, the rest his
             // mask) to departure +8, which the village passes to the field.
+            // --cha-cha sets that byte and his two dances (+0x51A4, +0x51A5)
+            // in the character first.
+            if (jump.set == QuestCatalog::Set::Village && jump.chaCha >= 0) {
+                const uint32_t character = Memory::Read32(kCharacter);
+                Memory::Write8(character + 0x3E03, uint8_t(0x80 | jump.chaCha));
+                Memory::Write8(character + 0x51A4, jump.chaChaDances[0]);
+                Memory::Write8(character + 0x51A5, jump.chaChaDances[1]);
+            }
+
             if (jump.set == QuestCatalog::Set::Village)
                 game.Call<ChaChaDeparture>();
 
@@ -237,6 +249,13 @@ void RequestQuestExit(std::vector<int> areas) {
 
 void RequestQuestTour() {
     State().tour = true;
+}
+
+void RequestQuestChaCha(uint8_t mask, uint8_t dance1, uint8_t dance2) {
+    Jump& jump = State();
+    jump.chaCha = mask;
+    jump.chaChaDances[0] = dance1;
+    jump.chaChaDances[1] = dance2;
 }
 
 // The arena's mark of the hunter in the pit, from the hunter's side.

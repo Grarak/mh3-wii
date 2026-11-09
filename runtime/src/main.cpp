@@ -154,6 +154,8 @@ constexpr const char* kUsage = "Unknown option. Options:\n"
                                "                                 (a field area full: --quest 1028 --area 1)\n"
                                "  --quest-patch <off>=<hex>[,...] (with --quest) replace bytes of the quest's entry\n"
                                "                                 (hex offset into the entry, then the bytes)\n"
+                               "  --cha-cha <mask>[,<d1>,<d2>]   (with a village --quest) Cha-Cha comes along in mask 0-6\n"
+                               "                                 with dances d1 and d2 (0-3, 0 by default)\n"
                                "  --no-damage                    (with any of the above) the hunter takes no damage\n"
                                "  --weapon <kind>[:<id>]         (with any of the above) the hunter wears that weapon: great-sword,\n"
                                "                                 sword, hammer, lance, long-sword, switch-axe (id 1 by default) or\n"
@@ -245,6 +247,9 @@ void StartQuestBoot(int argc, char** argv) {
             small = argv[++i];
         else if (option == "--quest-patch" && i + 1 < argc)
             patch = argv[++i];
+        else if (unsigned mask, d1 = 0, d2 = 0; option == "--cha-cha" && i + 1 < argc &&
+                 std::sscanf(argv[++i], "%u,%u,%u", &mask, &d1, &d2) >= 1 && mask < 7 && d1 < 4 && d2 < 4)
+            RequestQuestChaCha(uint8_t(mask), uint8_t(d1), uint8_t(d2));
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]) == "exit:tour")
             ++i, RequestQuestTour();
         else if (option == "--spawn" && i + 1 < argc && std::string_view(argv[i + 1]).starts_with("exit:"))
